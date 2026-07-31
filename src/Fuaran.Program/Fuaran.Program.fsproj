@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>true</IsPackable>
+    <PackageId>Fuaran.Program</PackageId>
+    <Description>Fuaran.Program — programs as data for Fuaran hosts: a bounded, total logic-tree algebra (sequencing, typed branching, named effects), its interpreters, and the program loop. Skeleton package — the substantive surfaces land with the bounded-interpreter extraction and the client program loop.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="About.fs" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="FSharp.Core" />
+  </ItemGroup>
+</Project>

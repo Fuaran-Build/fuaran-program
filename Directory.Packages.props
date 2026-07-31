@@ -1,0 +1,9 @@
+<Project>
+  <ItemGroup>
+    <!-- Pinned to the workspace baseline. Expecto is test-only. The Fuaran.UI.* pins (the first
+         host instantiation consumes the UI tier's types by PackageReference off the local feed /
+         nuget.org) arrive with the bounded-interpreter extraction — not speculatively before it. -->
+    <PackageVersion Include="FSharp.Core" Version="10.1.300" />
+    <PackageVersion Include="Expecto" Version="9.0.4" />
+  </ItemGroup>
+</Project>
