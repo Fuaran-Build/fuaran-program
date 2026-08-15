@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>true</IsPackable>
+    <PackageId>Fuaran.Program.Bounded</PackageId>
+    <Description>Fuaran.Program.Bounded — the bounded program interpreter: a total fold of the wire-representable action set over a program's state store, with the no-closure-invocation invariant that makes an emitted tree safe to run untrusted. Placement-neutral by construction (the same interpreter drives a server session and a browser client), plus the server placement's loop with its per-interaction resource budget. Apache-2.0 licensed.</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageTags>fuaran;program;bounded;interpreter;total</PackageTags>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+  <!-- Pack source for Fable consumers under fable/ — the interpreter and the
+       re-resolution pass are Fable-clean, which is what lets the browser
+       placement (Fuaran.Program.Runtime) share them rather than copy them. -->
+  <ItemGroup>
+    <Content Include="**\*.fsproj;**\*.fs" Exclude="**\*.fs.js;**\bin\**;**\obj\**" PackagePath="fable\" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="BoundedActions.fs" />
+    <Compile Include="Resolve.fs" />
+    <Compile Include="BoundedDriver.fs" />
+  </ItemGroup>
+  <!-- The UI-typed first instantiation (DECISIONS.md D4): this package consumes
+       the UI tier's published packages, and the dependency runs one way only.
+       Nothing in the UI tier references back — see D5 for why the reverse
+       direction was refused. -->
+  <ItemGroup>
+    <PackageReference Include="FSharp.Core" />
+    <PackageReference Include="Fuaran.UI" />
+    <PackageReference Include="Fuaran.UI.Ops.Abstractions" />
+    <PackageReference Include="Fuaran.UI.Ops" />
+    <PackageReference Include="Fuaran.UI.Renderer.Core" />
+    <PackageReference Include="Fuaran.UI.OpStream.Replay" />
+    <PackageReference Include="Fuaran.UI.ServerDriven" />
+  </ItemGroup>
+</Project>

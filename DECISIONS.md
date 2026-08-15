@@ -34,6 +34,31 @@ program's capability envelope declarable, and the default-deny gate meaningful. 
 *name* only effects its host registered; a genuinely novel capability is a host act, and the
 program's reach extends only after registration.
 
+## D5 — The dependency runs one way: this domain consumes the UI tier, never the reverse (2026-08-15)
+
+The bounded interpreter moved here **whole**: the interpreter, the binding re-resolution pass, and
+the server placement of the loop that drives them all live in `Fuaran.Program.Bounded`. The
+alternative — leaving the server loop in the UI tier's server-driven package and having that package
+consume this one — was considered and **refused**.
+
+The reason is not taste. The interpreter needs the UI tier's types, so it must depend on the UI tier
+(D4). Had the UI tier's server-driven package then depended back on this one, that package would
+carry, in a single compilation, a project reference to the UI types *and* a transitive package
+reference to a differently-built copy of the same types — the version-skew class that surfaces as a
+cast failure at runtime rather than an error at build time. It would also make every change to the
+UI types a two-repo round trip (pack the UI tier, rebuild and pack this repo, rebuild the UI tier)
+on the more actively developed of the two.
+
+So: **`Fuaran.Program.*` consumes published `Fuaran.UI.*` packages; no `Fuaran.UI.*` package
+references `Fuaran.Program.*`.** This repo stays buildable from a cold clone against published
+packages alone, and the package graph stays acyclic.
+
+The consequence is recorded honestly: the UI tier's server-driven package **no longer ships the
+bounded interpreter or the bounded loop**. That is a removal from its public surface, taken as a
+pre-1.0 minor bump, and consumers of the bounded path take a reference to this package instead. The
+direction is re-examined at the D4 generic-tier cut, when the witness-generic contract may remove the
+UI-type dependency altogether.
+
 ## D4 — First instantiation is UI-typed; the generic tier waits for a second domain (2026-07-31)
 
 The domain is chartered now, as a design decision — its identity, name, wire-family destiny, and

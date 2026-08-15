@@ -5,11 +5,15 @@ This repo is the **Fuaran program domain**: programs as data. Where the UI tier 
 logic-tree algebra (sequencing, typed branching, named effects), the interpreters that run it, and
 the program loop that connects it to a host. Ships as the `Fuaran.Program.*` NuGet package set.
 
-**Status: skeleton.** The repo currently carries the domain identity, the design commitments
-([DECISIONS.md](DECISIONS.md)), and a buildable/testable package shell. The first substantive
-surfaces are the bounded-interpreter extraction (the interpreter shipped and proven in the UI
-tier's server-driven packages moves to its placement-neutral home here) and the client program
-loop that runs a wire-decoded tree interactively with no hand-authored update function.
+**Status: first substantive surface landed.** `Fuaran.Program.Bounded` now carries the bounded
+interpreter, the binding re-resolution pass, and the server placement of the program loop — moved
+whole from the UI tier's server-driven package, so exactly one interpreter serves every placement.
+Still ahead: the client program loop (`Fuaran.Program.Runtime`), which runs a wire-decoded tree
+interactively in the browser with no hand-authored update function.
+
+The dependency direction is settled and one-way — this repo consumes published `Fuaran.UI.*`
+packages, and nothing in the UI tier references back ([DECISIONS.md](DECISIONS.md) D4/D5). That is
+what keeps a cold clone buildable against published packages alone.
 
 Cross-repo development conventions (formatting mandate, language-baseline pinning, feed layout)
 live at the maintainers' workspace level and are not shipped here; everything a contributor needs
@@ -33,11 +37,15 @@ to run untrusted — the properties the whole domain exists to provide.
 
 ```
 fuaran-program/
-├── src/Fuaran.Program/            # the domain package (skeleton — About only, today)
-├── tests/Fuaran.Program.Tests/    # Expecto suite
+├── src/Fuaran.Program/                    # the domain package (skeleton — About only, today)
+├── src/Fuaran.Program.Bounded/            # the bounded interpreter + re-resolution + server loop
+├── tests/Fuaran.Program.Tests/            # Expecto suite (skeleton)
+├── tests/Fuaran.Program.Bounded.Tests/    # the bounded invariant + driver suite
 ├── Fuaran.Program.slnx
-└── run.ps1                        # tool restore -> format -> build -> test
+└── run.ps1                                # tool restore -> format -> build -> test [-> pack]
 ```
+
+Every test project is its own Expecto assembly runner; `run.ps1` invokes each in turn.
 
 ## Build pipeline
 
