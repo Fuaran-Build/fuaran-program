@@ -44,6 +44,7 @@ New-Item -ItemType Directory -Force -Path $feed | Out-Null
 $producers = @(
     'src\Fuaran.Program\Fuaran.Program.fsproj'
     'src\Fuaran.Program.Bounded\Fuaran.Program.Bounded.fsproj'
+    'src\Fuaran.Program.Runtime\Fuaran.Program.Runtime.fsproj'
 )
 
 foreach ($proj in $producers) {

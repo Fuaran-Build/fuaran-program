@@ -19,6 +19,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="BoundedActions.fs" />
+    <Compile Include="Budget.fs" />
     <Compile Include="Resolve.fs" />
     <Compile Include="BoundedDriver.fs" />
   </ItemGroup>
