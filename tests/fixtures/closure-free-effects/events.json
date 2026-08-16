@@ -1,0 +1,4 @@
+[
+  { "nodeId": "go", "event": "click", "payload": {} },
+  { "nodeId": "copy", "event": "click", "payload": {} }
+]

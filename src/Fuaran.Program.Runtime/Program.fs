@@ -52,10 +52,10 @@ type ProgramServices =
         /// here; a headless test wires a recorder. Called once per accepted
         /// event, and once at `init`.
         Render: Node<obj> -> unit
-        /// Perform one closure-free client effect. The built-in arms behave
-        /// identically to the server-driven shim's performer — one effect
-        /// vocabulary, two transports.
-        PerformEffect: ClientEffect -> unit
+        /// The closed, default-deny registry of host-performed effects. A
+        /// generated tree can name only what the effect DU expresses, and only
+        /// what THIS host registered will run — see EffectRegistry.
+        Effects: EffectRegistry
         /// The ops applied this step, for the journal / telemetry sink. A
         /// client-run generated app is replayable exactly like a server-driven
         /// one.
@@ -77,7 +77,7 @@ module ProgramServices =
     let create (render: Node<obj> -> unit) : ProgramServices =
         { CanDispatch = fun _ -> false
           Render = render
-          PerformEffect = ignore
+          Effects = EffectRegistry.denyAll
           OnApply = ignore
           Budget = InteractionBudget.defaults
           Channel = None }
@@ -201,7 +201,7 @@ module Program =
                 program.Services.Render newResolved
 
                 for effect in outcome.Effects do
-                    program.Services.PerformEffect effect
+                    EffectRegistry.perform program.Services.Effects effect
 
                 { program with
                     Store = outcome.Store

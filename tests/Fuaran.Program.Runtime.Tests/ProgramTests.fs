@@ -74,16 +74,32 @@ type private Recorder() =
     let renders = ResizeArray<Node<obj>>()
     let effects = ResizeArray<ClientEffect>()
     let journal = ResizeArray<TreeOp<obj> list>()
+    let denials = ResizeArray<EffectDenial>()
     member _.Renders = List.ofSeq renders
     member _.Effects = List.ofSeq effects
     member _.Journal = List.ofSeq journal
+    member _.Denials = List.ofSeq denials
+    member _.OnDenied(d: EffectDenial) = denials.Add d
     member _.Render(n: Node<obj>) = renders.Add n
     member _.Perform(e: ClientEffect) = effects.Add e
     member _.OnApply(ops: TreeOp<obj> list) = journal.Add ops
 
+/// A registry that performs every built-in arm into the recorder. The registry
+/// is CLOSED by registration, so this enumerates exactly what the host offers.
+let private recordingRegistry (r: Recorder) : EffectRegistry =
+    [ "WriteToClipboard"
+      "Navigate"
+      "PushState"
+      "Focus"
+      "Download"
+      "ReadFileBody" ]
+    |> List.fold (fun reg name -> EffectRegistry.register name r.Perform reg) EffectRegistry.denyAll
+    |> EffectRegistry.permissive
+    |> EffectRegistry.onDenied r.OnDenied
+
 let private permissive (r: Recorder) : ProgramServices =
     { ProgramServices.createPermissive r.Render with
-        PerformEffect = r.Perform
+        Effects = recordingRegistry r
         OnApply = r.OnApply }
 
 [<Tests>]
@@ -192,6 +208,64 @@ let tests =
               Expect.equal out.Effects [ ClientEffect.Navigate "/next" ] "effect reported"
               Expect.equal r.Effects [ ClientEffect.Navigate "/next" ] "effect performed through the seam"
               Expect.equal program2.Store.State empty.State "store unchanged"
+          }
+
+          test "effect seam: an UNREGISTERED effect is refused at the gate and the denial is recorded" {
+              // The registry is closed by REGISTRATION, not by policy: a host
+              // that never offered Navigate cannot perform one however
+              // permissive its gate is.
+              let r = Recorder()
+
+              let services =
+                  { permissive r with
+                      Effects =
+                          EffectRegistry.denyAll
+                          |> EffectRegistry.permissive
+                          |> EffectRegistry.onDenied r.OnDenied }
+
+              let program = Program.mkBounded services empty (mkTree (Action.Navigate "/next"))
+              let _, out = Program.handleEvent program (clickEv "set")
+
+              Expect.equal out.Effects [ ClientEffect.Navigate "/next" ] "the loop still EMITTED the effect"
+              Expect.isEmpty r.Effects "but nothing was performed"
+              Expect.equal r.Denials [ EffectDenial.Unregistered "Navigate" ] "the denial was recorded, not dropped"
+          }
+
+          test "effect seam: a REGISTERED effect the gate refuses is recorded as a gate refusal" {
+              let r = Recorder()
+
+              let services =
+                  { permissive r with
+                      Effects =
+                          EffectRegistry.denyAll
+                          |> EffectRegistry.register "Navigate" r.Perform
+                          |> EffectRegistry.withGate (fun name -> name <> "Navigate")
+                          |> EffectRegistry.onDenied r.OnDenied }
+
+              let program = Program.mkBounded services empty (mkTree (Action.Navigate "/next"))
+              let _, _ = Program.handleEvent program (clickEv "set")
+
+              Expect.isEmpty r.Effects "the performer did not run"
+
+              Expect.equal
+                  r.Denials
+                  [ EffectDenial.GateRefused "Navigate" ]
+                  "recorded as a GATE refusal, not as unregistered"
+          }
+
+          test "effect seam: the default registry performs nothing at all" {
+              let r = Recorder()
+
+              let services =
+                  { ProgramServices.createPermissive r.Render with
+                      Effects = EffectRegistry.denyAll |> EffectRegistry.onDenied r.OnDenied }
+
+              let program = Program.mkBounded services empty (mkTree (Action.Navigate "/next"))
+              let _, _ = Program.handleEvent program (clickEv "set")
+
+              Expect.isEmpty r.Effects "a host that wires nothing performs nothing"
+              Expect.isEmpty (EffectRegistry.registered EffectRegistry.denyAll) "and offers no capability"
+              Expect.isNonEmpty r.Denials "the refusal is still observable"
           }
 
           test "an unsafe navigate route is refused before the effect is performed" {

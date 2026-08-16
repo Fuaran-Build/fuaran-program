@@ -4,3 +4,11 @@ obj/
 .vs/
 .idea/
 .ionide/
+
+# Fable + npm client-tier build outputs. `package-lock.json` IS tracked (the
+# sample's toolchain should be reproducible); everything a build regenerates is
+# not.
+node_modules/
+output/
+fable_modules/
+*.fs.js

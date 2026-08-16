@@ -3,6 +3,10 @@
     <!-- Pinned to the workspace baseline. Expecto is test-only. -->
     <PackageVersion Include="FSharp.Core" Version="10.1.300" />
     <PackageVersion Include="Expecto" Version="9.0.4" />
+    <!-- Fable client tier — consumed only by samples/, never by a shipping package. -->
+    <PackageVersion Include="Fable.Core" Version="5.0" />
+    <PackageVersion Include="Feliz" Version="3.3.3" />
+    <PackageVersion Include="Fuaran.UI.Renderer" Version="0.25.0" />
     <!-- The UI tier — the first host instantiation consumes its types by
          PackageReference off the local feed / nuget.org (DECISIONS.md D4). The
          dependency runs ONE WAY: nothing in the UI tier references back, which

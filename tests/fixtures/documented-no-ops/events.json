@@ -1,0 +1,5 @@
+[
+  { "nodeId": "notify", "event": "click", "payload": {} },
+  { "nodeId": "dispatch", "event": "click", "payload": {} },
+  { "nodeId": "call", "event": "click", "payload": {} }
+]

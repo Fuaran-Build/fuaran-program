@@ -17,6 +17,7 @@
     <Content Include="**\*.fsproj;**\*.fs" Exclude="**\*.fs.js;**\bin\**;**\obj\**" PackagePath="fable\" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="EffectRegistry.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
   <ItemGroup>
