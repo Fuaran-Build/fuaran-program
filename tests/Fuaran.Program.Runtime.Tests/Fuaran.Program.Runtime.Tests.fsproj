@@ -7,6 +7,8 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="ProgramTests.fs" />
+    <Compile Include="DemandedStrictTests.fs" />
+    <!-- Program.fs is the Expecto entry point and stays last. -->
     <Compile Include="Program.fs" />
   </ItemGroup>
   <ItemGroup>

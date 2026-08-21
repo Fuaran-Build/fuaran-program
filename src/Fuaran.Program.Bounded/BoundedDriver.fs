@@ -150,6 +150,32 @@ let init (services: BoundedServices) (store: BoundedStore) (wire: WireTree) : Bo
       NodeCount = cost
       Services = services }
 
+/// Build a bounded session ONLY if this host can cover everything the tree is
+/// able to ask for — the pre-execution counterpart of the dispatch-time
+/// refusals, asked once of the whole tree instead of per event on whichever
+/// paths a session happens to take.
+///
+/// **Opt-in, and `init` remains the default.** The default posture is the one
+/// this loop has always had: construction succeeds, and an uncoverable demand
+/// is refused at the moment it is made, with the refusal recorded. That default
+/// is not timidity — a session whose tree names one effect the host declines is
+/// still a session that works for everything else, and refusing it wholesale
+/// would be a stricter policy than the interpreter's own. A host that would
+/// rather not start at all reaches for this.
+///
+/// `Error` carries EVERY finding, not the first: a host correcting its
+/// registration wants the whole list, and stopping at the first would make that
+/// an iterative guessing game.
+let initStrict
+    (coverage: HostCoverage)
+    (services: BoundedServices)
+    (store: BoundedStore)
+    (wire: WireTree)
+    : Result<BoundedSession, CoverageFinding list> =
+    match Demanded.check coverage (WireTree.reify wire) with
+    | [] -> Ok(init services store wire)
+    | findings -> Error findings
+
 let private rejected (r: BoundedReject) : BoundedStepOutput =
     { Patches = []
       Effects = []

@@ -33,6 +33,28 @@ per interaction, and a breach is a structured refusal, never a hang and never a 
 
 Bounded code + bounded cost is what makes a program safe to run untrusted on shared infrastructure.
 
+## Asking before running: the demanded-effect projection
+
+`Demanded.ofTree` answers, for any program tree, **what that program can ever ask for** — the client
+effects it can cause, the host calls it names, the state namespaces it touches — by a total static
+walk over the closed action vocabulary. It needs no type inference and reaches no fixpoint: the
+vocabulary is closed and the tree carries no code, so the walk enumerates rather than analyses. The
+result is a self-describing document (`Demanded.encode`), not a view onto a tree, so it can be
+emitted, stored and checked somewhere the tree never travels.
+
+`Demanded.check coverage tree` turns that into a verdict against one host, naming every demand the
+host cannot cover — before any event runs. It separates the two facts a host effect registry already
+separates: an **unregistered** effect is absent from the host and no policy makes it reachable, while
+a **gate-refused** one is present and declined. Only the second is a policy change.
+
+**The default posture is unchanged, and strict mode is an opt-in on top.** `BoundedDriver.init` and
+the client placement's `Program.mkBounded` still build a session for any tree, and an uncoverable
+effect is refused at the moment it is dispatched, with the refusal recorded. That is deliberate: a
+program naming one effect a host declines is still a program that works for everything else, and
+refusing it wholesale would be stricter than the interpreter's own behaviour. A host that would
+rather not start at all reaches for `BoundedDriver.initStrict` / `Program.mkBoundedStrict`, which
+check first and return every finding rather than the first.
+
 ## Design commitments
 
 The algebra's shape — a pipeline core, with richer control structure expressed as vocabulary atop it

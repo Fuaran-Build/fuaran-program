@@ -150,6 +150,39 @@ module Program =
           Services = services
           Subscription = None }
 
+    /// The host's coverage, read off the services it was constructed with.
+    ///
+    /// The client placement need not be TOLD what it covers — its effect
+    /// registry already is that declaration, and reading it removes the way the
+    /// two could disagree. Registered performers become the covered vocabulary
+    /// and the registry's own gate becomes the policy, so a pre-execution
+    /// verdict and a dispatch-time one are computed from the same two facts.
+    /// The host-call and state-namespace surfaces stay undeclared: the registry
+    /// says nothing about them, and inventing a declaration it did not make
+    /// would be this function asserting something the host never did.
+    let coverageOf (services: ProgramServices) : HostCoverage =
+        HostCoverage.nothing
+        |> HostCoverage.withEffects (EffectRegistry.registered services.Effects)
+        |> HostCoverage.withGate services.Effects.Gate
+
+    /// Build a program ONLY if this host can cover everything the tree is able
+    /// to ask for, checked BEFORE the initial render — so a refused tree has not
+    /// painted, subscribed or performed anything.
+    ///
+    /// **Opt-in, and `mkBounded` remains the default**, for the reason the
+    /// server placement's `initStrict` records: the standing posture is that an
+    /// uncoverable demand is refused where it is made and recorded there, which
+    /// keeps a program that is mostly serviceable serviceable. `Error` carries
+    /// every finding rather than the first.
+    let mkBoundedStrict
+        (services: ProgramServices)
+        (store: BoundedStore)
+        (wire: WireTree)
+        : Result<Program, CoverageFinding list> =
+        match Demanded.check (coverageOf services) (WireTree.reify wire) with
+        | [] -> Ok(mkBounded services store wire)
+        | findings -> Error findings
+
     let private rejected (program: Program) (r: ProgramReject) : Program * StepOutput =
         program,
         { Resolved = program.Resolved
