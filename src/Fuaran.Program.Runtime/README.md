@@ -50,6 +50,21 @@ untrusted by construction, and a default that assumed otherwise would contradict
 bounded path exists. The per-interaction budget (`MaxActions`, `MaxNodes`) is inherited from the
 shared budget module, so a breach means the same thing here as on a server session.
 
+## Checking coverage before the first render
+
+`Program.mkBoundedStrict` builds a program only if this host can cover everything the tree is able to
+ask for, using the shared package's demanded-effect projection. The coverage is not passed in: it is
+read off the effect registry the services already carry (`Program.coverageOf`), so a pre-execution
+verdict and a dispatch-time one are computed from the same two facts — what is registered, and what
+the gate permits — and cannot disagree.
+
+A refusal happens **before** the initial render, so a refused program has not painted, subscribed or
+performed anything, and it returns every finding rather than the first.
+
+`mkBounded` remains the default. An uncoverable effect is otherwise refused where it is dispatched
+and the denial is recorded, which keeps a mostly-serviceable program serviceable; strict mode is for
+a host that would rather not start at all.
+
 ## Hybrid mode
 
 Pure client-only operation is the default and needs no channel. Supplying an `IClientLiveChannel`
