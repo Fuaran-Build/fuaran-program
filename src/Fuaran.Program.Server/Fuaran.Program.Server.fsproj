@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>true</IsPackable>
+    <PackageId>Fuaran.Program.Server</PackageId>
+    <Description>Fuaran.Program.Server — the server-logic placement of the bounded program loop: run a named, host-registered handler as data behind a program tree's call action, with a closed server-effect vocabulary (query, op-apply, host call, patch, notify) behind a default-deny gate. Shares the interpreter, the resource budget and the binding re-resolution pass with the other placements rather than reimplementing them. A spike: no wire form is committed. Apache-2.0 licensed.</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageTags>fuaran;program;bounded;server;handler</PackageTags>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="ServerEffect.fs" />
+    <Compile Include="Handler.fs" />
+    <Compile Include="ServerSession.fs" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Fuaran.Program.Bounded\Fuaran.Program.Bounded.fsproj" />
+  </ItemGroup>
+  <!-- The UI-typed first instantiation (DECISIONS.md D4): this package consumes
+       the UI tier's published packages, and the dependency runs one way only. -->
+  <ItemGroup>
+    <PackageReference Include="FSharp.Core" />
+    <PackageReference Include="Fuaran.UI" />
+    <PackageReference Include="Fuaran.UI.Ops.Abstractions" />
+    <PackageReference Include="Fuaran.UI.Ops" />
+    <PackageReference Include="Fuaran.UI.Renderer.Core" />
+    <PackageReference Include="Fuaran.UI.OpStream.Replay" />
+    <PackageReference Include="Fuaran.UI.ServerDriven" />
+  </ItemGroup>
+</Project>

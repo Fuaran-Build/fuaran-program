@@ -1,13 +1,14 @@
 # Tests
 
-Four suites, each its own Expecto assembly runner, plus the Fable parity leg.
+Five suites, each its own Expecto assembly runner, plus the Fable parity leg.
 `pwsh ./run.ps1` runs them all; `-SkipFable` drops the last one.
 
 | Suite | What it pins |
 |---|---|
 | `Fuaran.Program.Tests` | the skeleton package |
-| `Fuaran.Program.Bounded.Tests` | the interpreter's invariants and the server placement's loop |
+| `Fuaran.Program.Bounded.Tests` | the interpreter's invariants and the server driver's loop |
 | `Fuaran.Program.Runtime.Tests` | the client placement's loop and the effect seam |
+| `Fuaran.Program.Server.Tests` | the server-logic placement: handlers, the server-effect seam, and tier-parity leg (d) |
 | `Fuaran.Program.Parity.Tests` | tier parity, .NET legs (a) + (b) |
 | `Fuaran.Program.Parity.Fable` | tier parity, leg (c) — the same runner under node |
 
@@ -22,11 +23,25 @@ events.json              the scripted events
 expected-resolved.json   one entry per step, index 0 = before any event
 ```
 
-Three legs read those same files: the server placement (`BoundedDriver`), the
-client placement on .NET, and the client placement compiled to JavaScript. The
-comparison is **per step**, and it reports the FIRST divergence — comparing only
-final trees would pass a fold that diverges at step 2 and re-converges at step 5,
-which is precisely the bug this family exists to catch.
+Four legs read those same files: the server driver (`BoundedDriver`), the client
+placement on .NET, the client placement compiled to JavaScript, and the
+server-logic placement (`ServerSession`). The comparison is **per step**, and it
+reports the FIRST divergence — comparing only final trees would pass a fold that
+diverges at step 2 and re-converges at step 5, which is precisely the bug this
+family exists to catch.
+
+Leg (d) lives in `Fuaran.Program.Server.Tests` rather than in the shared runner,
+because the shared runner is Fable-clean — leg (c) compiles it to JavaScript, and
+a server loop has no browser leg by definition. It reads the same files through
+the same loader; a separate corpus would prove nothing.
+
+**One fixture is read two ways.** `server-handler-call`'s tree names a handler
+through a call action. With no handler registered — which is every leg but
+(d)'s second reading — the arm is a documented no-op, so the fixture pins that
+the server-logic placement inherits the shared algebra and diverges *only* where
+a host has registered something. With the handler registered, the same tree and
+the same event script exercise the server-effect arms. Same fixture, different
+host: the axis the family exists to vary.
 
 **Regenerating:** `dotnet run --project tests/Fuaran.Program.Parity.Tests --
 --emit-fixtures`. The emit refuses to write an expectation while the placements

@@ -143,6 +143,23 @@ let private coverageFloorPassThrough =
               bound "readout" "rows" "init" ])
         [ click "set" ]
 
+/// A call action naming a SERVER HANDLER. At the two placements this module's
+/// legs drive, the arm is a documented no-op — and that is precisely what this
+/// fixture pins, from the server placement's birth: a tree naming a handler must
+/// behave identically everywhere a handler cannot run, so the third placement's
+/// divergence from the other two is exactly the handler and nothing else.
+///
+/// The server placement's own suite drives this same triple with a handler
+/// registered for the endpoint, which is where the server-effect arms are
+/// exercised. Two readings of one fixture: inert here, effectful there.
+let private serverHandlerCall =
+    fixture
+        "server-handler-call"
+        (dash
+            [ button "refresh" (Action.Call("/handlers/refresh", None, None))
+              bound "readout" "rows" "init" ])
+        [ click "refresh" ]
+
 let all: Fixture list =
     [ setStateRebinds
       chainFolds
@@ -150,4 +167,5 @@ let all: Fixture list =
       closureFreeEffects
       refusedNavigate
       coverageFloorReactive
-      coverageFloorPassThrough ]
+      coverageFloorPassThrough
+      serverHandlerCall ]

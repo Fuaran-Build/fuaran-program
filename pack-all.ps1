@@ -45,6 +45,7 @@ $producers = @(
     'src\Fuaran.Program\Fuaran.Program.fsproj'
     'src\Fuaran.Program.Bounded\Fuaran.Program.Bounded.fsproj'
     'src\Fuaran.Program.Runtime\Fuaran.Program.Runtime.fsproj'
+    'src\Fuaran.Program.Server\Fuaran.Program.Server.fsproj'
 )
 
 foreach ($proj in $producers) {

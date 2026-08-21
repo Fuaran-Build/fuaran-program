@@ -5,11 +5,15 @@ This repo is the **Fuaran program domain**: programs as data. Where the UI tier 
 logic-tree algebra (sequencing, typed branching, named effects), the interpreters that run it, and
 the program loop that connects it to a host. Ships as the `Fuaran.Program.*` NuGet package set.
 
-**Status: first substantive surface landed.** `Fuaran.Program.Bounded` now carries the bounded
-interpreter, the binding re-resolution pass, and the server placement of the program loop — moved
-whole from the UI tier's server-driven package, so exactly one interpreter serves every placement.
-Still ahead: the client program loop (`Fuaran.Program.Runtime`), which runs a wire-decoded tree
-interactively in the browser with no hand-authored update function.
+**Status: three placements, one interpreter.** `Fuaran.Program.Bounded` carries the bounded
+interpreter, the binding re-resolution pass, the resource budget and the server driver — moved whole
+from the UI tier's server-driven package, so exactly one interpreter serves every placement.
+`Fuaran.Program.Runtime` runs a wire-decoded tree interactively in the browser with no hand-authored
+update function. `Fuaran.Program.Server` is a **spike** at the third placement: a generated tree
+names a host-registered handler, and the handler runs as data behind a closed, default-deny
+server-effect vocabulary. It commits no wire form — see
+[`docs/server-handler-atomicity.md`](docs/server-handler-atomicity.md) for the questions the wire cut
+inherits.
 
 The dependency direction is settled and one-way — this repo consumes published `Fuaran.UI.*`
 packages, and nothing in the UI tier references back ([DECISIONS.md](DECISIONS.md) D4/D5). That is
@@ -38,14 +42,19 @@ to run untrusted — the properties the whole domain exists to provide.
 ```
 fuaran-program/
 ├── src/Fuaran.Program/                    # the domain package (skeleton — About only, today)
-├── src/Fuaran.Program.Bounded/            # the bounded interpreter + re-resolution + server loop
-├── tests/Fuaran.Program.Tests/            # Expecto suite (skeleton)
-├── tests/Fuaran.Program.Bounded.Tests/    # the bounded invariant + driver suite
+├── src/Fuaran.Program.Bounded/            # the bounded interpreter + re-resolution + budget + server driver
+├── src/Fuaran.Program.Runtime/            # the client (browser) placement of the program loop
+├── src/Fuaran.Program.Server/             # the server-logic placement — handlers as data (spike)
+├── docs/                                  # design notes: open questions recorded as input to later cuts
+├── samples/client-program/                # the browser placement, wired to a real host
+├── tests/                                 # one Expecto assembly runner per suite (see tests/README.md)
 ├── Fuaran.Program.slnx
+├── pack-all.ps1                           # pack the producers into the shared local feed
 └── run.ps1                                # tool restore -> format -> build -> test [-> pack]
 ```
 
-Every test project is its own Expecto assembly runner; `run.ps1` invokes each in turn.
+Every test project is its own Expecto assembly runner; `run.ps1` invokes each in turn, then runs the
+tier-parity family's Fable leg under node.
 
 ## Build pipeline
 

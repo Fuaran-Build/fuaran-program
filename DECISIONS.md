@@ -70,3 +70,9 @@ materialises — a single-witness abstraction bakes its witness's assumptions in
 is timed empirically even though the domain's existence is not. Consequence: `Fuaran.Program.*`
 packages may reference published `Fuaran.UI.*` packages during this stage; the dependency
 direction is re-examined at the generic-tier cut.
+
+## D6 — `fuaran.program/logic-tree` is the by-id reference vocabulary for placing a program tree (2026-08-22)
+
+A composition surface that carries a program tree holds it in an **opaque slot under the namespaced
+id `fuaran.program/logic-tree`** and refers to it by that id rather than by structural position, so
+the two sides agree on a name without either taking a type dependency on the other.
