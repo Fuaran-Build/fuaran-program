@@ -106,6 +106,46 @@ type ReplaySafety =
     | Unsafe
     | Unknown
 
+/// WHY a handler is not provably re-runnable — a closed vocabulary of DERIVED
+/// facts.
+///
+/// Every arm is something the walk demonstrated about a declared form, and not
+/// one of them is a string a document supplied. That is what lets a reason
+/// travel out of this subsystem — into a diagnostic, a projection, a capability
+/// manifest — under exactly the log-safety rule the rest of it keeps: a
+/// diagnostic carries the derived capability, never a name off the wire.
+///
+/// Two arms are PROOFS that a re-run reaches outside; the other four are places
+/// the walk cannot decide. The split is not cosmetic — it is what `gradeOfDefect`
+/// reads, and it is why `unknown` is never rounded to a neighbour.
+[<RequireQualifiedAccess>]
+type ReplayDefect =
+    /// An op is not provably absolutely addressed: it names no non-empty target
+    /// node, so this walk cannot tell an absolute address from a position
+    /// relative to a sibling count.
+    | RelativeAddressing
+    /// An op does not encode at all, so there is no document to read an address
+    /// off. Distinct from the above because "cannot decide the addressing" and
+    /// "cannot read the op" send a reader to different places.
+    | UnencodableOp
+    /// A state write takes its value from a binding, resolved at dispatch
+    /// against a store that has moved.
+    | NonLiteralWrite
+    /// An action arm this walk does not decide.
+    | UndecidableAction
+    /// A host call: it commits somewhere this host does not own.
+    | OpaqueHostCall
+    /// A notification: a second run ships the message a second time.
+    | OutboundNotification
+
+/// One reason, positioned.
+///
+/// The stage is an ORDINAL, not a name. A stage carries no identifier of its
+/// own, and a position is the only thing that addresses one without echoing a
+/// string the document chose — which is the same rule as the vocabulary above,
+/// applied to the locator rather than to the finding.
+type ReplayReason = { Stage: int; Defect: ReplayDefect }
+
 /// A composition surface naming a program by identifier. One bounded reference
 /// and nothing else — the opaqueness is enforced by what this record OMITS,
 /// which is why the decoder refuses an undeclared member rather than consulting
@@ -325,37 +365,76 @@ module ProgramWire =
         | _, ReplaySafety.Unknown -> ReplaySafety.Unknown
         | _ -> ReplaySafety.Safe
 
-    /// The classification of an ENCODED action.
+    /// The grade one defect forces.
+    ///
+    /// The two outward-reaching arms are the only PROOFS; everything else is a
+    /// place the walk could not decide, and the specification is explicit that
+    /// such a place is reported as undecided rather than rounded to either
+    /// neighbour. A classification that fired on ordinary correct handlers would
+    /// be one people learn to scroll past.
+    let gradeOfDefect (defect: ReplayDefect) : ReplaySafety =
+        match defect with
+        | ReplayDefect.OpaqueHostCall
+        | ReplayDefect.OutboundNotification -> ReplaySafety.Unsafe
+        | ReplayDefect.RelativeAddressing
+        | ReplayDefect.UnencodableOp
+        | ReplayDefect.NonLiteralWrite
+        | ReplayDefect.UndecidableAction -> ReplaySafety.Unknown
+
+    /// The verdict a defect list carries: no defect is the only proof of `Safe`.
+    let verdictOfDefects (defects: ReplayDefect list) : ReplaySafety =
+        defects
+        |> List.fold (fun acc d -> worst acc (gradeOfDefect d)) ReplaySafety.Safe
+
+    /// The verdict a reason list carries. `worst` is associative and
+    /// commutative, so a verdict computed over reasons gathered from every stage
+    /// is the same one computed stage by stage — which is what lets the reasons
+    /// be the primitive and the classification be derived from them.
+    let verdictOfReasons (reasons: ReplayReason list) : ReplaySafety =
+        reasons |> List.map _.Defect |> verdictOfDefects
+
+    /// The defects of an ENCODED action.
     ///
     ///   Call      — inert inside a handler stage, so re-running it changes
     ///               nothing. That is not a property of the action; it is D7's
     ///               deliberate boundary, and the classification reads it.
-    ///   Chain     — the weakest of its parts.
+    ///   Chain     — the defects of its parts.
     ///   SetState  — a literal write is re-runnable; one taking its value from a
     ///               binding is resolved at dispatch against a store that has
     ///               moved, so it is undecidable rather than unsafe.
     ///   otherwise — undecidable, and reported as such.
-    let rec replaySafetyOfAction (action: JVal) : ReplaySafety =
+    let rec replayDefectsOfAction (action: JVal) : ReplayDefect list =
         match tag action with
-        | Some "Call" -> ReplaySafety.Safe
+        | Some "Call" -> []
         | Some "Chain" ->
             match tryMember "ops" action with
-            | Some(JArr items) ->
-                items
-                |> List.fold (fun acc a -> worst acc (replaySafetyOfAction a)) ReplaySafety.Safe
-            | _ -> ReplaySafety.Unknown
+            | Some(JArr items) -> items |> List.collect replayDefectsOfAction |> List.distinct
+            | _ -> [ ReplayDefect.UndecidableAction ]
         | Some "SetState" ->
             match tryMember "valueFrom" action with
-            | Some _ -> ReplaySafety.Unknown
-            | None -> ReplaySafety.Safe
-        | _ -> ReplaySafety.Unknown
+            | Some _ -> [ ReplayDefect.NonLiteralWrite ]
+            | None -> []
+        | _ -> [ ReplayDefect.UndecidableAction ]
 
-    /// The classification of an ENCODED tree-op: an op naming a target node
-    /// addresses it absolutely, and anything else this walk cannot decide.
-    let replaySafetyOfOp (op: JVal) : ReplaySafety =
+    /// The defects of an ENCODED tree-op: an op naming a target node addresses
+    /// it absolutely, and anything else this walk cannot decide.
+    let replayDefectsOfOp (op: JVal) : ReplayDefect list =
         match tryString "target" op with
-        | Some target when target <> "" -> ReplaySafety.Safe
-        | _ -> ReplaySafety.Unknown
+        | Some target when target <> "" -> []
+        | _ -> [ ReplayDefect.RelativeAddressing ]
+
+    /// The classification of an ENCODED action — the verdict its defects carry.
+    ///
+    /// Defined THROUGH the defect walk rather than beside it. A second walk
+    /// producing the verdict directly would be a second copy of the rule, free
+    /// to drift from the reasons that are supposed to explain it, and a reason
+    /// that disagrees with its own verdict is worse than no reason at all.
+    let replaySafetyOfAction (action: JVal) : ReplaySafety =
+        replayDefectsOfAction action |> verdictOfDefects
+
+    /// The classification of an ENCODED tree-op — the verdict its defects carry.
+    let replaySafetyOfOp (op: JVal) : ReplaySafety =
+        replayDefectsOfOp op |> verdictOfDefects
 
     /// The wire spelling of a classification, as a manifest declares it.
     let replaySafetyTag (safety: ReplaySafety) : string =
@@ -363,6 +442,18 @@ module ProgramWire =
         | ReplaySafety.Safe -> "safe"
         | ReplaySafety.Unsafe -> "unsafe"
         | ReplaySafety.Unknown -> "unknown"
+
+    /// The wire spelling of a defect. A stable token rather than prose: a reason
+    /// is carried in a projection document a consumer compares by value, so the
+    /// spelling is part of the contract and not a message.
+    let replayDefectTag (defect: ReplayDefect) : string =
+        match defect with
+        | ReplayDefect.RelativeAddressing -> "relative-addressing"
+        | ReplayDefect.UnencodableOp -> "unencodable-op"
+        | ReplayDefect.NonLiteralWrite -> "non-literal-write"
+        | ReplayDefect.UndecidableAction -> "undecidable-action"
+        | ReplayDefect.OpaqueHostCall -> "opaque-host-call"
+        | ReplayDefect.OutboundNotification -> "outbound-notification"
 
     // ─── the cross-layer reference ───────────────────────────────────────────
 

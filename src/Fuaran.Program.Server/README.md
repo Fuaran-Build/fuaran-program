@@ -84,6 +84,35 @@ The question that remains open — idempotency on replay — is written down in
 [`docs/server-handler-atomicity.md`](../../docs/server-handler-atomicity.md) as input to the wire cut,
 rather than being settled silently in code.
 
+## Replay: two modes, and a classification that says why
+
+A handler's replay safety is **derived from its declared form** — `safe`, `unsafe`, or `unknown`,
+where the middle value is the point: only a proof is a finding, and an undecidable stage is reported
+as undecided rather than guessed in either direction. `HandlerWire.replayReasons` is the primitive
+and the classification is the verdict of its reasons, so the two cannot disagree; each reason names a
+stage ORDINAL and a defect from a closed vocabulary — `relative-addressing`, `non-literal-write`,
+`opaque-host-call` and the rest — never a string the handler document supplied.
+
+`Replay.admit` is the decision that consumes it. A host names which replay it is in and gets what it
+is admitted to do:
+
+- **`Audit`** — apply the recorded ops and nothing else. The handler is not consulted at all, which
+  is the code shape of "effect-free unconditionally": there is nothing here for a later edit to make
+  conditional on a classification.
+- **`Resume`** — re-evaluate read stages, and only those. An `unsafe` handler is **refused** with a
+  typed code carrying its reasons; an `unknown` one proceeds, carrying its reasons, because refusing
+  it would round "no proof available" up to a proof of harm. A host explicitly configured to accept
+  re-execution is admitted and receives an override **record**, so a resume that overrode a refusal
+  is afterwards distinguishable from one that never needed to.
+
+This is the admission decision, not a resume engine: it answers whether a handler may be resumed and
+what a resumer may re-evaluate, from data alone, before anything runs. Performing the re-evaluation
+is the session's job.
+
+`Replay.ofTreeAndHandlers` is the projection join — the capability envelope below, with each
+reachable handler's posture on it, so a manifest can state replay posture per handler without
+re-deriving it.
+
 ## Asking before running: the capability envelope, both placements at once
 
 `ServerDemanded.ofTreeAndHandlers handlers tree` answers **what this program on this host can ever

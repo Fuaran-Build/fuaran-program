@@ -260,7 +260,12 @@ let tests =
               Expect.equal (Demanded.encode a) (Demanded.encode b) "and encode to the same bytes"
 
               let json = Demanded.encode a
-              Expect.stringContains json "\"version\":2" "the version moved with the shape"
+              Expect.stringContains json "\"version\":3" "the version moved with the shape"
+
+              // This walk contributes no posture — the join is a later act, and
+              // the key is present and EMPTY rather than absent so the two facts
+              // stay distinguishable. See `ReplayTests` for the joined document.
+              Expect.stringContains json "\"replay\":[]" "the walk ran and joined no posture"
 
               Expect.stringContains
                   json

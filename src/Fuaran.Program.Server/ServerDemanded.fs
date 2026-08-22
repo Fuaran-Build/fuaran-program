@@ -74,7 +74,15 @@ module ServerDemanded =
         { Effects = []
           Capabilities = []
           Functions = []
-          Channels = [] }
+          Channels = []
+          // The replay posture is joined AFTER this walk, by the placement's
+          // replay module, and every projection this file produces therefore
+          // carries an empty one. The derivation it needs sits above the wire
+          // codec in compile order and the walk sits below it, which is a real
+          // constraint rather than an inconvenience: it keeps this file's job
+          // "what does this ask of a host" and leaves "may this be re-run"
+          // where the enforcement is.
+          Replay = [] }
 
     /// The projection a server walk starts from: nothing demanded, but a server
     /// tier PRESENT. Seeding with it is what makes "a walk ran and found
@@ -203,14 +211,21 @@ module ServerDemanded =
     /// either in isolation. A registered handler no tree reaches contributes
     /// nothing: it is a capability the host holds, not one this program can
     /// exercise.
+    /// The registered handlers a tree can actually NAME.
+    ///
+    /// One hop, and structurally so — see the header. Exposed because the replay
+    /// posture is joined onto this document by a later module and must be joined
+    /// for exactly the same handler set: two reachability rules would be two
+    /// answers to "which handlers is this document about", and the projection
+    /// would then describe a set nobody computed.
+    let reachable (handlers: Map<string, Handler>) (root: Node<obj>) : Handler list =
+        Demanded.calledEndpoints (Demanded.ofTree root)
+        |> List.choose (fun endpoint -> Map.tryFind endpoint handlers)
+
     let ofTreeAndHandlers (handlers: Map<string, Handler>) (root: Node<obj>) : DemandedProjection =
         let tree = Demanded.ofTree root
 
-        let reachable =
-            Demanded.calledEndpoints tree
-            |> List.choose (fun endpoint -> Map.tryFind endpoint handlers)
-
-        Demanded.union (tree :: seed :: (reachable |> List.map ofHandler))
+        Demanded.union (tree :: seed :: (reachable handlers root |> List.map ofHandler))
 
     /// A server host's coverage, read off the effect registry it was wired with
     /// rather than declared a second time.
