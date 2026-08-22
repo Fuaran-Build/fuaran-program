@@ -77,6 +77,32 @@ The question that remains open — idempotency on replay — is written down in
 [`docs/server-handler-atomicity.md`](../../docs/server-handler-atomicity.md) as input to the wire cut,
 rather than being settled silently in code.
 
+## Asking before running: the capability envelope, both placements at once
+
+`ServerDemanded.ofTreeAndHandlers handlers tree` answers **what this program on this host can ever
+ask for**, as one document spanning both placements: the tree's own client-tier demands, plus, for
+every handler the tree can NAME, that handler's server-effect discriminators, the capabilities its
+gate will be asked about, the host functions and channels it reaches, and the state namespaces its
+landing slots write. Every one of those names is read off the effect value through the same two
+functions the interpreter and the gate use, so a demanded capability and a gated one are the same
+string by construction rather than by agreement.
+
+It is exact for a stronger reason than the client tier's. A handler is host-registered data whose
+stage list is fixed before any untrusted tree arrives, so the walk is not inferring an envelope — it
+is reading one the host already wrote down.
+
+`ServerSession.initStrict` is the opt-in construction path over it, and it reads its server-side
+coverage off the effect registry the session was wired with rather than asking for it twice.
+Unregistered and gate-refused stay **separate findings**, mirroring the runtime denial vocabulary: a
+host function with no performer is absent whatever the policy says, and only the second is fixed by a
+policy change. `init` remains the default — an uncoverable demand is still refused where it is made.
+
+Three silences are deliberate. An endpoint with no registered handler contributes nothing and yields
+no finding: that string is the one value in this subsystem that comes off the wire, and a
+pre-execution finding naming it would be exactly the leak the payload-free denials avoid. A call
+action inside a stage demands nothing, because it is the documented no-op. And a query's landing slot
+is not a demand — the source it reads is.
+
 ## Refusing an unsatisfiable handler before the tree runs
 
 The schema coupling between a query and the node that reads its result used to be a runtime failure,
@@ -84,10 +110,11 @@ and a deliberately thin one — the diagnostic carries the evaluation error's di
 its message, because the message quotes names taken from a pipeline that is host-declared today and
 wire-carried after the cut.
 
-`ServerSession.initStrict` is the other half of that trade. It builds a session only if this host can
-cover what the tree can demand **and** its own queries can satisfy what the tree reads, deriving each
-pipeline's output schema statically (`Schema.ofTransform`) and checking it against the readers' declared
-columns. The refusal names the column, the reader and what the query does provide — it can, because it
+`ServerSession.initStrict`, above, is the other half of that trade — its second half. Alongside the
+coverage question it derives each pipeline's output schema statically (`Schema.ofTransform`) and checks
+it against the readers' declared columns. The two ask different questions and their findings stay apart
+(`ServerStrictFinding`): a host correcting the first edits its registry, and one correcting the second
+edits a pipeline or a grid. The refusal names the column, the reader and what the query does provide — it can, because it
 happens before the untrusted tree is involved. The runtime posture is unchanged.
 
 `ServerSession.querySchemaReport` returns the same walk as data, including what it declined to decide:

@@ -219,10 +219,13 @@ module ServerSession =
     /// Every query the registered handlers declare, with the handler and slot it
     /// belongs to.
     ///
-    /// Every REGISTERED handler, not only the ones this tree names. A handler
-    /// whose pipeline cannot run against its own source is a defect in the
-    /// host's registration, and it is one whether or not today's tree happens to
-    /// call it — the tree decides which handlers RUN, never which are correct.
+    /// Every REGISTERED handler, not only the ones this tree names. The
+    /// demanded-effect walk beside this one deliberately covers only the
+    /// handlers a tree can NAME, because an unreachable capability is not a
+    /// demand. Correctness is the other way round: a handler whose pipeline
+    /// cannot run against its own source is a defect in the host's registration
+    /// whether or not today's tree happens to call it — the tree decides which
+    /// handlers RUN, never which are correct.
     let private declaredQueries
         (services: ServerServices)
         : (QueryOrigin * Fuaran.Core.DataSource * Fuaran.Core.Transform list) list =
@@ -253,19 +256,44 @@ module ServerSession =
             QuerySchema.checkQuery services.SourceSchemas origin source pipeline readers)
         |> QuerySchemaReport.concat
 
-    /// Build a session ONLY if this host can cover what the tree can ask for AND
-    /// its own queries can satisfy what the tree reads.
+    /// This host's coverage, with its SERVER tier read off the services it was
+    /// wired with and its client tier taken from the caller.
     ///
-    /// **Opt-in, and `init` remains the default** — the same posture the bounded
-    /// driver's strict construction takes, and for the same reason: a session
-    /// whose tree names one uncoverable effect still works for everything else,
-    /// and refusing it wholesale is a stricter policy than the interpreter's
-    /// own. What is new here is the second half. The effect check asks what the
-    /// tree can DEMAND; the schema check asks whether what the host will PRODUCE
-    /// fits what the tree will READ — and that question had no answer before
-    /// execution at all, only a thin runtime error after it.
+    /// The asymmetry is the honest one: read what you have, be told what you do
+    /// not. The effect registry here IS this host's server-side declaration, so
+    /// reading it removes the way the two could disagree. Client effects are the
+    /// other half — a `Compute` stage's closure-free effects leave this
+    /// placement entirely and are performed by whatever client is connected, and
+    /// this session holds no registry for them. Asserting either "covered" or
+    /// "uncovered" on the caller's behalf would be a claim it cannot make, so it
+    /// asks — the same reason the bounded driver's `initStrict` takes coverage
+    /// as an argument rather than deriving it.
+    let coverageOf (coverage: HostCoverage) (services: ServerServices) : HostCoverage =
+        coverage
+        |> HostCoverage.withServer (ServerDemanded.coverageOfRegistry services.Effects)
+
+    /// Build a session ONLY if this host can cover everything the program is able
+    /// to ask for ACROSS BOTH PLACEMENTS — the tree's own demands and those of
+    /// every handler the tree can name — AND its own queries can satisfy what
+    /// the tree reads. Both checked BEFORE any event runs.
     ///
-    /// `Error` carries EVERY finding from both checks, never the first: a host
+    /// The two halves ask genuinely different questions, which is why they are
+    /// two and why their findings stay apart. Coverage asks what the program can
+    /// DEMAND and whether this host offers it; the schema check asks whether
+    /// what the host will PRODUCE fits what the tree will READ — a question that
+    /// had no pre-execution answer at all, only a deliberately thin runtime
+    /// error after the fact.
+    ///
+    /// **Opt-in, and `init` remains the default**, for the reason the other two
+    /// placements' strict paths record: the standing posture is that an
+    /// uncoverable demand is refused where it is made and recorded there, which
+    /// keeps a program that is mostly serviceable serviceable. A host that would
+    /// rather not start at all reaches for this — and at THIS placement the
+    /// argument for reaching is strongest, since a handler mutates durable state
+    /// and the demand being refused is the host's own registration rather than
+    /// anything the tree chose.
+    ///
+    /// `Error` carries EVERY finding from both halves, never the first: a host
     /// correcting its registration wants the whole list, and stopping early
     /// makes that an iterative guessing game.
     let initStrict
@@ -274,10 +302,12 @@ module ServerSession =
         (store: BoundedStore)
         (wire: WireTree)
         : Result<ServerSession, ServerStrictFinding list> =
-        let tree = WireTree.reify wire
+        let projection =
+            ServerDemanded.ofTreeAndHandlers services.Handlers (WireTree.reify wire)
 
         let findings =
-            (Demanded.check coverage tree |> List.map ServerStrictFinding.Coverage)
+            (Demanded.checkProjection (coverageOf coverage services) projection
+             |> List.map ServerStrictFinding.Coverage)
             @ ((querySchemaReport services wire).Findings
                |> List.map ServerStrictFinding.QuerySchema)
 

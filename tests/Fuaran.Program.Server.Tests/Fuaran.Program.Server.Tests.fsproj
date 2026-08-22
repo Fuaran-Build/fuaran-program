@@ -8,6 +8,7 @@
   <ItemGroup>
     <Compile Include="ServerEffectTests.fs" />
     <Compile Include="HandlerLoopTests.fs" />
+    <Compile Include="ServerDemandedTests.fs" />
     <Compile Include="QuerySchemaTests.fs" />
     <Compile Include="ServerParityTests.fs" />
     <Compile Include="Program.fs" />

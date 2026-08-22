@@ -14,6 +14,9 @@
   <ItemGroup>
     <Compile Include="ServerEffect.fs" />
     <Compile Include="Handler.fs" />
+    <!-- ServerDemanded must precede ServerSession: the session's strict
+         construction path consults the projection before it builds a session. -->
+    <Compile Include="ServerDemanded.fs" />
     <Compile Include="ServerSession.fs" />
   </ItemGroup>
   <ItemGroup>

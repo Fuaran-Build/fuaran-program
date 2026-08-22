@@ -47,6 +47,20 @@ open Fuaran.UI.ServerDriven
 //  matches are over closed DUs with the catch-all carrying a stated reason);
 //  the first is a slot addition the compiler cannot see, and is the one to
 //  remember.
+//
+//  ── Two placements, one document ────────────────────────────────────────────
+//  A tree is only half of what a session can ask for. At the SERVER placement a
+//  tree's call action reaches a host-registered handler, and that handler's
+//  stage list names effects, host functions and channels of its own — an
+//  envelope this walk cannot see, because a handler is not in the tree.
+//
+//  So the document carries a second, OPTIONAL tier. The tier's SHAPES live
+//  here, beside the client tier's, because a projection is a wire document and
+//  a document with half its vocabulary in another package is not one. The WALK
+//  that fills it does not: it reads a placement's own handler and effect
+//  vocabulary, so it lives with that placement, and reaches this file only
+//  through `ofAction` / `union` / `withServer`. That split is why this package
+//  still knows nothing about handlers while the document describes them.
 // ============================================================================
 
 /// One host call a program tree names. Both fields are AUTHOR-DECLARED names,
@@ -83,6 +97,51 @@ type StateNamespaceDemand =
         Read: bool
     }
 
+/// One host function a server-placement handler names.
+///
+/// Both strings are host-authored — a handler is host-registered data — and they
+/// are carried TOGETHER because they are checked against different halves of a
+/// host's offer and neither is derivable from the other without re-spelling the
+/// namespace prefix by hand, which is the drift this projection exists to make
+/// impossible.
+type ServerFunctionDemand =
+    {
+        /// The REGISTRATION key: the name a performer is registered under.
+        Function: string
+        /// The CAPABILITY the policy gate is asked about for this call —
+        /// the function's name inside the host-function namespace. Produced by
+        /// the placement's own `capability` function on the effect itself, so a
+        /// demanded capability and a gated one are the same string by
+        /// construction rather than by agreement.
+        Capability: string
+    }
+
+/// What a SERVER placement's handler registration can ever ask of its host —
+/// the second tier of the document, and the half a program tree cannot express.
+///
+/// Every list is DISTINCT and SORTED, on the same terms as the client tier.
+type ServerDemand =
+    {
+        /// The server-effect discriminators the reachable handlers can emit —
+        /// the coarse vocabulary, a host function's arm included. DESCRIPTIVE
+        /// rather than checked: it answers "does this ever mutate, ever reach
+        /// outside" for a reader or a capability manifest, and the two lists
+        /// below are what a verdict is computed from.
+        Effects: string list
+        /// The gate-facing capabilities of the arms whose capability IS their
+        /// discriminator — every arm but the host-function one, which is
+        /// namespaced per function and so appears in `Functions` instead.
+        /// Checked against the host's gate.
+        Capabilities: string list
+        /// The host functions the handlers name.
+        Functions: ServerFunctionDemand list
+        /// Named channels the handlers reach beyond their host functions: a
+        /// notification channel, a by-reference data source a query names. Same
+        /// shape as the client tier's host calls, and checked the same way —
+        /// only against a host that DECLARED a surface.
+        Channels: HostCallDemand list
+    }
+
 /// What a program tree can ever ask of its host, as data.
 ///
 /// **This is a document, not a view onto a tree.** It is self-describing
@@ -112,6 +171,15 @@ type DemandedProjection =
         /// Node ids that accept events but whose actions are closure-held, so
         /// the wire cannot see them. Empty for a decoded tree — see the header.
         OpaqueHandlers: string list
+        /// The SERVER placement's tier, when one was projected.
+        ///
+        /// `None` and `Some` with empty lists are DIFFERENT facts, deliberately:
+        /// `None` says no server walk was performed — this document describes a
+        /// tree and nothing else — while an empty tier says a walk ran and the
+        /// reachable handlers demand nothing. A consumer that collapsed the two
+        /// would read "not asked" as "asked, and the answer was nothing", which
+        /// is the reading a coverage check must never make.
+        Server: ServerDemand option
     }
 
 /// What a host offers, against which a projection is checked.
@@ -127,11 +195,38 @@ type DemandedProjection =
 /// for naming one would refuse most trees for a capability nothing was going to
 /// perform. A host that genuinely brokers those calls declares its surface and
 /// gets the check; one that does not is not nagged about it.
-type HostCoverage =
-    { Effects: Set<string>
+/// What a SERVER host offers, against which a projection's server tier is
+/// checked. The same two-fact split as `HostCoverage` above, because the server
+/// placement's registry draws the same line: a performer is registered under a
+/// function name (the VOCABULARY), and a gate decides per capability (the
+/// POLICY). The four arms that need no performer are always available and only
+/// ever meet the gate.
+///
+/// `Channels` is an OPTIONAL declaration (`None` = unconstrained), for the
+/// reason the client tier's `HostCalls` is: a host brokering notifications and
+/// named data sources through opaque functions cannot enumerate them, and
+/// refusing a handler for naming one against a host that never claimed a surface
+/// would be a finding nobody can act on.
+type ServerCoverage =
+    { HostFunctions: Set<string>
       Gate: string -> bool
-      HostCalls: Set<string> option
-      StateNamespaces: Set<string> option }
+      Channels: Set<string> option }
+
+type HostCoverage =
+    {
+        Effects: Set<string>
+        Gate: string -> bool
+        HostCalls: Set<string> option
+        StateNamespaces: Set<string> option
+        /// The SERVER tier's offer. `None` — the default — means this host made no
+        /// server-side declaration, and NO server finding is ever produced against
+        /// it. That is deliberately "unconstrained" rather than "covers nothing":
+        /// most hosts have no server placement at all, and a client host checked
+        /// against a document carrying a server tier should not be told it fails
+        /// to offer capabilities it was never asked to have. A server host builds
+        /// from `ServerCoverage.nothing`, which IS default-deny.
+        Server: ServerCoverage option
+    }
 
 /// Why a host cannot cover a program tree. Each names the demanded thing; none
 /// carries a payload value.
@@ -152,6 +247,50 @@ type CoverageFinding =
     /// The tree touches a state namespace outside the host's DECLARED set.
     /// Only ever produced when the host declared one.
     | UncoveredStateNamespace of ns: string
+    /// A reachable handler names a host function this host registered no
+    /// performer for. The server-tier counterpart of `UnregisteredEffect`, and a
+    /// separate arm from it because `Notify` exists in BOTH vocabularies — a
+    /// finding that named only the string would leave a host guessing which
+    /// placement it had failed to serve.
+    | UnregisteredServerFunction of fn: string
+    /// A reachable handler names a capability this host's server policy gate
+    /// refuses. Separate from `UnregisteredServerFunction` for the reason the
+    /// runtime denial DU keeps its two arms apart: only this one is resolved by
+    /// changing policy.
+    | ServerGateRefusesCapability of capability: string
+    /// A reachable handler names a channel outside the host's DECLARED server
+    /// channel surface. Only ever produced when the host declared one.
+    | UncoveredServerChannel of channel: string * name: string
+
+module ServerCoverage =
+
+    /// Covers nothing: no registered host function, a gate that refuses every
+    /// capability, and no declared channel surface. The DEFAULT to build from,
+    /// matching the server placement's own registry default.
+    let nothing: ServerCoverage =
+        { HostFunctions = Set.empty
+          Gate = fun _ -> false
+          Channels = None }
+
+    /// Declare the host functions the server registered. Registering does not
+    /// permit — the gate still decides, exactly as at dispatch time.
+    let withFunctions (names: string seq) (coverage: ServerCoverage) : ServerCoverage =
+        { coverage with
+            HostFunctions = Set.ofSeq names }
+
+    /// Replace the policy gate.
+    let withGate (gate: string -> bool) (coverage: ServerCoverage) : ServerCoverage = { coverage with Gate = gate }
+
+    /// Allow every capability. Named, not default — and it still cannot reach an
+    /// unregistered host function, because that half of the vocabulary is closed
+    /// by registration rather than by policy.
+    let permissive (coverage: ServerCoverage) : ServerCoverage = withGate (fun _ -> true) coverage
+
+    /// Declare the server channel surface. Until this is called the surface is
+    /// unconstrained and no channel finding is ever produced.
+    let withChannels (names: string seq) (coverage: ServerCoverage) : ServerCoverage =
+        { coverage with
+            Channels = Some(Set.ofSeq names) }
 
 module HostCoverage =
 
@@ -166,7 +305,8 @@ module HostCoverage =
         { Effects = Set.empty
           Gate = fun _ -> false
           HostCalls = None
-          StateNamespaces = None }
+          StateNamespaces = None
+          Server = None }
 
     /// Declare the effect performers the host registered. Registering does not
     /// permit — the gate still decides, exactly as at dispatch time.
@@ -194,13 +334,33 @@ module HostCoverage =
         { coverage with
             StateNamespaces = Some(Set.ofSeq names) }
 
+    /// Attach a server-tier offer. Until this is called no server finding is
+    /// ever produced — see the field's note for why that is unconstrained
+    /// rather than default-deny.
+    let withServer (server: ServerCoverage) (coverage: HostCoverage) : HostCoverage =
+        { coverage with Server = Some server }
+
 module Demanded =
 
     // ─── the projection ──────────────────────────────────────────────────────
 
+    /// The channel a call action's endpoint is recorded under.
+    ///
+    /// Public, and the one channel name that is: at the server placement a call
+    /// action is what REACHES a handler, so the walk over handler stages has to
+    /// tell an endpoint apart from every other host call — and it must do so
+    /// without spelling the string a second time.
+    [<Literal>]
+    let CallChannel = "Call"
+
     /// The namespace a state key belongs to: the segment before its first `.`,
     /// or the whole key when it carries none.
-    let private namespaceOf (key: string) : string =
+    ///
+    /// Public because the SERVER placement writes into the same store through a
+    /// channel this file cannot see — a handler's landing slot — and a second
+    /// spelling of this rule would put two answers to "which namespace is this"
+    /// into one document.
+    let namespaceOf (key: string) : string =
         let i = key.IndexOf '.'
         if i < 0 then key else key.Substring(0, i)
 
@@ -280,7 +440,10 @@ module Demanded =
             // ever ride on a call that reaches no host at all. Projecting it
             // would report a demand for a slot no host will ever be asked to
             // cover.
-            effects, [ { Channel = "Call"; Name = endpoint } ], []
+            effects,
+            [ { Channel = CallChannel
+                Name = endpoint } ],
+            []
 
         | Action.Invoke(capabilityId, _) ->
             effects,
@@ -323,12 +486,135 @@ module Demanded =
         not (Set.isEmpty (Validation.legitimateEvents node))
         && List.isEmpty (wireSurvivableActions node)
 
+    /// Merge namespace touches into one entry per namespace, its two flags OR'd
+    /// across every touch.
+    let private mergeNamespaces (touches: StateNamespaceDemand list) : StateNamespaceDemand list =
+        touches
+        |> List.fold
+            (fun acc t ->
+                let w, r = Map.tryFind t.Namespace acc |> Option.defaultValue (false, false)
+                Map.add t.Namespace ((w || t.Written), (r || t.Read)) acc)
+            Map.empty
+        |> Map.toList
+        |> List.map (fun (ns, (w, r)) ->
+            { Namespace = ns
+              Written = w
+              Read = r })
+        |> List.sortBy _.Namespace
+
+    /// Put a projection's every list into the canonical form the document
+    /// promises: distinct, sorted, one entry per namespace. The single place
+    /// that ordering is decided, so `ofTree`, `ofAction` and `union` cannot
+    /// disagree about what "deterministic" means.
+    let private normalise (projection: DemandedProjection) : DemandedProjection =
+        { Effects = projection.Effects |> List.distinct |> List.sort
+          HostCalls =
+            projection.HostCalls
+            |> List.distinct
+            |> List.sortBy (fun c -> c.Channel, c.Name)
+          StateNamespaces = mergeNamespaces projection.StateNamespaces
+          OpaqueHandlers = projection.OpaqueHandlers |> List.distinct |> List.sort
+          Server =
+            projection.Server
+            |> Option.map (fun s ->
+                { Effects = s.Effects |> List.distinct |> List.sort
+                  Capabilities = s.Capabilities |> List.distinct |> List.sort
+                  Functions = s.Functions |> List.distinct |> List.sortBy (fun f -> f.Function, f.Capability)
+                  Channels = s.Channels |> List.distinct |> List.sortBy (fun c -> c.Channel, c.Name) }) }
+
+    /// The projection that demands nothing. The identity of `union`, and what a
+    /// tree with no reachable handler slot projects.
+    let empty: DemandedProjection =
+        { Effects = []
+          HostCalls = []
+          StateNamespaces = []
+          OpaqueHandlers = []
+          Server = None }
+
+    /// What ONE action can ever ask for, as a projection — the client tier only,
+    /// since an action carries no handler.
+    ///
+    /// Exposed for a placement that interprets actions somewhere OTHER than a
+    /// tree slot: the server placement's handler stages hold actions the shared
+    /// fold runs, and they demand exactly what the same action demands anywhere
+    /// else. That parity is the point — it is the one algebra claim, read at the
+    /// projection rather than at the interpreter — and it is why the walk over
+    /// stages calls this rather than matching an `Action` a second time.
+    let ofAction (action: Action<obj>) : DemandedProjection =
+        let effects, hostCalls, namespaces = demandsOfAction action
+
+        normalise
+            { empty with
+                Effects = effects
+                HostCalls = hostCalls
+                StateNamespaces =
+                    namespaces
+                    |> List.map (fun (ns, written) ->
+                        { Namespace = ns
+                          Written = written
+                          Read = not written }) }
+
+    /// Combine projections into one, re-normalised. Order-independent and
+    /// idempotent: `union` of the same documents in any order is the same
+    /// document, which is what lets a walk accumulate without deciding anything
+    /// about ordering.
+    ///
+    /// A server tier survives if ANY input carried one — `None` means "not
+    /// asked", so a document that WAS asked cannot be silenced by union with one
+    /// that was not.
+    let union (projections: DemandedProjection list) : DemandedProjection =
+        let server =
+            if projections |> List.exists (fun p -> Option.isSome p.Server) then
+                Some
+                    { Effects =
+                        projections
+                        |> List.collect (fun p -> p.Server |> Option.map _.Effects |> Option.defaultValue [])
+                      Capabilities =
+                        projections
+                        |> List.collect (fun p -> p.Server |> Option.map _.Capabilities |> Option.defaultValue [])
+                      Functions =
+                        projections
+                        |> List.collect (fun p -> p.Server |> Option.map _.Functions |> Option.defaultValue [])
+                      Channels =
+                        projections
+                        |> List.collect (fun p -> p.Server |> Option.map _.Channels |> Option.defaultValue []) }
+            else
+                None
+
+        normalise
+            { Effects = projections |> List.collect _.Effects
+              HostCalls = projections |> List.collect _.HostCalls
+              StateNamespaces = projections |> List.collect _.StateNamespaces
+              OpaqueHandlers = projections |> List.collect _.OpaqueHandlers
+              Server = server }
+
+    /// Attach (or replace) the server tier, re-normalised.
+    let withServer (server: ServerDemand) (projection: DemandedProjection) : DemandedProjection =
+        normalise { projection with Server = Some server }
+
+    /// The endpoints a projection's tree names through a call action.
+    ///
+    /// The one place a channel is filtered by name, and it reads the same
+    /// constant the producer writes — so the two cannot drift. A server
+    /// placement uses it to decide which registered handlers a given tree can
+    /// actually reach.
+    let calledEndpoints (projection: DemandedProjection) : string list =
+        projection.HostCalls
+        |> List.filter (fun c -> c.Channel = CallChannel)
+        |> List.map _.Name
+        |> List.distinct
+        |> List.sort
+
     /// Compute a program tree's complete demanded-effect set.
     ///
     /// Total: every tree has a projection, and no input is refused. The walk
     /// covers the whole traversal surface (`Introspect.descendantNodes` — the
     /// structural children AND the non-list slots such as a `StateBehaviour`
     /// branch), so a demand parked in a loading state is not missed.
+    ///
+    /// The server tier is `None`: this walk sees a tree, and a handler is not in
+    /// the tree. A placement that HAS a handler registration projects it and
+    /// attaches the result with `withServer`.
     let ofTree (root: Node<obj>) : DemandedProjection =
         let rec walk (node: Node<obj>) =
             let own =
@@ -352,26 +638,17 @@ module Demanded =
 
         let effects, hostCalls, namespaces, opaque = walk root
 
-        // One entry per namespace, its two flags OR'd across every touch.
-        let merged =
-            namespaces
-            |> List.fold
-                (fun acc (ns, written) ->
-                    let w, r = Map.tryFind ns acc |> Option.defaultValue (false, false)
-                    Map.add ns ((w || written), (r || not written)) acc)
-                Map.empty
-
-        { Effects = effects |> List.distinct |> List.sort
-          HostCalls = hostCalls |> List.distinct |> List.sortBy (fun c -> c.Channel, c.Name)
-          StateNamespaces =
-            merged
-            |> Map.toList
-            |> List.map (fun (ns, (w, r)) ->
-                { Namespace = ns
-                  Written = w
-                  Read = r })
-            |> List.sortBy _.Namespace
-          OpaqueHandlers = opaque |> List.distinct |> List.sort }
+        normalise
+            { Effects = effects
+              HostCalls = hostCalls
+              StateNamespaces =
+                namespaces
+                |> List.map (fun (ns, written) ->
+                    { Namespace = ns
+                      Written = written
+                      Read = not written })
+              OpaqueHandlers = opaque
+              Server = None }
 
     // ─── the projection as a wire document ───────────────────────────────────
 
@@ -392,6 +669,15 @@ module Demanded =
     /// is and whether it understands it, without knowing who wrote it.
     /// Deterministic: the projection's lists are already distinct and sorted, so
     /// the same tree encodes to the same bytes every time.
+    ///
+    /// **Version 2 adds the server tier**, and the bump is deliberate rather
+    /// than incidental: the `server` key is present on EVERY document from here
+    /// on — `null` where no server walk ran — so a v1 reader meets a shape it
+    /// was not written for. Emitting the key only when a tier exists would have
+    /// let v1 readers keep working on client-only documents and fail on the
+    /// others, which is a worse contract than one honest number: a consumer
+    /// could not tell "this producer is older than the server tier" from "this
+    /// program has no server side", and those need different answers.
     let encode (projection: DemandedProjection) : string =
         let effects = projection.Effects |> List.map q |> arr
 
@@ -410,7 +696,26 @@ module Demanded =
 
         let opaque = projection.OpaqueHandlers |> List.map q |> arr
 
-        $"""{{"kind":"demanded","version":1,"effects":{effects},"hostCalls":{hostCalls},"stateNamespaces":{namespaces},"opaqueHandlers":{opaque}}}"""
+        let server =
+            match projection.Server with
+            | None -> "null"
+            | Some s ->
+                let se = s.Effects |> List.map q |> arr
+                let sc = s.Capabilities |> List.map q |> arr
+
+                let fns =
+                    s.Functions
+                    |> List.map (fun f -> $"""{{"function":{q f.Function},"capability":{q f.Capability}}}""")
+                    |> arr
+
+                let channels =
+                    s.Channels
+                    |> List.map (fun c -> $"""{{"channel":{q c.Channel},"name":{q c.Name}}}""")
+                    |> arr
+
+                $"""{{"effects":{se},"capabilities":{sc},"functions":{fns},"channels":{channels}}}"""
+
+        $"""{{"kind":"demanded","version":2,"effects":{effects},"hostCalls":{hostCalls},"stateNamespaces":{namespaces},"opaqueHandlers":{opaque},"server":{server}}}"""
 
     // ─── the coverage validator ──────────────────────────────────────────────
 
@@ -425,6 +730,12 @@ module Demanded =
             $"the program names %s{channel} '%s{name}', which is outside this host's declared call surface"
         | CoverageFinding.UncoveredStateNamespace ns ->
             $"the program touches state namespace '%s{ns}', which is outside this host's declared namespaces"
+        | CoverageFinding.UnregisteredServerFunction fn ->
+            $"a handler this program can reach calls host function '%s{fn}', for which this host registered no performer"
+        | CoverageFinding.ServerGateRefusesCapability capability ->
+            $"a handler this program can reach needs server capability '%s{capability}', which this host's policy gate refuses"
+        | CoverageFinding.UncoveredServerChannel(channel, name) ->
+            $"a handler this program can reach names %s{channel} '%s{name}', which is outside this host's declared server channels"
 
     /// Check an already-computed projection against a host's coverage.
     ///
@@ -467,7 +778,54 @@ module Demanded =
                     else
                         Some(CoverageFinding.UncoveredStateNamespace n.Namespace))
 
-        effectFindings @ callFindings @ namespaceFindings
+        // The server tier is checked only where BOTH sides exist: a document
+        // that was never asked about a server placement, or a host that never
+        // declared one, produces nothing here. Neither absence is evidence of a
+        // failure, and reporting one as such would make the check fire on every
+        // client host that ever met a two-tier document.
+        let serverFindings =
+            match projection.Server, coverage.Server with
+            | Some demand, Some offer ->
+                // Registration before policy, which is the OPPOSITE of the
+                // order the interpreter uses — and deliberately so. At dispatch
+                // the gate runs first so that no lookup of any kind precedes the
+                // policy decision; that is an ordering of SIDE EFFECTS, and this
+                // check has none. What a coverage report owes its reader is the
+                // fact policy cannot fix, first: an unregistered performer is
+                // absent however the gate is written.
+                let functionFindings =
+                    demand.Functions
+                    |> List.collect (fun f ->
+                        if not (offer.HostFunctions.Contains f.Function) then
+                            [ CoverageFinding.UnregisteredServerFunction f.Function ]
+                        elif not (offer.Gate f.Capability) then
+                            [ CoverageFinding.ServerGateRefusesCapability f.Capability ]
+                        else
+                            [])
+
+                let capabilityFindings =
+                    demand.Capabilities
+                    |> List.choose (fun c ->
+                        if offer.Gate c then
+                            None
+                        else
+                            Some(CoverageFinding.ServerGateRefusesCapability c))
+
+                let channelFindings =
+                    match offer.Channels with
+                    | None -> []
+                    | Some declared ->
+                        demand.Channels
+                        |> List.choose (fun c ->
+                            if declared.Contains c.Name then
+                                None
+                            else
+                                Some(CoverageFinding.UncoveredServerChannel(c.Channel, c.Name)))
+
+                functionFindings @ capabilityFindings @ channelFindings
+            | _ -> []
+
+        effectFindings @ callFindings @ namespaceFindings @ serverFindings
 
     /// Answer, for one tree and one host, every demand the host cannot cover —
     /// BEFORE any event runs. An empty list means the host can serve everything

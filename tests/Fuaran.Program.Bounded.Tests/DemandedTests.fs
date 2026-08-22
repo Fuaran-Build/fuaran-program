@@ -282,8 +282,14 @@ let tests =
 
               let json = Demanded.encode a
               Expect.stringContains json "\"kind\":\"demanded\"" "carries its own kind"
-              Expect.stringContains json "\"version\":1" "carries its own version"
+              Expect.stringContains json "\"version\":2" "carries its own version"
               Expect.stringContains json "\"effects\":[\"Navigate\",\"WriteToClipboard\"]" "the effect set"
+
+              // The server tier's key is present on EVERY document, `null` where
+              // no server walk ran — which is why the version moved rather than
+              // the key appearing only sometimes.
+              Expect.stringContains json "\"server\":null" "no server walk ran, and the document says so"
+              Expect.isNone a.Server "and the projection agrees"
           }
 
           test "the encoded document escapes hostile names rather than emitting raw JSON" {

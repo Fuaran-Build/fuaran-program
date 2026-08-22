@@ -55,6 +55,20 @@ refusing it wholesale would be stricter than the interpreter's own behaviour. A 
 rather not start at all reaches for `BoundedDriver.initStrict` / `Program.mkBoundedStrict`, which
 check first and return every finding rather than the first.
 
+**The document has two tiers, because a session has two placements.** A tree is only half of what a
+program can ask for: at the server placement its call action reaches a host-registered handler whose
+stage list names effects, host functions and channels of its own, and no walk over a tree can see
+them. So the projection carries an optional **server tier** — its shapes live here beside the client
+tier's, since a wire document with half its vocabulary in another package is not one, while the walk
+that fills the tier lives with the placement whose vocabulary it reads and reaches this package only
+through `Demanded.ofAction` / `union` / `withServer`.
+
+Two consequences worth knowing. `None` and an EMPTY tier are different facts — `None` says no server
+walk was performed, an empty tier says one ran and found nothing — so a consumer cannot read "not
+asked" as "asked, and the answer was nothing". And a host that declared no server coverage is never
+told it failed to serve one: the tier is checked only where both a demand and a declaration exist,
+because most hosts have no server placement at all.
+
 ## Asking before running, the other half: the query-schema walk
 
 A handler declares a query as a source plus an ordered `Transform` pipeline, and lands the result in a
