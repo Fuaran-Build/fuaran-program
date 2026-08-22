@@ -330,6 +330,24 @@ let tests =
                   "the posture, verbatim"
           }
 
+          test "the joined document round-trips through the reader, both directions" {
+              // The round-trip suite beside the encoder proves this over documents
+              // it builds; this proves it over a document the WALKS actually
+              // produce — the two-tier shape with a derived posture, which is the
+              // one no hand-built fixture can vouch for. A reader that agreed with
+              // a fixture and disagreed with the emitter would be worse than none.
+              let handlers = Map.ofList [ endpoint, unsafeHandler ]
+              let projection = Replay.ofTreeAndHandlers handlers (treeCalling endpoint)
+              let json = Demanded.encode projection
+
+              match Demanded.decode json with
+              | Ok read ->
+                  Expect.equal read projection "the projection survives its own document"
+                  Expect.equal (Demanded.encode read) json "and the document survives being read"
+              | Error failure ->
+                  failtestf "the emitter's own document was refused: %A at '%s'" failure.Defect failure.Field
+          }
+
           test "a safe handler's posture carries an EMPTY reason list, not an absent one" {
               let handlers = Map.ofList [ endpoint, safeHandler ]
 

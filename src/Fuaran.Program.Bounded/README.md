@@ -63,6 +63,15 @@ tier's, since a wire document with half its vocabulary in another package is not
 that fills the tier lives with the placement whose vocabulary it reads and reaches this package only
 through `Demanded.ofAction` / `union` / `withServer`.
 
+**The document reads back: `Demanded.decode` is the pinned target for anyone consuming one.** A
+consumer that derives the envelope for itself is re-deriving a shape this package is the only
+authority on, and a reader that gets it subtly wrong produces a projection that looks like a
+projection — so the coverage verdict computed from it is wrong in a way nothing downstream can see.
+`decode` is total over its input, refuses a version it does not read rather than reading it through
+another version's lens, never reads a document partially, and carries every discriminator through
+unchanged rather than dropping one it does not recognise. Both directions of the round trip are
+pinned by tests.
+
 Two consequences worth knowing. `None` and an EMPTY tier are different facts — `None` says no server
 walk was performed, an empty tier says one ran and found nothing — so a consumer cannot read "not
 asked" as "asked, and the answer was nothing". And a host that declared no server coverage is never

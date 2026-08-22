@@ -386,6 +386,52 @@ module HostCoverage =
     let withServer (server: ServerCoverage) (coverage: HostCoverage) : HostCoverage =
         { coverage with Server = Some server }
 
+/// Why a demanded document was refused, as a CLASS rather than a message.
+///
+/// The same posture the rest of this subsystem takes: "my reader threw" and "my
+/// reader applied the rule" are different facts, and only the second is
+/// something a producer can act on. A caller branches on the class; the `Detail`
+/// beside it is for a human reading a log and is never compared.
+[<RequireQualifiedAccess>]
+type DemandedDefect =
+    /// The bytes are not readable JSON under the wire's own parsing discipline.
+    | NotJson
+    /// The document's root is not an object.
+    | NotAnObject
+    /// The document's `kind` is not this document's kind.
+    | UnknownKind
+    /// The document declares a version this reader does not read. REFUSED, and
+    /// never read through an earlier version's lens — a shape read under the
+    /// wrong lens produces a value that looks right and is not, which is the one
+    /// failure a coverage consumer has no way to detect downstream.
+    | UnknownVersion
+    /// A member this version requires is absent.
+    | MissingMember
+    /// A member is present carrying the wrong JSON type.
+    | WrongType
+    /// The document carries a member this version does not declare.
+    | UndeclaredMember
+    /// Every member read, but the document's lists are not in the distinct,
+    /// sorted order the document's own contract promises — so two such documents
+    /// would not compare by value, which is the property the whole encoding
+    /// exists to provide.
+    | NotCanonical
+
+/// One refusal: the class, the member it is at, the version it was read under,
+/// and a human detail.
+///
+/// `Field` is a DERIVED path — dotted, with array positions as ordinals
+/// (`server.replay[0].reasons[1].defect`) — so it names a place in the document
+/// without echoing a string the document chose. `Version` is present from the
+/// moment one has been read, which is the point at which every later refusal
+/// becomes a statement about a particular version rather than about documents in
+/// general.
+type DemandedDecodeFailure =
+    { Defect: DemandedDefect
+      Field: string
+      Version: int option
+      Detail: string }
+
 module Demanded =
 
     // ─── the projection ──────────────────────────────────────────────────────
@@ -706,6 +752,18 @@ module Demanded =
 
     // ─── the projection as a wire document ───────────────────────────────────
 
+    /// The document's own `kind`. A `Literal` rather than two string constants,
+    /// so the writer and the reader cannot come to disagree about what this
+    /// document is called — the same discipline the effect names take from
+    /// `ClientEffect.kind` rather than from a spelling.
+    [<Literal>]
+    let Kind = "demanded"
+
+    /// The version this encoder emits, and — see `decodableVersions` — the only
+    /// one this reader reads.
+    [<Literal>]
+    let Version = 3
+
     let private esc (s: string) : string =
         s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n").Replace("\r", "\\r").Replace("\t", "\\t")
 
@@ -791,7 +849,528 @@ module Demanded =
 
                 $"""{{"effects":{se},"capabilities":{sc},"functions":{fns},"channels":{channels},"replay":{replay}}}"""
 
-        $"""{{"kind":"demanded","version":3,"effects":{effects},"hostCalls":{hostCalls},"stateNamespaces":{namespaces},"opaqueHandlers":{opaque},"server":{server}}}"""
+        $"""{{"kind":{q Kind},"version":{Version},"effects":{effects},"hostCalls":{hostCalls},"stateNamespaces":{namespaces},"opaqueHandlers":{opaque},"server":{server}}}"""
+
+    // ─── the projection as a wire document: reading one back ─────────────────
+    //
+    //  `encode` had no inverse, and every consumer that wanted one wrote its
+    //  own. Two of them exist already and a third is planned, each independently
+    //  re-deriving an envelope this file is the only authority on — which is a
+    //  drift risk with no detector: a reader that gets the envelope subtly wrong
+    //  produces a projection that looks like a projection, and the coverage
+    //  verdict computed from it is wrong in a way nothing downstream can see.
+    //  `decode` is the pinned target those readers can point at instead.
+    //
+    //  ── What this reader claims, and what it deliberately refuses ────────────
+    //  TOTAL over its input: every string is either a projection or a typed
+    //  failure naming the member and the version, and no input throws.
+    //
+    //  NEVER PARTIAL: a document is read whole or refused whole. Every member of
+    //  the version is required, every member the version does not declare is
+    //  refused, and nothing is defaulted — a reader that quietly supplied `[]`
+    //  for a member it could not find would report "this program demands
+    //  nothing" for a document that says no such thing.
+    //
+    //  ONE VERSION, and the refusal of the others is the point. `encode` has
+    //  emitted version 3 since the replay posture landed, and no encoder in this
+    //  package emits 1 or 2 — so "read every version still emitted" is, honestly
+    //  read, "read 3". A version-1 or -2 document meets `UnknownVersion` NAMING
+    //  the version, never a v3 lens applied to a v2 shape: reading a v2 document
+    //  as v3 would find no `replay` key and could only either fail on a
+    //  well-formed document or invent an empty posture, and inventing one is
+    //  exactly the collapse of "predates the tier" into "walked and empty" that
+    //  the version numbers exist to prevent.
+    //
+    //  DISCRIMINATORS ARE CARRIED, NOT INTERPRETED. An effect name, a safety
+    //  word, a defect token: each is read as the string the document holds and
+    //  handed back unchanged. A reader that dropped one it did not recognise
+    //  would silently narrow the demand set — which is a coverage check reporting
+    //  that a host covers something it does not.
+    //
+    //  FORWARD-COUPLING: a new member, a new version, or a new tier extends
+    //  `encode` AND this reader AND the round-trip suite, in one change-set. The
+    //  suite is what makes that couple hold — it asserts both directions, so
+    //  extending one side alone goes red.
+
+    /// The document versions this reader reads. Data rather than a match arm, so
+    /// a caller can ask before it hands over a document, and so the round-trip
+    /// suite can enumerate rather than restate.
+    let decodableVersions: int list = [ Version ]
+
+    let private failWith
+        (defect: DemandedDefect)
+        (version: int option)
+        (field: string)
+        (detail: string)
+        : Result<'T, DemandedDecodeFailure> =
+        Error
+            { Defect = defect
+              Field = field
+              Version = version
+              Detail = detail }
+
+    /// A child member's path within its parent's.
+    let private child (path: string) (name: string) : string =
+        if path = "" then name else path + "." + name
+
+    /// An array element's path — an ORDINAL, which addresses a position without
+    /// echoing anything the document chose.
+    let private at (path: string) (index: int) : string = path + "[" + string index + "]"
+
+    let private fieldsOf (value: Fuaran.Core.JVal) : (string * Fuaran.Core.JVal) list option =
+        match value with
+        | Fuaran.Core.JObj fields -> Some fields
+        | _ -> None
+
+    let private memberOf (name: string) (value: Fuaran.Core.JVal) : Fuaran.Core.JVal option =
+        fieldsOf value
+        |> Option.bind (List.tryFind (fun (k, _) -> k = name))
+        |> Option.map snd
+
+    /// The upper bound on member-nulls this reader will erase before refusing.
+    ///
+    /// A well-formed document carries exactly one — the server tier's absence
+    /// marker. The bound exists because each erasure costs a re-parse, so an
+    /// untrusted document full of nulls would otherwise buy quadratic work for
+    /// the length of the input.
+    [<Literal>]
+    let private MaxErasedNulls = 8
+
+    /// The text with the member whose value is the `null` token at `position`
+    /// removed, or `None` where that position is not a member's value.
+    ///
+    /// A member spelled `null` IS an absent member: `{"a":null}` reads exactly as
+    /// `{}`. That is not a rule invented here — it is the wire's own read policy
+    /// for the token, applied at the read side because the pinned parser predates
+    /// the policy and has no `null` in its value model at all. Every OTHER
+    /// position is refused rather than erased, on the policy's own reasoning:
+    /// a bare root would make the whole document vanish and an array element
+    /// would silently renumber every later index, so neither has an absence to
+    /// erase to.
+    ///
+    /// It is driven BY THE PARSER and never by scanning for a token — the parser
+    /// reports the position of the first null it meets and this rewrites at
+    /// exactly that position or gives up — so a `null` inside a string value is
+    /// structurally out of reach.
+    let private eraseMemberNullAt (text: string) (position: int) : (string * string) option =
+        let isWs (c: char) =
+            c = ' ' || c = '\t' || c = '\n' || c = '\r'
+
+        let rec backOverWs (i: int) =
+            if i >= 0 && isWs text[i] then backOverWs (i - 1) else i
+
+        let rec fwdOverWs (i: int) =
+            if i < text.Length && isWs text[i] then
+                fwdOverWs (i + 1)
+            else
+                i
+
+        /// The opening quote of the key whose closing quote is before `i`. A
+        /// quote opens the string only when an EVEN number of backslashes
+        /// precedes it, so a key carrying an escaped quote is walked correctly.
+        let rec keyStart (i: int) =
+            if i < 0 then
+                None
+            elif text[i] = '"' then
+                let rec slashes (j: int) (n: int) =
+                    if j >= 0 && text[j] = '\\' then
+                        slashes (j - 1) (n + 1)
+                    else
+                        n
+
+                if slashes (i - 1) 0 % 2 = 0 then
+                    Some i
+                else
+                    keyStart (i - 1)
+            else
+                keyStart (i - 1)
+
+        if
+            position < 0
+            || position + 4 > text.Length
+            || text.Substring(position, 4) <> "null"
+        then
+            None
+        else
+            let colon = backOverWs (position - 1)
+
+            let keyEnd =
+                if colon >= 0 && text[colon] = ':' then
+                    backOverWs (colon - 1)
+                else
+                    -1
+
+            if keyEnd < 0 || text[keyEnd] <> '"' then
+                None
+            else
+                match keyStart (keyEnd - 1) with
+                | None -> None
+                | Some ks ->
+                    let key = text.Substring(ks + 1, keyEnd - ks - 1)
+                    let before = backOverWs (ks - 1)
+
+                    if before < 0 then
+                        None
+                    elif text[before] = ',' then
+                        // Drop the separating comma with the member it introduced.
+                        Some(text.Substring(0, before) + text.Substring(position + 4), key)
+                    elif text[before] = '{' then
+                        // First member: drop the comma that FOLLOWS it, if any.
+                        let after = fwdOverWs (position + 4)
+
+                        if after < text.Length && text[after] = ',' then
+                            Some(text.Substring(0, ks) + text.Substring(after + 1), key)
+                        else
+                            Some(text.Substring(0, ks) + text.Substring(position + 4), key)
+                    else
+                        None
+
+    /// Parse a demanded document, erasing member-nulls to absence. The second
+    /// component is the keys so erased, so the one member whose absence is a
+    /// FACT rather than a defect can be told from a member that is simply
+    /// missing.
+    let private parseDocument (json: string) : Result<Fuaran.Core.JVal * string list, DemandedDecodeFailure> =
+        let notJson (err: Fuaran.Core.JsonError) =
+            failWith DemandedDefect.NotJson None "" (err.Message + " at position " + string err.Position)
+
+        let rec go (text: string) (erased: string list) =
+            match Fuaran.Core.Json.parseDetailed text with
+            | Ok value -> Ok(value, List.rev erased)
+            | Error err when err.Kind = Fuaran.Core.NullNotRepresentable ->
+                if List.length erased >= MaxErasedNulls then
+                    failWith
+                        DemandedDefect.NotJson
+                        None
+                        ""
+                        ("the document carries more than "
+                         + string MaxErasedNulls
+                         + " members spelled null; this document declares one")
+                else
+                    match eraseMemberNullAt text err.Position with
+                    | Some(rewritten, key) -> go rewritten (key :: erased)
+                    | None -> notJson err
+            | Error err -> notJson err
+
+        go json []
+
+    // ─── member readers ──────────────────────────────────────────────────────
+
+    let private requireMember
+        (version: int option)
+        (path: string)
+        (name: string)
+        (value: Fuaran.Core.JVal)
+        : Result<Fuaran.Core.JVal, DemandedDecodeFailure> =
+        match memberOf name value with
+        | Some v -> Ok v
+        | None -> failWith DemandedDefect.MissingMember version path ("required member '" + path + "' is absent")
+
+    let private requireString version path name value : Result<string, DemandedDecodeFailure> =
+        requireMember version path name value
+        |> Result.bind (fun v ->
+            match v with
+            | Fuaran.Core.JStr s -> Ok s
+            | _ -> failWith DemandedDefect.WrongType version path ("member '" + path + "' is not a string"))
+
+    let private requireBool version path name value : Result<bool, DemandedDecodeFailure> =
+        requireMember version path name value
+        |> Result.bind (fun v ->
+            match v with
+            | Fuaran.Core.JBool b -> Ok b
+            | _ -> failWith DemandedDefect.WrongType version path ("member '" + path + "' is not a boolean"))
+
+    let private requireInt version path name value : Result<int, DemandedDecodeFailure> =
+        requireMember version path name value
+        |> Result.bind (fun v ->
+            match v with
+            | Fuaran.Core.JInt i -> Ok i
+            | _ -> failWith DemandedDefect.WrongType version path ("member '" + path + "' is not an integer"))
+
+    let private requireArray version path name value : Result<Fuaran.Core.JVal list, DemandedDecodeFailure> =
+        requireMember version path name value
+        |> Result.bind (fun v ->
+            match v with
+            | Fuaran.Core.JArr xs -> Ok xs
+            | _ -> failWith DemandedDefect.WrongType version path ("member '" + path + "' is not an array"))
+
+    /// Refuse any member this version does not declare.
+    ///
+    /// Stricter than a must-ignore rule, and deliberately: this document is
+    /// untrusted, and a member the reader does not understand means the producer
+    /// and the reader disagree about what this version IS. Ignoring it is
+    /// precisely reading the document through the wrong lens with the version
+    /// number agreeing all the way.
+    let private declaredOnly
+        (version: int option)
+        (path: string)
+        (allowed: string list)
+        (value: Fuaran.Core.JVal)
+        : Result<unit, DemandedDecodeFailure> =
+        match fieldsOf value with
+        | None ->
+            failWith
+                (if path = "" then
+                     DemandedDefect.NotAnObject
+                 else
+                     DemandedDefect.WrongType)
+                version
+                path
+                (if path = "" then
+                     "the document's root is not an object"
+                 else
+                     "member '" + path + "' is not an object")
+        | Some fields ->
+            match fields |> List.map fst |> List.filter (fun k -> not (List.contains k allowed)) with
+            | [] -> Ok()
+            | extra ->
+                failWith
+                    DemandedDefect.UndeclaredMember
+                    version
+                    (child path (List.head extra))
+                    ("this version declares no member(s): " + String.concat ", " extra)
+
+    /// Traverse a list positionally, short-circuiting on the first refusal so a
+    /// document with two defects reports the first rather than an aggregate the
+    /// caller has to unpick.
+    let private traverseIndexed
+        (f: int -> 'a -> Result<'b, DemandedDecodeFailure>)
+        (items: 'a list)
+        : Result<'b list, DemandedDecodeFailure> =
+        (Ok [], List.indexed items)
+        ||> List.fold (fun acc (i, item) -> acc |> Result.bind (fun ok -> f i item |> Result.map (fun v -> v :: ok)))
+        |> Result.map List.rev
+
+    /// A required array of strings, each element addressed by its ordinal.
+    let private requireStrings version path name value : Result<string list, DemandedDecodeFailure> =
+        requireArray version path name value
+        |> Result.bind (
+            traverseIndexed (fun i x ->
+                match x with
+                | Fuaran.Core.JStr s -> Ok s
+                | _ ->
+                    failWith
+                        DemandedDefect.WrongType
+                        version
+                        (at path i)
+                        ("element '" + at path i + "' is not a string"))
+        )
+
+    /// A required array of objects, each decoded under its own indexed path.
+    let private requireObjects
+        version
+        (path: string)
+        (name: string)
+        (value: Fuaran.Core.JVal)
+        (decodeOne: int option -> string -> Fuaran.Core.JVal -> Result<'T, DemandedDecodeFailure>)
+        : Result<'T list, DemandedDecodeFailure> =
+        requireArray version path name value
+        |> Result.bind (traverseIndexed (fun i x -> decodeOne version (at path i) x))
+
+    // ─── element readers ─────────────────────────────────────────────────────
+
+    let private decodeHostCall version path value : Result<HostCallDemand, DemandedDecodeFailure> =
+        declaredOnly version path [ "channel"; "name" ] value
+        |> Result.bind (fun () -> requireString version (child path "channel") "channel" value)
+        |> Result.bind (fun channel ->
+            requireString version (child path "name") "name" value
+            |> Result.map (fun name -> { Channel = channel; Name = name }))
+
+    let private decodeNamespace version path value : Result<StateNamespaceDemand, DemandedDecodeFailure> =
+        declaredOnly version path [ "namespace"; "written"; "read" ] value
+        |> Result.bind (fun () -> requireString version (child path "namespace") "namespace" value)
+        |> Result.bind (fun ns ->
+            requireBool version (child path "written") "written" value
+            |> Result.bind (fun written ->
+                requireBool version (child path "read") "read" value
+                |> Result.map (fun read ->
+                    { Namespace = ns
+                      Written = written
+                      Read = read })))
+
+    let private decodeFunction version path value : Result<ServerFunctionDemand, DemandedDecodeFailure> =
+        declaredOnly version path [ "function"; "capability" ] value
+        |> Result.bind (fun () -> requireString version (child path "function") "function" value)
+        |> Result.bind (fun fn ->
+            requireString version (child path "capability") "capability" value
+            |> Result.map (fun capability ->
+                { Function = fn
+                  Capability = capability }))
+
+    let private decodeReason version path value : Result<ReplayReasonDemand, DemandedDecodeFailure> =
+        declaredOnly version path [ "stage"; "defect" ] value
+        |> Result.bind (fun () -> requireInt version (child path "stage") "stage" value)
+        |> Result.bind (fun stage ->
+            requireString version (child path "defect") "defect" value
+            |> Result.map (fun defect -> { Stage = stage; Defect = defect }))
+
+    let private decodePosture version path value : Result<ReplayPosture, DemandedDecodeFailure> =
+        declaredOnly version path [ "handler"; "safety"; "reasons" ] value
+        |> Result.bind (fun () -> requireString version (child path "handler") "handler" value)
+        |> Result.bind (fun handler ->
+            // The safety word is carried, not judged. It is a discriminator of a
+            // closed set, and a reader that refused one it did not know would be
+            // making a claim about the producer's vocabulary from inside a
+            // document reader; one that silently normalised it would be worse.
+            requireString version (child path "safety") "safety" value
+            |> Result.bind (fun safety ->
+                requireObjects version (child path "reasons") "reasons" value decodeReason
+                |> Result.map (fun reasons ->
+                    { Handler = handler
+                      Safety = safety
+                      Reasons = reasons })))
+
+    let private decodeServer version path value : Result<ServerDemand, DemandedDecodeFailure> =
+        declaredOnly version path [ "effects"; "capabilities"; "functions"; "channels"; "replay" ] value
+        |> Result.bind (fun () -> requireStrings version (child path "effects") "effects" value)
+        |> Result.bind (fun effects ->
+            requireStrings version (child path "capabilities") "capabilities" value
+            |> Result.bind (fun capabilities ->
+                requireObjects version (child path "functions") "functions" value decodeFunction
+                |> Result.bind (fun functions ->
+                    requireObjects version (child path "channels") "channels" value decodeHostCall
+                    |> Result.bind (fun channels ->
+                        requireObjects version (child path "replay") "replay" value decodePosture
+                        |> Result.map (fun replay ->
+                            { Effects = effects
+                              Capabilities = capabilities
+                              Functions = functions
+                              Channels = channels
+                              Replay = replay })))))
+
+    /// The four members every version of this document has carried.
+    let private decodeClientTier version root : Result<DemandedProjection, DemandedDecodeFailure> =
+        requireStrings version "effects" "effects" root
+        |> Result.bind (fun effects ->
+            requireObjects version "hostCalls" "hostCalls" root decodeHostCall
+            |> Result.bind (fun hostCalls ->
+                requireObjects version "stateNamespaces" "stateNamespaces" root decodeNamespace
+                |> Result.bind (fun namespaces ->
+                    requireStrings version "opaqueHandlers" "opaqueHandlers" root
+                    |> Result.map (fun opaque ->
+                        { Effects = effects
+                          HostCalls = hostCalls
+                          StateNamespaces = namespaces
+                          OpaqueHandlers = opaque
+                          Server = None }))))
+
+    /// The first member whose read value is not in the canonical order the
+    /// document promises. Compared against `normalise` rather than against a
+    /// second sorting rule spelled here, so "canonical" has one definition and
+    /// the writer and the reader share it.
+    let private nonCanonicalField (projection: DemandedProjection) : string option =
+        let n = normalise projection
+
+        if n.Effects <> projection.Effects then
+            Some "effects"
+        elif n.HostCalls <> projection.HostCalls then
+            Some "hostCalls"
+        elif n.StateNamespaces <> projection.StateNamespaces then
+            Some "stateNamespaces"
+        elif n.OpaqueHandlers <> projection.OpaqueHandlers then
+            Some "opaqueHandlers"
+        elif n.Server <> projection.Server then
+            Some "server"
+        else
+            None
+
+    /// Read a demanded document back into the projection that produced it.
+    ///
+    /// The inverse of `encode` in both directions, and the round-trip suite
+    /// pins both: `decode (encode p)` is `p`, and `encode` of a decoded document
+    /// is the document's own bytes.
+    let decode (json: string) : Result<DemandedProjection, DemandedDecodeFailure> =
+        parseDocument json
+        |> Result.bind (fun (root, erasedNulls) ->
+            // The root's SHAPE is answered before its members, so a document
+            // that is not an object is told what is wrong with it rather than
+            // being reported as missing every member it could not have had.
+            (match fieldsOf root with
+             | Some _ -> Ok()
+             | None -> failWith DemandedDefect.NotAnObject None "" "the document's root is not an object")
+            // `kind` and `version` are read BEFORE anything else, and the version
+            // gates everything after it: which members are declared, which are
+            // required, and what a refusal is a statement about.
+            |> Result.bind (fun () -> requireString None "kind" "kind" root)
+            |> Result.bind (fun kind ->
+                if kind <> Kind then
+                    failWith
+                        DemandedDefect.UnknownKind
+                        None
+                        "kind"
+                        ("'" + kind + "' is not a demanded-effect projection")
+                else
+                    requireInt None "version" "version" root)
+            |> Result.bind (fun version ->
+                if not (List.contains version decodableVersions) then
+                    failWith
+                        DemandedDefect.UnknownVersion
+                        (Some version)
+                        "version"
+                        ("version "
+                         + string version
+                         + " is not one this reader reads ("
+                         + (decodableVersions |> List.map string |> String.concat ", ")
+                         + "); it is refused rather than read through another version's lens")
+                else
+                    Ok version)
+            |> Result.bind (fun version ->
+                let v = Some version
+
+                declaredOnly
+                    v
+                    ""
+                    [ "kind"
+                      "version"
+                      "effects"
+                      "hostCalls"
+                      "stateNamespaces"
+                      "opaqueHandlers"
+                      "server" ]
+                    root
+                |> Result.bind (fun () -> decodeClientTier v root)
+                |> Result.bind (fun projection ->
+                    // The server tier's three readings, and they are three
+                    // FACTS rather than degrees of the same one. An object is a
+                    // walk that ran; `null` — erased to absence above — is a
+                    // walk that did not; and a member that is simply gone is a
+                    // document this version does not describe.
+                    //
+                    // The one residue: an erased null tells this reader its KEY
+                    // and not its depth, so a nested member also named `server`
+                    // spelled `null`, in a document that omits the top-level
+                    // one, would be read as the tier's absence. It is recorded
+                    // rather than closed — closing it means the wire's own
+                    // null-erasing read policy, which this reader's pinned
+                    // parser predates and which retires this shim when it
+                    // arrives.
+                    match memberOf "server" root with
+                    | Some(Fuaran.Core.JObj _ as tier) ->
+                        decodeServer v "server" tier
+                        |> Result.map (fun server -> { projection with Server = Some server })
+                    | Some _ ->
+                        failWith
+                            DemandedDefect.WrongType
+                            v
+                            "server"
+                            "member 'server' is neither an object nor absent"
+                    | None when List.contains "server" erasedNulls -> Ok projection
+                    | None ->
+                        failWith
+                            DemandedDefect.MissingMember
+                            v
+                            "server"
+                            "required member 'server' is absent; this version carries it on every document, null where no server walk ran")
+                |> Result.bind (fun projection ->
+                    match nonCanonicalField projection with
+                    | None -> Ok projection
+                    | Some field ->
+                        failWith
+                            DemandedDefect.NotCanonical
+                            v
+                            field
+                            ("member '"
+                             + field
+                             + "' is not distinct and sorted; two documents that compare by value is the property this encoding provides"))))
 
     // ─── the coverage validator ──────────────────────────────────────────────
 
