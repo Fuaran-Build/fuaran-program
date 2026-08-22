@@ -211,6 +211,101 @@ let tests =
               Expect.equal out.Effects [ ClientEffect.ReadFileBody("up", "Base64") ] "only the closure-free read effect"
           }
 
+          // ─── The handler-effect arm (DECISIONS.md D7 / D9) ──────────────────
+
+          test "the inert arm declines, which is the documented no-op every arm-free placement gets" {
+              let out =
+                  BoundedActions.runBoundedAction "n" (Action.Call("/api/x", None, None)) store0
+
+              match out.Diagnostics with
+              | [ BoundedDiagnostic.UnsupportedOnBoundedPath _ ] -> ()
+              | other -> failtestf "expected the inert-path diagnostic, got %A" other
+
+              Expect.equal out.Store.State store0.State "and the store is untouched"
+          }
+
+          test "an arm that answers is folded IN PLACE inside a chain" {
+              // The property the whole decision rests on: the answer's store is
+              // threaded into the rest of the chain, so a call sees the write
+              // before it and is seen by the write after it. A placement that
+              // collected calls and ran them afterwards could not produce this.
+              let arm: HandlerArm<string list> =
+                  { Answer =
+                      fun _ endpoint s seen ->
+                          Some
+                              { Store =
+                                  { s with
+                                      State = Map.add "k" (o "from the arm") s.State }
+                                Effects = []
+                                Diagnostics = []
+                                Placement = seen @ [ endpoint ] } }
+
+              let action =
+                  Action.Chain
+                      [ Action.SetState("k", Some(jv "before"), None)
+                        Action.Call("/api/x", None, None)
+                        Action.SetState("trailing", Some(jv "after"), None) ]
+
+              let out, seen = BoundedActions.runBoundedActionWith arm "n" action store0 []
+
+              Expect.equal seen [ "/api/x" ] "the arm was consulted once, from inside the chain"
+
+              Expect.equal
+                  out.Store.State
+                  (Map.ofList [ "k", o "from the arm"; "trailing", o "after" ])
+                  "the arm overwrote the write before it, and the write after it still landed"
+          }
+
+          test "an arm is consulted at every depth, not only at the top" {
+              let arm: HandlerArm<string list> =
+                  { Answer =
+                      fun _ endpoint s seen ->
+                          Some
+                              { Store = s
+                                Effects = []
+                                Diagnostics = []
+                                Placement = seen @ [ endpoint ] } }
+
+              let action =
+                  Action.Chain
+                      [ Action.Call("/api/one", None, None)
+                        Action.Chain [ Action.Call("/api/two", None, None) ] ]
+
+              let _, seen = BoundedActions.runBoundedActionWith arm "n" action store0 []
+
+              Expect.equal seen [ "/api/one"; "/api/two" ] "a call nested two chains deep reaches the same arm"
+          }
+
+          test "a call declaring its own result target is REFUSED, and the arm is never consulted" {
+              // D9: the handler declares where its results land. A tree that
+              // declares one too is refused rather than ignored — and refused
+              // BEFORE the arm, so no placement can quietly honour it.
+              let arm: HandlerArm<int> =
+                  { Answer =
+                      fun _ _ s consulted ->
+                          Some
+                              { Store = s
+                                Effects = []
+                                Diagnostics = []
+                                Placement = consulted + 1 } }
+
+              for target in [ CallResultTarget.State "orders.selected"; CallResultTarget.Query "recent" ] do
+                  let action = Action.Call("/api/x", None, Some target)
+                  let out, consulted = BoundedActions.runBoundedActionWith arm "n" action store0 0
+
+                  Expect.equal consulted 0 "the arm was never consulted"
+                  Expect.equal out.Store.State store0.State "and nothing was written"
+
+                  match out.Diagnostics with
+                  | [ BoundedDiagnostic.Refused(_, _, reason) ] ->
+                      Expect.isFalse
+                          (reason.Contains "orders.selected")
+                          "the reason does not echo the wire-supplied key"
+
+                      Expect.isFalse (reason.Contains "recent") "nor the wire-supplied query name"
+                  | other -> failtestf "expected a single Refused diagnostic, got %A" other
+          }
+
           // ─── Phase 782 — the server EFFECT path is a URL sink too ───────────
           //
           // A `ClientEffect.Navigate` is performed by the shim with whatever

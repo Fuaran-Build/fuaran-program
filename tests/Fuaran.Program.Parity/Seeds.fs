@@ -160,6 +160,31 @@ let private serverHandlerCall =
               bound "readout" "rows" "init" ])
         [ click "refresh" ]
 
+/// The same call action, NESTED inside a chain between two writes — the shape
+/// the spike's top-level-only recognition could not see (DECISIONS.md D7).
+///
+/// It earns its place twice over. At the three placements that register no
+/// handler it must fold exactly as `chain-folds` does, with the call inert in
+/// the middle and both writes landing — so the uniform arm did not change what a
+/// call means where nothing answers it. At the server placement with the handler
+/// registered, the two writes bracket the handler: the one before it is
+/// overwritten by the handler's own, and the one after it survives, which is
+/// what "spliced in place" means and what a top-level-only arm could not have
+/// produced at all.
+let private nestedHandlerCall =
+    fixture
+        "nested-handler-call"
+        (dash
+            [ button
+                  "refresh"
+                  (Action.Chain
+                      [ Action.SetState("rows", Some(jstr "before"), None)
+                        Action.Call("/handlers/refresh", None, None)
+                        Action.SetState("trailing", Some(jstr "after"), None) ])
+              bound "readout" "rows" "init"
+              bound "tail" "trailing" "init" ])
+        [ click "refresh" ]
+
 let all: Fixture list =
     [ setStateRebinds
       chainFolds
@@ -168,4 +193,5 @@ let all: Fixture list =
       refusedNavigate
       coverageFloorReactive
       coverageFloorPassThrough
-      serverHandlerCall ]
+      serverHandlerCall
+      nestedHandlerCall ]

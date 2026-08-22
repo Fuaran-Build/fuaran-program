@@ -36,19 +36,20 @@ open Fuaran.Program.Bounded
 //  disproved it.
 //
 //  ── Where the handler joins ─────────────────────────────────────────────────
-//  At the `Action.Call` arm, which the shared fold documents as inert. When the
-//  endpoint names a registered handler, the handler runs; otherwise the
-//  behaviour is the shared fold's, unchanged. So a tree that names no handler
-//  behaves at this placement EXACTLY as it does at the other two — a property
-//  the tier-parity family asserts over the whole fixture corpus rather than
-//  taking on trust.
+//  At the shared fold's HANDLER-EFFECT ARM (DECISIONS.md D7), which this module
+//  supplies as a `HandlerArm` and the fold consults wherever a call action
+//  appears. When the endpoint names a registered handler, the handler runs;
+//  otherwise the behaviour is the shared fold's, unchanged. So a tree that names
+//  no handler behaves at this placement EXACTLY as it does at the other two — a
+//  property the tier-parity family asserts over the whole fixture corpus rather
+//  than taking on trust.
 //
-//  The recognition is TOP-LEVEL only: an `Action.Call` nested inside a `Chain`
-//  stays the shared fold's no-op. Reaching into the action tree to find nested
-//  calls would mean matching on `Action` a second time, which is the thing D1
-//  forbids; doing it properly means the fold itself gaining a handler-effect
-//  arm, which is a change to the shared algebra and therefore not a spike's
-//  decision to make. Recorded in `docs/server-handler-atomicity.md`.
+//  Recognition is UNIFORM, not top-level: a call nested inside a `Chain` reaches
+//  the same arm as one sitting alone, in its place in the chain, seeing the
+//  writes before it and seen by the writes after it. It reads that way because
+//  the fold does the recognising — this module never matches on an `Action`,
+//  which is what keeps D1's "no second evaluator" true while the arm exists at
+//  all. The spike's top-level-only special case is retired.
 //
 //  ── No wire commitment ──────────────────────────────────────────────────────
 //  A handler is host-registered data. The wire carries the endpoint NAME and
@@ -145,8 +146,9 @@ type ServerStepOutput =
         Performed: string list
         /// Closure-free client effects, from the shared interpreter.
         ClientEffects: ClientEffect list
-        /// `false` when a handler halted and rolled back. Always `true` on the
-        /// shared-fold path, which has nothing to roll back.
+        /// `false` when ANY handler this event reached halted and rolled back.
+        /// Always `true` when the event reached no handler, since the shared
+        /// fold has nothing to roll back.
         Committed: bool
         Rejected: ServerReject option
         Diagnostics: ServerDiagnostic list
@@ -234,6 +236,60 @@ module ServerSession =
           Rejected = None
           Diagnostics = outcome.Diagnostics }
 
+    /// This placement's answer to a call action the shared fold recognised
+    /// (DECISIONS.md D7) — the whole of what makes the server-logic placement
+    /// different from the other two, and the only thing it adds to the algebra.
+    ///
+    /// It always answers, never declines. Declining is what a placement with no
+    /// registry does, and this one HAS a registry: an endpoint it does not hold
+    /// is a fact about this host, reported as `HandlerUnregistered` rather than
+    /// as the shared fold's "no form on this path", because those say different
+    /// things to whoever is debugging an emission.
+    let private handlerArm (services: ServerServices) : HandlerArm<HandlerTally> =
+        { Answer =
+            fun nodeId endpoint bindings tally ->
+                match Map.tryFind endpoint services.Handlers with
+                | None ->
+                    // Inert, and diagnosed. The endpoint itself is not repeated
+                    // back: it is the one string in this subsystem that comes
+                    // off the wire.
+                    Some
+                        { Store = bindings
+                          Effects = []
+                          Diagnostics = []
+                          Placement =
+                            { tally with
+                                Diagnostics = tally.Diagnostics @ [ ServerDiagnostic.HandlerUnregistered ] } }
+                | Some handler ->
+                    let outcome =
+                        Handler.run
+                            services.Effects
+                            services.Sources
+                            nodeId
+                            handler
+                            { Tree = tally.Tree
+                              Bindings = bindings }
+
+                    Some
+                        { Store = outcome.Store.Bindings
+                          Effects = outcome.ClientEffects
+                          // The handler's diagnostics ride the tally rather than
+                          // the fold's channel: they are `ServerDiagnostic`s,
+                          // and a `Compute` stage's bounded ones are already
+                          // wrapped among them in stage order.
+                          Diagnostics = []
+                          Placement =
+                            { Tree = outcome.Store.Tree
+                              // A handler is the atomicity unit, so one that
+                              // halted rolled itself back and the fold carries
+                              // on. What the EVENT reports is whether every
+                              // handler it reached committed.
+                              Committed = tally.Committed && outcome.Committed
+                              Performed = tally.Performed @ outcome.Performed
+                              Patches = tally.Patches @ outcome.Patches
+                              Notifications = tally.Notifications @ outcome.Notifications
+                              Diagnostics = tally.Diagnostics @ outcome.Diagnostics } } }
+
     /// Step the session with one untrusted inbound event.
     ///
     /// On a G1 rejection or a G2 budget breach the session is returned UNCHANGED
@@ -258,46 +314,32 @@ module ServerSession =
                     session
                     (BudgetExceeded(sprintf "tree cost %d exceeds MaxNodes %d" session.NodeCount budget.MaxNodes))
             else
-                match action with
-                // The handler arm. Note what is NOT here: no second match on the
-                // action's structure, no recursion into a `Chain`. One endpoint
-                // lookup, then either a handler or the shared fold.
-                | Action.Call(endpoint, _, _) ->
-                    match Map.tryFind endpoint session.Services.Handlers with
-                    | None ->
-                        // Inert, and diagnosed — the same treatment the shared
-                        // fold gives an action with no form, so a tree naming an
-                        // absent handler is observable rather than a silent dead
-                        // end. The endpoint itself is not repeated back.
-                        session,
-                        { inert session with
-                            Diagnostics = [ ServerDiagnostic.HandlerUnregistered ] }
-                    | Some handler ->
-                        let outcome =
-                            Handler.run
-                                session.Services.Effects
-                                session.Services.Sources
-                                ev.NodeId
-                                handler
-                                { Tree = session.BaseTree
-                                  Bindings = session.Store }
+                // ONE path. There is no longer a call case and an everything-else
+                // case: the fold recognises the calls, wherever they are, and
+                // asks the arm below what they mean here.
+                let bounded, tally =
+                    BoundedActions.runBoundedActionWith
+                        (handlerArm session.Services)
+                        ev.NodeId
+                        action
+                        session.Store
+                        (HandlerTally.start session.BaseTree)
 
-                        commit session outcome.Store.Tree outcome.Store.Bindings outcome
+                let outcome =
+                    { Store =
+                        { Tree = tally.Tree
+                          Bindings = bounded.Store }
+                      Committed = tally.Committed
+                      Performed = tally.Performed
+                      Patches = tally.Patches
+                      Notifications = tally.Notifications
+                      ClientEffects = bounded.Effects
+                      // Two vocabularies, one list: the shared fold's
+                      // diagnostics, then the handlers' in invocation order. The
+                      // fold has no channel to interleave a foreign diagnostic
+                      // into its own, and inventing one for a debugging surface
+                      // would put a placement's vocabulary in the shared
+                      // package — the exact coupling the arm exists to avoid.
+                      Diagnostics = (bounded.Diagnostics |> List.map ServerDiagnostic.Bounded) @ tally.Diagnostics }
 
-                // Everything else is the shared fold, byte for byte what the
-                // other placements do with the same action and the same store.
-                | _ ->
-                    let bounded = BoundedActions.runBoundedAction ev.NodeId action session.Store
-
-                    let outcome =
-                        { Store =
-                            { Tree = session.BaseTree
-                              Bindings = bounded.Store }
-                          Committed = true
-                          Performed = []
-                          Patches = []
-                          Notifications = []
-                          ClientEffects = bounded.Effects
-                          Diagnostics = bounded.Diagnostics |> List.map ServerDiagnostic.Bounded }
-
-                    commit session session.BaseTree bounded.Store outcome
+                commit session tally.Tree bounded.Store outcome

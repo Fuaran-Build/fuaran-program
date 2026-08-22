@@ -200,8 +200,9 @@ let tests =
 
               Expect.equal
                   outcome.Performed
-                  [ "RunQuery"; "host:audit"; "ApplyOps"; "EmitPatch"; "Notify" ]
-                  "the audit trail is the stage order, with the host call under its namespaced capability"
+                  [ "RunQuery"; "ApplyOps"; "EmitPatch"; "Notify"; "host:audit" ]
+                  "the audit trail is EXECUTION order, not stage order: two-phase staging (D8) defers the \
+                   host call to the perform phase, so it reports last however early it was declared"
           }
 
           test "a query lands its result in the session's query slot" {
@@ -238,9 +239,11 @@ let tests =
               | Some value -> Expect.equal (string value) "recorded" "and the performer's result is in the slot"
               | None -> failtest "the landing slot was never written"
 
+              let record = ref []
+
               let reserved =
                   Handler.run
-                      (openRegistry (ref []))
+                      (openRegistry record)
                       sources
                       "call"
                       (handler (Fuaran.UI.Renderer.StateKeys.HostReservedPrefix + "x"))
@@ -251,6 +254,12 @@ let tests =
               Expect.isEmpty
                   reserved.Store.Bindings.State
                   "and the refusal leaves the store as it was — the same posture the shared fold takes"
+
+              // Staging moved this refusal from after the call to before it. The
+              // slot is DECLARED, so nothing about checking it ever needed a
+              // result — and now a handler with a bad slot never reaches the
+              // outside world at all (D8).
+              Expect.isEmpty record.Value "and the performer never ran: the slot is checked while planning"
           }
 
           testList
@@ -322,6 +331,123 @@ let tests =
                         Expect.equal capability "ApplyOps" "the failure names the capability"
                         Expect.equal reason "NodeNotFound" "and the error's discriminator, not its message"
                     | other -> failtestf "expected exactly one failure diagnostic, got %A" other
+                }
+
+                test "a stage that fails AFTER a host call still leaves the host call unrun" {
+                    // The decision, at its sharpest (D8). Before staging, the
+                    // performer had run by the time the later stage failed and
+                    // no rollback reached it. Now the whole plan phase completes
+                    // or nothing external happens, so the recorder is the probe:
+                    // it stays empty.
+                    let record = ref []
+
+                    let handler =
+                        { Name = "fails-after-calling-out"
+                          Stages =
+                            [ Effect(ServerEffect.HostCall("audit", jstr "note", Some "audited"))
+                              Compute(Action.SetState("status", Some(jstr "written"), None))
+                              // Addressing a node that is not there: the apply
+                              // engine refuses while PLANNING.
+                              Effect(ServerEffect.ApplyOps [ TreeOp.RemoveNode(NodeId "absent") ]) ] }
+
+                    let outcome = Handler.run (openRegistry record) sources "call" handler store
+
+                    Expect.isFalse outcome.Committed "the handler did not commit"
+                    Expect.isEmpty record.Value "and the host performer never ran — the plan failed first"
+                    Expect.isEmpty outcome.Performed "so nothing at all is reported as performed"
+                    Expect.isEmpty outcome.Store.Bindings.State "and the landing slot was never written"
+                }
+
+                test "a performer that fails in the perform phase reports what already ran" {
+                    // The residual staging does NOT abolish, reported rather
+                    // than absorbed: the first call ran, the second refused, and
+                    // an uncommitted outcome names the one that happened. This
+                    // is the only case where `Performed` is non-empty on a
+                    // rollback, which is what makes it readable as a signal.
+                    let record = ref []
+
+                    let registry =
+                        ServerEffectRegistry.denyAll
+                        |> ServerEffectRegistry.register "first" (fun _ ->
+                            record.Value <- record.Value @ [ "first" ]
+                            Ok(jstr "ok"))
+                        |> ServerEffectRegistry.register "second" (fun _ ->
+                            record.Value <- record.Value @ [ "second" ]
+                            Error "the downstream refused it")
+                        |> ServerEffectRegistry.register "third" (fun _ ->
+                            record.Value <- record.Value @ [ "third" ]
+                            Ok(jstr "ok"))
+                        |> ServerEffectRegistry.permissive
+
+                    let handler =
+                        { Name = "half-performs"
+                          Stages =
+                            [ Effect(ServerEffect.HostCall("first", jstr "a", Some "landed"))
+                              Effect(ServerEffect.HostCall("second", jstr "b", None))
+                              Effect(ServerEffect.HostCall("third", jstr "c", None)) ] }
+
+                    let outcome = Handler.run registry sources "call" handler store
+
+                    Expect.isFalse outcome.Committed "the handler did not commit"
+
+                    Expect.equal
+                        record.Value
+                        [ "first"; "second" ]
+                        "the perform phase stopped at the first failure — the third was never reached"
+
+                    Expect.equal
+                        outcome.Performed
+                        [ "host:first" ]
+                        "and the outcome names exactly the call that ran and cannot be taken back"
+
+                    Expect.isEmpty outcome.Store.Bindings.State "the landing slot rolled back with everything else"
+
+                    match
+                        outcome.Diagnostics
+                        |> List.filter (fun d ->
+                            match d with
+                            | ServerDiagnostic.PerformFailed _ -> true
+                            | _ -> false)
+                    with
+                    | [ ServerDiagnostic.PerformFailed(capability, reason) ] ->
+                        Expect.equal capability "host:second" "the failure names the capability"
+
+                        Expect.equal
+                            reason
+                            "the downstream refused it"
+                            "and the performer's own text, which is the host's and so safe verbatim"
+                    | other -> failtestf "expected exactly one perform-phase failure, got %A" other
+                }
+
+                test "a later stage cannot read an earlier host call's result — the stated cost" {
+                    // Recorded as a test rather than only as prose, because it is
+                    // the price D8 paid and a future change that silently bought
+                    // it back should have to delete an assertion saying so.
+                    let handler =
+                        { Name = "reads-too-early"
+                          Stages =
+                            [ Effect(ServerEffect.HostCall("audit", jstr "note", Some "audited"))
+                              Compute(
+                                  Action.SetState(
+                                      "echo",
+                                      None,
+                                      Some(Binding.State("audited", Some(jstr "unresolved-at-plan-time")))
+                                  )
+                              ) ] }
+
+                    let outcome = Handler.run (openRegistry (ref [])) sources "call" handler store
+
+                    Expect.isTrue outcome.Committed "the handler commits — this is a cost, not a failure"
+
+                    Expect.equal
+                        (Map.tryFind "echo" outcome.Store.Bindings.State |> Option.map string)
+                        (Some "unresolved-at-plan-time")
+                        "the compute stage saw the slot's default, because at plan time there is no result yet"
+
+                    Expect.equal
+                        (Map.tryFind "audited" outcome.Store.Bindings.State |> Option.map string)
+                        (Some "recorded")
+                        "and the result did land — just after every stage had already run"
                 }
 
                 test "an unresolvable source fails the query without a partial write" {
@@ -406,6 +532,98 @@ let tests =
                         "and the wire-supplied endpoint is never repeated back"
 
                     Expect.equal (readout next.Resolved) (Some "init") "the session is unchanged"
+                }
+
+                test "a call NESTED in a chain runs the handler in its place" {
+                    // D7. The spike recognised a call only at the top level, so
+                    // this shape reached nothing at all. Now the fold recognises
+                    // it where it sits: the write before it is overwritten by
+                    // the handler's own, and the write after it survives.
+                    let handler =
+                        { Name = "refresh"
+                          Stages = [ Compute(Action.SetState("status", Some(jstr "from the handler"), None)) ] }
+
+                    let services =
+                        ServerServices.createPermissive
+                        |> ServerServices.withHandler "/handlers/refresh" handler
+
+                    let nested =
+                        Action.Chain
+                            [ Action.SetState("status", Some(jstr "before"), None)
+                              Action.Call("/handlers/refresh", None, None)
+                              Action.SetState("trailing", Some(jstr "after"), None) ]
+
+                    let session = ServerSession.init services empty (wire nested)
+                    let next, out = ServerSession.step session (clickEv "call")
+
+                    Expect.isTrue out.Committed "the nested handler committed"
+
+                    Expect.equal
+                        (readout next.Resolved)
+                        (Some "from the handler")
+                        "the handler ran after the chain's first write and overwrote it"
+
+                    Expect.equal
+                        (Map.tryFind "trailing" next.Store.State |> Option.map string)
+                        (Some "after")
+                        "and before the chain's last write, which still landed"
+                }
+
+                test "a nested call naming no handler is diagnosed without disturbing the chain" {
+                    let nested =
+                        Action.Chain
+                            [ Action.SetState("status", Some(jstr "before"), None)
+                              Action.Call("/handlers/absent", None, None)
+                              Action.SetState("trailing", Some(jstr "after"), None) ]
+
+                    let session = ServerSession.init ServerServices.createPermissive empty (wire nested)
+                    let next, out = ServerSession.step session (clickEv "call")
+
+                    Expect.equal
+                        out.Diagnostics
+                        [ ServerDiagnostic.HandlerUnregistered ]
+                        "the arm answers from inside a chain exactly as it does from the top"
+
+                    Expect.equal (readout next.Resolved) (Some "before") "and folds the chain around it untouched"
+                }
+
+                test "a call that declares its own result target is refused, and reaches no handler" {
+                    // D9. The handler declares where its results land; a tree
+                    // that declares one too is refused rather than quietly
+                    // ignored, so the retired mechanism says so out loud.
+                    let record = ref []
+
+                    let handler =
+                        { Name = "never-runs"
+                          Stages =
+                            [ Effect(ServerEffect.HostCall("audit", jstr "note", None))
+                              Compute(Action.SetState("status", Some(jstr "ran"), None)) ] }
+
+                    let services =
+                        { ServerServices.createPermissive with
+                            Effects = openRegistry record }
+                        |> ServerServices.withHandler "/handlers/refresh" handler
+
+                    let declaring =
+                        Action.Call("/handlers/refresh", None, Some(CallResultTarget.State "somewhere"))
+
+                    let session = ServerSession.init services empty (wire declaring)
+                    let next, out = ServerSession.step session (clickEv "call")
+
+                    Expect.isEmpty out.Performed "the handler was never reached"
+                    Expect.isEmpty record.Value "and no host performer ran"
+                    Expect.equal (readout next.Resolved) (Some "init") "the session is unchanged"
+
+                    match out.Diagnostics with
+                    | [ ServerDiagnostic.Bounded(BoundedDiagnostic.Refused(_, _, reason)) ] ->
+                        Expect.isFalse
+                            (reason.Contains "somewhere")
+                            "the refusal does not echo the wire-supplied target"
+
+                        Expect.isFalse
+                            (reason.Contains "/handlers/refresh")
+                            "nor the wire-supplied endpoint — both come off the wire"
+                    | other -> failtestf "expected one Refused diagnostic from the shared fold, got %A" other
                 }
 
                 test "an action that is not a call takes the shared fold, exactly as elsewhere" {
@@ -506,4 +724,47 @@ let tests =
               Expect.isTrue
                   (LanguagePrimitives.PhysicalEquality applied[0] out.Ops)
                   "and it saw the response ops themselves"
+          }
+
+          test "no second evaluator: this package matches on an Action nowhere" {
+              // D1's guard, checked rather than asserted in a comment. The
+              // handler arm moved into the shared fold precisely so that finding
+              // a nested call would not require a second `Action` match here —
+              // and a grep is the cheapest possible way to keep that true, since
+              // the next person to add a special case would have to delete this
+              // test to do it.
+              //
+              // Resolved from this source file rather than the working directory,
+              // for the same reason the parity leg's fixture root is.
+              let packageSources =
+                  System.IO.Path.Combine(__SOURCE_DIRECTORY__, "..", "..", "src", "Fuaran.Program.Server")
+                  |> System.IO.Path.GetFullPath
+
+              let armMatches (dir: string) =
+                  System.IO.Directory.GetFiles(dir, "*.fs")
+                  |> Array.collect (fun path ->
+                      System.IO.File.ReadAllLines path
+                      |> Array.indexed
+                      |> Array.filter (fun (_, line) -> line.TrimStart().StartsWith "| Action.")
+                      |> Array.map (fun (i, line) ->
+                          sprintf "%s:%d %s" (System.IO.Path.GetFileName path) (i + 1) (line.Trim())))
+
+              Expect.isTrue (System.IO.Directory.Exists packageSources) $"the server package is at {packageSources}"
+
+              Expect.isNonEmpty
+                  (System.IO.Directory.GetFiles(packageSources, "*.fs"))
+                  "…and it has sources to scan, so an empty result below is a finding rather than a miss"
+
+              // The probe, proven able to fail: run the same scan over the
+              // package that DOES interpret actions. A check that has never been
+              // seen to go red is a check whose mechanism nobody has verified.
+              let fold =
+                  System.IO.Path.Combine(__SOURCE_DIRECTORY__, "..", "..", "src", "Fuaran.Program.Bounded")
+                  |> System.IO.Path.GetFullPath
+
+              Expect.isNonEmpty (armMatches fold) "the scan finds arms where arms exist"
+
+              Expect.isEmpty
+                  (armMatches packageSources)
+                  "and none here: the only place this domain interprets an Action is the shared fold"
           } ]

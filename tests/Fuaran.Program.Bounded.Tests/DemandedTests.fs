@@ -143,25 +143,27 @@ let tests =
               Expect.isEmpty p.Effects "none of them is a client effect"
           }
 
-          test "a Call whose result lands in state writes that namespace; a query target names the query channel" {
+          test "a Call's own result target demands nothing — the handler declares where results land" {
+              // DECISIONS.md D9 retired the tree-declared result target, and the
+              // shared fold now REFUSES a call that carries one. So the target
+              // can only ride on a call that reaches no host at all, and
+              // projecting it would report a demand for a slot no host will ever
+              // be asked to cover. The endpoint stays a demand: it is what a
+              // coverage check is actually asking about.
               let intoState =
                   ofAction (Action.Call("/api/o", None, Some(CallResultTarget.State "orders.selected")))
 
-              Expect.equal
-                  intoState.StateNamespaces
-                  [ { Namespace = "orders"
-                      Written = true
-                      Read = false } ]
-                  "the result target is a write"
+              Expect.isEmpty intoState.StateNamespaces "a result target is not a write the TREE demands"
+
+              Expect.equal intoState.HostCalls [ { Channel = "Call"; Name = "/api/o" } ] "only the endpoint is demanded"
 
               let intoQuery =
                   ofAction (Action.Call("/api/o", None, Some(CallResultTarget.Query "recent")))
 
               Expect.equal
                   intoQuery.HostCalls
-                  [ { Channel = "Call"; Name = "/api/o" }
-                    { Channel = "Query"; Name = "recent" } ]
-                  "the endpoint and the query slot are both named"
+                  [ { Channel = "Call"; Name = "/api/o" } ]
+                  "and a query target names no query channel either"
           }
 
           test "a dispatch-time valueFrom READS its namespace without writing it" {

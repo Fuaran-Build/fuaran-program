@@ -62,12 +62,21 @@ open Fuaran.UI.ServerDriven
 //    - `Dispatch` → NO-OP: there is no `update` function to fold a `'Msg`
 //      through on this path, and the wire `Dispatch` carries only the inert
 //      sentinel anyway.
-//    - `Call` → NO-OP **and the `onResult` closure is never invoked** (it is the
-//      inert sentinel). `Call`'s API round-trip is a hand-authored-path concern;
-//      a generated app expresses server data via `SetState` over the wire.
+//    - `Call` → the HANDLER-EFFECT ARM (below) **and the `onResult` closure is
+//      never invoked** (it is the inert sentinel). A placement that registers
+//      nothing for the endpoint gets the documented no-op this arm has always
+//      been; a placement that does gets its answer folded in place.
 //  `Binding.Computed`'s closure is unreachable here too — it is a *binding*, not
 //  an action, and binding re-resolution treats a decoded `Computed` as its
 //  placeholder (it never carries author code over the wire).
+//
+//  ── The handler-effect arm (DECISIONS.md D7) ────────────────────────────────
+//  Recognising a call action is the FOLD's job, at every depth, because the fold
+//  is the only thing that knows where in a `Chain` the call sits. A placement
+//  that matched on `Action` itself to find nested calls would be a second
+//  evaluator, which is what D1 forbids — so the recognition lives here once and
+//  the placement supplies only the ANSWER, through `HandlerArm`. What a call
+//  MEANS is placement-specific; WHERE it is recognised is not.
 // ============================================================================
 
 /// The per-connection bounded store. A `BindingResolver.BindingSources` value:
@@ -118,6 +127,46 @@ type BoundedOutcome =
       Effects: ClientEffect list
       Diagnostics: BoundedDiagnostic list }
 
+/// A placement's answer to a call action the fold recognised: the store as the
+/// answer left it, the closure-free effects it produced, the diagnostics it
+/// wants folded into the interpreter's own, and the placement's accumulation
+/// threaded onward.
+///
+/// The three bounded fields are why an answer is folded IN PLACE rather than
+/// reported for later: a call sitting between two `SetState`s in a `Chain` must
+/// see the first write and be seen by the second, which only holds if the fold
+/// threads the answer's store into the rest of the chain.
+type HandlerAnswer<'Placement> =
+    { Store: BoundedStore
+      Effects: ClientEffect list
+      Diagnostics: BoundedDiagnostic list
+      Placement: 'Placement }
+
+/// The shared fold's **handler-effect arm** — what a call action means at this
+/// placement (DECISIONS.md D7).
+///
+/// `Answer nodeId endpoint store placement` returns `None` to DECLINE, which is
+/// the documented no-op this arm has always been at every placement that
+/// registers nothing: the store is untouched and the fold emits its usual
+/// `UnsupportedOnBoundedPath` diagnostic. A placement that answers takes
+/// responsibility for the whole arm, diagnostics included.
+///
+/// `'Placement` is opaque here on purpose. It is how a placement threads its
+/// OWN accumulation — a domain tree, an audit trail, a staged effect list —
+/// through a fold that must know nothing about any of it. Widening this module
+/// to know what a handler is would put the server placement's vocabulary in the
+/// package the browser placement also consumes.
+type HandlerArm<'Placement> =
+    { Answer: string -> string -> BoundedStore -> 'Placement -> HandlerAnswer<'Placement> option }
+
+module HandlerArm =
+
+    /// The arm that declines every call — the default, and the only arm a
+    /// placement with no handler registry can honestly offer. Named rather than
+    /// implied, so "this placement runs no handlers" is a statement in the code
+    /// rather than an absence.
+    let inert<'Placement> : HandlerArm<'Placement> = { Answer = fun _ _ _ _ -> None }
+
 module BoundedActions =
 
     /// Empty client-effect outcome that only carries the (unchanged or updated)
@@ -141,13 +190,34 @@ module BoundedActions =
           Effects = []
           Diagnostics = [ BoundedDiagnostic.Refused(nodeId, Validation.describeAction action, reason) ] }
 
-    /// Interpret one resolved bounded `Action<obj>` against the store. `nodeId`
-    /// is the originating event's node (for node-addressed client effects such
-    /// as `ReadFileBody`). **Never invokes a closure carried by the action** —
-    /// see the safety property at the top of this file. The only mutation is the
-    /// `SetState` write; everything else either emits a closure-free
-    /// `ClientEffect` or is a documented no-op.
-    let rec runBoundedAction (nodeId: string) (action: Action<obj>) (s: BoundedStore) : BoundedOutcome =
+
+    /// Interpret one resolved bounded `Action<obj>` against the store, with a
+    /// placement-supplied **handler-effect arm** for the call action and the
+    /// placement's own accumulation threaded alongside (DECISIONS.md D7).
+    ///
+    /// `nodeId` is the originating event's node (for node-addressed client
+    /// effects such as `ReadFileBody`). **Never invokes a closure carried by the
+    /// action** — see the safety property at the top of this file. The only
+    /// mutation is the `SetState` write; everything else either emits a
+    /// closure-free `ClientEffect`, consults the handler arm, or is a documented
+    /// no-op.
+    ///
+    /// THIS IS THE ONLY PLACE ANYTHING IN THIS DOMAIN INTERPRETS AN `Action`.
+    /// One evaluating `match action with`, in one file, reachable from every
+    /// placement — which is D1's "no second evaluator" as a property a reader
+    /// can check by grep rather than a claim they have to trust. (Two other
+    /// walks in this package match the same closed DU without interpreting it:
+    /// the resource budget's cost accounting and the demanded-effect
+    /// projection's static enumeration. Neither performs, mutates or resolves
+    /// anything, which is exactly the distinction D1 draws — and both being
+    /// total over the DU is what makes a new arm impossible to add silently.)
+    let rec runBoundedActionWith
+        (arm: HandlerArm<'Placement>)
+        (nodeId: string)
+        (action: Action<obj>)
+        (s: BoundedStore)
+        (placement: 'Placement)
+        : BoundedOutcome * 'Placement =
         match action with
         // The one store mutation: write the `State` channel. The `JVal` payload
         // lowers to the structural obj shapes the store historically held —
@@ -157,37 +227,38 @@ module BoundedActions =
             // This loop's whole premise is that the tree is untrusted, so a
             // generated tree writing `host.<x>` is exactly the case the
             // namespace exists for.
-            if Fuaran.UI.Renderer.StateKeys.isHostReserved key then
-                refused
-                    nodeId
-                    action
-                    (sprintf
-                        "State key '%s' is under the host-reserved '%s' namespace"
-                        key
-                        Fuaran.UI.Renderer.StateKeys.HostReservedPrefix)
-                    s
-            else
-                // `valueFrom` (value XOR valueFrom, decode-enforced) evaluates AT
-                // DISPATCH TIME against the store itself (the BoundedStore IS the
-                // BindingSources). An unresolved / errored source performs NO
-                // write and is diagnosed, never silent.
-                let payload: Result<Fuaran.Core.JVal option, string> =
-                    match valueFrom, value with
-                    | Some b, _ ->
-                        (match Fuaran.UI.Renderer.BindingResolver.resolveJVal s b with
-                         | Resolved jv -> Ok(Some jv)
-                         | NotResolved -> Ok None
-                         | Errored m -> Error m
-                         | I18nUnresolved k -> Error(sprintf "unresolved i18n key '%s'" k))
-                    | None, v -> Ok v
+            (if Fuaran.UI.Renderer.StateKeys.isHostReserved key then
+                 refused
+                     nodeId
+                     action
+                     (sprintf
+                         "State key '%s' is under the host-reserved '%s' namespace"
+                         key
+                         Fuaran.UI.Renderer.StateKeys.HostReservedPrefix)
+                     s
+             else
+                 // `valueFrom` (value XOR valueFrom, decode-enforced) evaluates AT
+                 // DISPATCH TIME against the store itself (the BoundedStore IS the
+                 // BindingSources). An unresolved / errored source performs NO
+                 // write and is diagnosed, never silent.
+                 let payload: Result<Fuaran.Core.JVal option, string> =
+                     match valueFrom, value with
+                     | Some b, _ ->
+                         (match Fuaran.UI.Renderer.BindingResolver.resolveJVal s b with
+                          | Resolved jv -> Ok(Some jv)
+                          | NotResolved -> Ok None
+                          | Errored m -> Error m
+                          | I18nUnresolved k -> Error(sprintf "unresolved i18n key '%s'" k))
+                     | None, v -> Ok v
 
-                match payload with
-                | Ok(Some jv) ->
-                    store
-                        { s with
-                            State = Map.add key (JValObj.toObj jv) s.State }
-                | Ok None -> refused nodeId action "valueFrom did not resolve to a value — no write performed" s
-                | Error m -> refused nodeId action (sprintf "valueFrom errored: %s — no write performed" m) s
+                 match payload with
+                 | Ok(Some jv) ->
+                     store
+                         { s with
+                             State = Map.add key (JValObj.toObj jv) s.State }
+                 | Ok None -> refused nodeId action "valueFrom did not resolve to a value — no write performed" s
+                 | Error m -> refused nodeId action (sprintf "valueFrom errored: %s — no write performed" m) s),
+            placement
 
         // Inherently-browser arms → closure-free ClientEffects (no server form).
         // The route is sanitised before the effect is shipped; the host
@@ -195,16 +266,18 @@ module BoundedActions =
         // land as a client-side sink. A refusal emits no effect and one
         // diagnostic, never a silently-neutered `about:blank`.
         | Action.Navigate route ->
-            match Fuaran.UI.Renderer.Sanitize.sanitizeUrl route with
-            | Some safe ->
-                { Store = s
-                  Effects = [ ClientEffect.Navigate safe ]
-                  Diagnostics = [] }
-            | None -> refused nodeId action "route is not a safe URL" s
+            (match Fuaran.UI.Renderer.Sanitize.sanitizeUrl route with
+             | Some safe ->
+                 { Store = s
+                   Effects = [ ClientEffect.Navigate safe ]
+                   Diagnostics = [] }
+             | None -> refused nodeId action "route is not a safe URL" s),
+            placement
         | Action.WriteToClipboard text ->
             { Store = s
               Effects = [ ClientEffect.WriteToClipboard text ]
-              Diagnostics = [] }
+              Diagnostics = [] },
+            placement
         | Action.ReadFileBody(_, _, encoding, _) ->
             // The `onRead` closure (3rd field) is the inert decode sentinel — NOT
             // invoked here. The host reads the browser-held blob and round-trips
@@ -217,20 +290,25 @@ module BoundedActions =
 
             { Store = s
               Effects = [ ClientEffect.ReadFileBody(nodeId, enc) ]
-              Diagnostics = [] }
+              Diagnostics = [] },
+            placement
 
-        // Compose: fold in order, threading the store, concatenating effects +
-        // diagnostics.
+        // Compose: fold in order, threading the store AND the placement's
+        // accumulation, concatenating effects + diagnostics. Threading the
+        // placement here is what makes a nested call behave exactly as a
+        // top-level one — the chain is the only structure that could have made
+        // them differ.
         | Action.Chain actions ->
             actions
             |> List.fold
-                (fun acc a ->
-                    let next = runBoundedAction nodeId a acc.Store
+                (fun (acc, p) a ->
+                    let next, p' = runBoundedActionWith arm nodeId a acc.Store p
 
                     { Store = next.Store
                       Effects = acc.Effects @ next.Effects
-                      Diagnostics = acc.Diagnostics @ next.Diagnostics })
-                (store s)
+                      Diagnostics = acc.Diagnostics @ next.Diagnostics },
+                    p')
+                (store s, placement)
 
         // Computational host arms with no store/DOM effect on the bounded path:
         // documented no-ops (a generated app's loop does not fan out to host
@@ -240,11 +318,11 @@ module BoundedActions =
         | Action.AiTool _
         // Capability dispatch is a host channel; no store/DOM effect on the
         // bounded path (documented no-op, like AiTool).
-        | Action.Invoke _ -> noOp nodeId action s
+        | Action.Invoke _ -> noOp nodeId action s, placement
 
         // No `update` to fold a 'Msg through, and the wire `Dispatch` carries
         // only the inert sentinel: no-op (+ diagnostic).
-        | Action.Dispatch _ -> noOp nodeId action s
+        | Action.Dispatch _ -> noOp nodeId action s, placement
 
         // The per-NodeId `Binding.Local` buffer is client-side on the bounded
         // path. The flushed value is delivered as the input event's payload,
@@ -252,10 +330,42 @@ module BoundedActions =
         // commit; the `CommitLocal` action itself is therefore a store-level
         // no-op here (the explicit-commit boundary is a host concern) —
         // diagnosed, not silent.
-        | Action.CommitLocal _ -> noOp nodeId action s
+        | Action.CommitLocal _ -> noOp nodeId action s, placement
+
+        // A call that ALSO declares where its answer should land is REFUSED
+        // rather than honoured or quietly ignored (DECISIONS.md D9). Result-target
+        // ownership sits with the handler: its stages name landing slots, one per
+        // result, and a tree-declared target is a second mechanism for the same
+        // job that no placement in this domain honours. Refusing makes the
+        // retirement observable; ignoring would leave an author believing an
+        // answer lands somewhere it never does.
+        //
+        // The reason is log-safe: it names neither the endpoint nor the target,
+        // both of which come off the wire.
+        | Action.Call(_, _, Some _) ->
+            refused nodeId action "the call declares a result target; a handler declares where its own results land" s,
+            placement
 
         // `Call`'s `onResult` is the inert decode sentinel — NEVER invoked (the
-        // safety property). A generated app expresses server data via `SetState`.
-        // The no-op emits the diagnostic — a generated tree that *intended* a
-        // `Call` is observable, not a silent dead end.
-        | Action.Call _ -> noOp nodeId action s
+        // safety property). The handler-effect arm decides what the call MEANS
+        // here; declining is the documented no-op, and its diagnostic makes a
+        // generated tree that *intended* a call observable rather than a silent
+        // dead end.
+        | Action.Call(endpoint, _, None) ->
+            match arm.Answer nodeId endpoint s placement with
+            | None -> noOp nodeId action s, placement
+            | Some answer ->
+                { Store = answer.Store
+                  Effects = answer.Effects
+                  Diagnostics = answer.Diagnostics },
+                answer.Placement
+
+    /// Interpret one resolved bounded `Action<obj>` against the store at a
+    /// placement that runs NO handlers — the browser client and the server
+    /// driver, neither of which has a handler registry to consult.
+    ///
+    /// Exactly `runBoundedActionWith HandlerArm.inert`, so it is the same fold
+    /// rather than a simpler one: a placement without handlers differs from a
+    /// placement with them in what it ANSWERS, never in how it interprets.
+    let runBoundedAction (nodeId: string) (action: Action<obj>) (s: BoundedStore) : BoundedOutcome =
+        runBoundedActionWith HandlerArm.inert nodeId action s () |> fst

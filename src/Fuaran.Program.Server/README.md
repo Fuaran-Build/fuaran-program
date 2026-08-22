@@ -65,11 +65,18 @@ denial or a failure discards the store, the ops, the effects and the notificatio
 diagnostics that say why. A half-applied handler is unrepresentable in the returned value, and
 `Committed` reports which happened.
 
-That is total for the state this placement owns, and **not** total for a host performer that already
-ran. The open questions — this one, idempotency on replay, and the schema coupling between a query
-and the tree that reads its result — are written down in
-[`docs/server-handler-atomicity.md`](../../docs/server-handler-atomicity.md) as input to the wire
-cut, rather than being settled silently in code.
+A run has **two phases** (D8), which is what extends that guarantee past the state this placement
+owns. The PLAN phase runs every stage, gating each host call, resolving its performer and checking its
+landing slot but **not invoking it**; the PERFORM phase, reached only if the plan completed, invokes
+the staged calls in declaration order. So a domain failure happens before anything external runs. The
+price is stated: a later stage cannot read an earlier host call's result. The residual staging does
+not abolish — a performer failing in the perform phase leaves its predecessors run — is reported, as
+`Committed = false` with `Performed` naming exactly the calls that happened.
+
+The questions that remain open — idempotency on replay, and the schema coupling between a query and
+the tree that reads its result — are written down in
+[`docs/server-handler-atomicity.md`](../../docs/server-handler-atomicity.md) as input to the wire cut,
+rather than being settled silently in code.
 
 ## Defaults are closed
 
@@ -84,7 +91,10 @@ path exists.
 See [`DECISIONS.md`](../../DECISIONS.md) — D1 (pipeline core; no second evaluator), D2 (total, not
 Turing-complete, with host functions as the escape), D3 (closed per-placement effect vocabularies
 behind a registered, policy-gated seam), D4/D5 (the UI-typed first instantiation and its one-way
-dependency direction), D6 (the by-id reference vocabulary for placing a program tree).
+dependency direction), D6 (the by-id reference vocabulary for placing a program tree), D7 (call
+recognition is an arm of the shared fold, so this package matches on an `Action` nowhere), D8
+(host-effect atomicity is two-phase staging), D9 (the handler declares where its results land; a
+tree-declared result target is refused).
 
 ## Licence
 

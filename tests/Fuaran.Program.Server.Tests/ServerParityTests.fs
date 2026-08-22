@@ -56,6 +56,10 @@ let private handlerEndpoint = "/handlers/refresh"
 [<Literal>]
 let private handlerFixture = "server-handler-call"
 
+/// The same endpoint, named from INSIDE a chain — the nested reading (D7).
+[<Literal>]
+let private nestedFixture = "nested-handler-call"
+
 let private toLiveEvent (index: int) (ev: ScriptedEvent) : LiveEvent =
     { ConnId = "parity"
       NodeId = ev.NodeId
@@ -112,7 +116,12 @@ let private openServices =
 
 /// The handler the corpus fixture's endpoint names when it is registered: one
 /// arm of each server capability, in the order a real handler would use them —
-/// read, compute, mutate, push, announce.
+/// read, compute, mutate, call out, push, announce.
+///
+/// The host call sits in the MIDDLE of that list deliberately. Two-phase staging
+/// (DECISIONS.md D8) defers it to the perform phase, so the fixture's audit trail
+/// reports it LAST — the decision made visible in the one family every placement
+/// reads, rather than only in a unit test of the handler.
 let private refreshHandler: Handler =
     let rows: Fuaran.Core.Table =
         { Schema = [ "n", Fuaran.Core.IntType ]
@@ -126,11 +135,14 @@ let private refreshHandler: Handler =
         [ Effect(ServerEffect.RunQuery("rows", Fuaran.Core.Embedded rows, [ Fuaran.Core.Limit(2, 0) ]))
           Compute(Action.SetState("rows", Some(Fuaran.Core.JStr "2 rows"), None))
           Effect(ServerEffect.ApplyOps [ TreeOp.RemoveNode(NodeId "refresh") ])
+          Effect(ServerEffect.HostCall("audit", Fuaran.Core.JStr "refreshed", None))
           Effect(ServerEffect.EmitPatch [ TreeOp.RemoveNode(NodeId "readout") ])
           Effect(ServerEffect.Notify("audit", Fuaran.Core.JStr "refreshed")) ] }
 
-let private readout (tree: Node<obj>) : string option =
-    match findNode (NodeId "readout") tree with
+/// The resolved Markdown text at `id` — the observable "the store changed and
+/// re-resolution made it visible" probe.
+let private readAt (id: string) (tree: Node<obj>) : string option =
+    match findNode (NodeId id) tree with
     | Some node ->
         match node.Kind with
         | NodeKind.Markdown({ Text = TextSource.Literal s }) -> Some s
@@ -186,15 +198,16 @@ let tests =
 
                       Expect.equal
                           out.Performed
-                          [ "RunQuery"; "ApplyOps"; "EmitPatch"; "Notify" ]
-                          "every server-effect arm the handler declared was performed, in stage order"
+                          [ "RunQuery"; "ApplyOps"; "EmitPatch"; "Notify"; "host:audit" ]
+                          "every arm the handler declared was performed — in EXECUTION order, so the \
+                           staged host call reports after the four it was declared among (D8)"
 
                       Expect.isTrue
                           (Map.containsKey "rows" next.Store.QueryResults)
                           "the query landed its result in the session's query slot"
 
                       Expect.equal
-                          (readout next.Resolved)
+                          (readAt "readout" next.Resolved)
                           (Some "2 rows")
                           "the Compute stage's write re-resolved into the tree — the shared fold, at a third placement"
 
@@ -210,6 +223,70 @@ let tests =
                           "the notification is reported for the host to deliver"
 
                       Expect.isNonEmpty out.Ops "and the response carries the re-resolution diff"
+          }
+
+          test "the nested fixture splices the handler into the chain, in place" {
+              // The claim D7 makes, driven through the corpus: a call action
+              // buried between two writes runs where it sits. The write BEFORE
+              // it must be visible to the handler and then overwritten by the
+              // handler's own; the write AFTER it must survive. A top-level-only
+              // arm produces neither — it produces "before" and "after" with no
+              // handler at all, which is what this fixture looked like until the
+              // arm moved into the fold.
+              match fixtures |> List.tryFind (fun f -> f.Name = nestedFixture) with
+              | None -> failtestf "%s is missing from the corpus" nestedFixture
+              | Some fixture ->
+                  match JsonDecode.decodeNode fixture.TreeJson with
+                  | Error err -> failtestf "decode failed: %A" err
+                  | Ok wire ->
+                      let services =
+                          openServices |> ServerServices.withHandler handlerEndpoint refreshHandler
+
+                      let session = ServerSession.init services empty wire
+                      let ev = fixture.Events |> List.mapi toLiveEvent |> List.head
+                      let next, out = ServerSession.step session ev
+
+                      Expect.isNone out.Rejected "the scripted event passed both gates"
+                      Expect.isTrue out.Committed "and the nested handler ran to completion"
+
+                      Expect.equal
+                          out.Performed
+                          [ "RunQuery"; "ApplyOps"; "EmitPatch"; "Notify"; "host:audit" ]
+                          "a nested call reaches every arm a top-level one reaches — the SAME handler run"
+
+                      Expect.equal
+                          (readAt "readout" next.Resolved)
+                          (Some "2 rows")
+                          "the handler ran AFTER the chain's first write, overwriting it"
+
+                      Expect.equal
+                          (readAt "tail" next.Resolved)
+                          (Some "after")
+                          "and BEFORE the chain's last write, which still landed"
+          }
+
+          test "the nested fixture is inert in the chain when the endpoint names nothing" {
+              match fixtures |> List.tryFind (fun f -> f.Name = nestedFixture) with
+              | None -> failtestf "%s is missing from the corpus" nestedFixture
+              | Some fixture ->
+                  match JsonDecode.decodeNode fixture.TreeJson with
+                  | Error err -> failtestf "decode failed: %A" err
+                  | Ok wire ->
+                      let session = ServerSession.init openServices empty wire
+                      let ev = fixture.Events |> List.mapi toLiveEvent |> List.head
+                      let next, out = ServerSession.step session ev
+
+                      Expect.isEmpty out.Performed "no capability was reached"
+
+                      Expect.equal
+                          out.Diagnostics
+                          [ ServerDiagnostic.HandlerUnregistered ]
+                          "the dead end is diagnosed from inside the chain, exactly as from the top"
+
+                      Expect.equal
+                          (readAt "readout" next.Resolved, readAt "tail" next.Resolved)
+                          (Some "before", Some "after")
+                          "and the chain around it folded untouched — the other legs' reading of this fixture"
           }
 
           test "the same fixture is inert when the endpoint names nothing" {

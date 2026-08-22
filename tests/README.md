@@ -35,13 +35,22 @@ because the shared runner is Fable-clean — leg (c) compiles it to JavaScript, 
 a server loop has no browser leg by definition. It reads the same files through
 the same loader; a separate corpus would prove nothing.
 
-**One fixture is read two ways.** `server-handler-call`'s tree names a handler
-through a call action. With no handler registered — which is every leg but
-(d)'s second reading — the arm is a documented no-op, so the fixture pins that
-the server-logic placement inherits the shared algebra and diverges *only* where
-a host has registered something. With the handler registered, the same tree and
-the same event script exercise the server-effect arms. Same fixture, different
-host: the axis the family exists to vary.
+**Two fixtures are read two ways each.** `server-handler-call`'s tree names a
+handler through a call action; `nested-handler-call` names the same handler from
+inside a chain, between two writes. With no handler registered — which is every
+leg but (d)'s second reading — the arm is a documented no-op, so both fixtures
+pin that the server-logic placement inherits the shared algebra and diverges
+*only* where a host has registered something. With the handler registered, the
+same trees and the same event scripts exercise the server-effect arms. Same
+fixture, different host: the axis the family exists to vary.
+
+The nested one earns its own place rather than duplicating the first. It pins
+that a call is **spliced where it sits** (DECISIONS.md D7): the write before it
+is overwritten by the handler's own and the write after it survives, which a
+top-level-only recognition could not produce. And because the registered handler
+declares a host call in the middle of its stage list while reporting it last, the
+family also carries the visible consequence of two-phase staging (D8) — the audit
+trail is execution order, not stage order.
 
 **Regenerating:** `dotnet run --project tests/Fuaran.Program.Parity.Tests --
 --emit-fixtures`. The emit refuses to write an expectation while the placements

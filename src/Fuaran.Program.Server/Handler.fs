@@ -15,10 +15,11 @@ open Fuaran.Program.Bounded
 //
 //    Compute a   the bounded algebra — interpreted by the SHARED fold, the same
 //                one the browser placement and the server driver run. Not a
-//                copy, not a variant: `BoundedActions.runBoundedAction`, called
-//                from exactly one place in this file. That single call site is
-//                the guard on D1's "no second evaluator" — there is nowhere
-//                else in this package that matches on an `Action`.
+//                copy, not a variant. Since the handler arm moved into the fold
+//                (DECISIONS.md D7) this package matches on an `Action`
+//                NOWHERE AT ALL — the one place an action is INTERPRETED is the
+//                shared fold, which is D1's "no second evaluator" as something a
+//                grep settles rather than a claim to trust.
 //
 //    Effect e    one arm of this placement's closed effect vocabulary, run
 //                through the default-deny gate beside it.
@@ -36,18 +37,36 @@ open Fuaran.Program.Bounded
 //  before any untrusted tree arrives. Giving a handler a wire form is a later,
 //  separate act — see `docs/server-handler-atomicity.md`.
 //
-//  ── Atomicity ───────────────────────────────────────────────────────────────
+//  ── Atomicity, in two phases (DECISIONS.md D8) ──────────────────────────────
 //  The HANDLER is the unit, not the stage. Stages thread a value; nothing is
 //  committed until the last one succeeds; a denial or a failure discards the
 //  accumulated store, the ops, the effects and the notifications, keeping only
 //  the diagnostics that say why. A half-applied handler is therefore
 //  unrepresentable in the returned value.
 //
-//  That is total for state this placement owns and NOT total for a host
-//  performer that already ran — a `HostCall` in stage 2 has done whatever it
-//  does by the time stage 3 fails, and no rollback here reaches it. The outcome
-//  says which happened (`Committed`) rather than implying the stronger claim.
-//  The design note works through what closing that gap would cost.
+//  A run has two phases, and the split is what extends that guarantee past the
+//  state this placement owns:
+//
+//    PLAN     every stage runs in order. A query evaluates, a compute folds, an
+//             op applies to the in-memory tree, a patch and a notification
+//             accumulate — and a `HostCall` is GATED, LOOKED UP, and its landing
+//             slot checked, then STAGED rather than invoked. Everything this
+//             phase does is either a read or a value the caller can discard.
+//
+//    PERFORM  reached only when the plan completed. The staged host calls are
+//             invoked in declaration order and their results land.
+//
+//  So a domain failure — a denial, a bad op, an unresolvable source, a reserved
+//  landing slot — happens BEFORE anything external runs, which is the property
+//  the note's third option was chosen for. The price is stated rather than
+//  hidden: a later stage cannot read an earlier host call's result, because at
+//  planning time there is no result to read.
+//
+//  What remains, and is REPORTED rather than pretended away: a performer that
+//  fails in the perform phase leaves its predecessors run. The outcome then
+//  carries `Committed = false` with the store rolled back, and `Performed`
+//  naming exactly the host calls that did happen — the one case where an
+//  uncommitted handler reports having performed anything at all.
 // ============================================================================
 
 /// The state a handler runs against. Two channels, deliberately named apart:
@@ -92,6 +111,13 @@ type ServerDiagnostic =
     /// cost is a thinner error, and it is recorded as an open question rather
     /// than pretended away.
     | Failed of capability: string * reason: string
+    /// A STAGED host call failed in the perform phase (D8). Distinct from
+    /// `Failed` because the two carry opposite news about the outside world: a
+    /// `Failed` happened while planning, so nothing external ran; a
+    /// `PerformFailed` happened after planning succeeded, so every host call
+    /// declared before it DID run and cannot be taken back. `reason` is the host
+    /// performer's own text, which is safe to surface verbatim.
+    | PerformFailed of capability: string * reason: string
     /// The tree's `Action.Call` named an endpoint no handler is registered
     /// under.
     ///
@@ -111,10 +137,21 @@ type HandlerOutcome =
         Store: ServerStore
         /// Whether the handler ran to completion. `false` means every value
         /// below is the entry state and the handler's declared work did not
-        /// happen — except for any host performer that had already run.
+        /// happen — except for the host calls `Performed` names, which is the
+        /// whole residual two-phase staging leaves (D8).
         Committed: bool
-        /// The capabilities performed, in order — the audit trail of what the
-        /// handler actually did.
+        /// The capabilities performed, in EXECUTION order — the audit trail of
+        /// what the handler actually did.
+        ///
+        /// Execution order is not stage order for a `HostCall`: staging defers
+        /// every host call to the perform phase, so they appear after the
+        /// capabilities the plan phase ran, however early they were declared.
+        /// That is the honest reading — this list says what happened and when,
+        /// not what the stage list said.
+        ///
+        /// On an uncommitted outcome it is empty, EXCEPT when the perform phase
+        /// itself failed, where it names the host calls that ran before the
+        /// failure and were not rolled back.
         Performed: string list
         /// Ops the handler asked to be shipped to the client, in order.
         /// Distinct from anything applied to the domain tree.
@@ -128,19 +165,74 @@ type HandlerOutcome =
         Diagnostics: ServerDiagnostic list
     }
 
+/// What the handlers invoked during ONE event contributed — the value this
+/// placement threads through the shared fold as its `HandlerArm` placement
+/// state (DECISIONS.md D7).
+///
+/// It exists because the fold owns the binding store and the client effects and
+/// nothing else: the domain tree, the audit trail, the patches, the
+/// notifications and the server diagnostics are this placement's business, and
+/// the fold must be able to carry them without knowing what any of them are.
+/// An event that reaches no call action produces the tally it started with.
+type HandlerTally =
+    {
+        /// The domain tree as the last committed handler left it.
+        Tree: Node<obj>
+        /// `false` once ANY handler this event invoked failed to commit. A
+        /// handler is the atomicity unit, so one that halted rolled ITSELF back
+        /// and the rest of the fold carried on — this flag is how the event says
+        /// that happened rather than implying the whole event was refused.
+        Committed: bool
+        Performed: string list
+        Patches: TreeOp<obj> list
+        Notifications: (string * Fuaran.Core.JVal) list
+        Diagnostics: ServerDiagnostic list
+    }
+
+module HandlerTally =
+
+    /// The tally an event starts from: this tree, nothing performed, committed
+    /// until proven otherwise.
+    let start (tree: Node<obj>) : HandlerTally =
+        { Tree = tree
+          Committed = true
+          Performed = []
+          Patches = []
+          Notifications = []
+          Diagnostics = [] }
+
 module Handler =
+
+    /// A host call the plan phase admitted and the perform phase will invoke
+    /// (D8). Everything a call needs is captured here, so the perform phase
+    /// decides nothing: the gate has already said yes, the performer has already
+    /// been found, and the landing slot has already been checked. All that is
+    /// left is the one irreversible act.
+    type private StagedCall =
+        { Capability: string
+          Performer: Fuaran.Core.JVal -> Result<Fuaran.Core.JVal, string>
+          Args: Fuaran.Core.JVal
+          Into: string option }
 
     /// The state threaded through the stage fold. Lists accumulate reversed and
     /// are flipped once at the end, so a long handler does not quadratically
     /// re-append.
     type private Accumulator =
-        { Store: ServerStore
-          Halted: bool
-          Performed: string list
-          Patches: TreeOp<obj> list
-          Notifications: (string * Fuaran.Core.JVal) list
-          ClientEffects: ClientEffect list
-          Diagnostics: ServerDiagnostic list }
+        {
+            Store: ServerStore
+            Halted: bool
+            Performed: string list
+            /// The capabilities the PERFORM phase ran. Kept apart from `Performed`
+            /// because they are the only ones that survive a rollback, and a
+            /// single list would make "what actually happened" a question about
+            /// string prefixes.
+            Externally: string list
+            Staged: StagedCall list
+            Patches: TreeOp<obj> list
+            Notifications: (string * Fuaran.Core.JVal) list
+            ClientEffects: ClientEffect list
+            Diagnostics: ServerDiagnostic list
+        }
 
     /// The discriminator of a pipeline-evaluation failure. Deliberately not the
     /// full error: see `ServerDiagnostic.Failed`.
@@ -165,10 +257,16 @@ module Handler =
             Halted = true
             Diagnostics = ServerDiagnostic.Denied denial :: acc.Diagnostics }
 
-    /// Run one effect against the store. The gate is consulted FIRST — before a
+    /// PLAN one effect against the store. The gate is consulted FIRST — before a
     /// pipeline is evaluated, before an op reaches the apply engine, and before
     /// a performer is even looked up as a callable — so no side effect of any
     /// kind can precede the policy decision.
+    ///
+    /// Four of the five arms complete here, and can, because none of them
+    /// commits anything outside the returned value: a query READS, an op edits
+    /// an in-memory tree, and a patch and a notification are values the host
+    /// performs after the handler returns. The fifth — `HostCall` — is the only
+    /// arm that reaches outside, so it is the only one staged (D8).
     let private runEffect
         (registry: ServerEffectRegistry)
         (resolve: string -> Result<Fuaran.Core.Table, Fuaran.Core.EvalError>)
@@ -230,35 +328,32 @@ module Handler =
                     registry.OnDenied denial
                     deny denial acc
                 | Some performer ->
-                    match performer args with
-                    | Error reason -> halt capability reason acc
-                    | Ok result ->
-                        match into with
-                        | None -> performed
-                        | Some key ->
-                            // The host-reserved namespace is closed here for the
-                            // same reason the shared interpreter closes it: a
-                            // landing slot is a write, and a write into the
-                            // host's own namespace is the case the namespace
-                            // exists for.
-                            if Fuaran.UI.Renderer.StateKeys.isHostReserved key then
-                                halt
-                                    capability
-                                    (sprintf
-                                        "landing slot is under the host-reserved '%s' namespace"
-                                        Fuaran.UI.Renderer.StateKeys.HostReservedPrefix)
-                                    acc
-                            else
-                                { performed with
-                                    Store =
-                                        { performed.Store with
-                                            Bindings =
-                                                { performed.Store.Bindings with
-                                                    State =
-                                                        Map.add
-                                                            key
-                                                            (JValObj.toObj result)
-                                                            performed.Store.Bindings.State } } }
+                    // The host-reserved namespace is closed here for the same
+                    // reason the shared interpreter closes it: a landing slot is
+                    // a write, and a write into the host's own namespace is the
+                    // case the namespace exists for. Checked while PLANNING —
+                    // the slot is declared, so nothing about the check needs the
+                    // performer to have run, and refusing here means a handler
+                    // with a bad slot never reaches the outside world at all.
+                    match into with
+                    | Some key when Fuaran.UI.Renderer.StateKeys.isHostReserved key ->
+                        halt
+                            capability
+                            (sprintf
+                                "landing slot is under the host-reserved '%s' namespace"
+                                Fuaran.UI.Renderer.StateKeys.HostReservedPrefix)
+                            acc
+                    | _ ->
+                        // Admitted, not performed. `Performed` is deliberately
+                        // NOT extended here: it is the audit trail of what
+                        // happened, and at this point nothing has.
+                        { acc with
+                            Staged =
+                                { Capability = capability
+                                  Performer = performer
+                                  Args = args
+                                  Into = into }
+                                :: acc.Staged }
 
             | ServerEffect.EmitPatch ops ->
                 { performed with
@@ -278,10 +373,18 @@ module Handler =
         : Accumulator =
         match stage with
         | Compute action ->
-            // THE shared fold. One call site, and the only place this package
-            // looks at an `Action` at all — so "the interpreter is imported, not
-            // forked" is a property a reader can check by grep rather than a
-            // claim they have to trust.
+            // THE shared fold, with the INERT arm — deliberately, and this is
+            // the one boundary D7 draws.
+            //
+            // A handler's stages are host-registered data whose capability
+            // envelope is fixed before any untrusted tree arrives, so handler
+            // composition is a host act (register the stages you want), not
+            // something a call action buried in a stage should smuggle in. It is
+            // also what keeps the domain TOTAL (D2): were a stage's call action
+            // to re-enter the registry, a handler naming itself would not
+            // terminate, and totality would rest on a budget rather than on the
+            // shape of the thing. A call action in a handler stage is therefore
+            // the documented no-op, exactly as at a placement with no registry.
             let outcome = BoundedActions.runBoundedAction nodeId action acc.Store.Bindings
 
             { acc with
@@ -294,9 +397,42 @@ module Handler =
                     @ acc.Diagnostics }
         | Effect effect -> runEffect registry resolve effect acc
 
+    /// PERFORM the staged host calls, in declaration order, stopping at the
+    /// first failure (D8). This is the only code in the handler that reaches
+    /// outside, and it runs only after the plan phase completed — so a handler
+    /// that was going to fail on its own terms has already failed, silently and
+    /// for free, before any of this.
+    let rec private perform (staged: StagedCall list) (acc: Accumulator) : Accumulator =
+        match staged with
+        | [] -> acc
+        | call :: rest ->
+            match call.Performer call.Args with
+            | Error reason ->
+                { acc with
+                    Halted = true
+                    Diagnostics = ServerDiagnostic.PerformFailed(call.Capability, reason) :: acc.Diagnostics }
+            | Ok result ->
+                let recorded =
+                    { acc with
+                        Externally = call.Capability :: acc.Externally }
+
+                let landed =
+                    match call.Into with
+                    | None -> recorded
+                    | Some key ->
+                        { recorded with
+                            Store =
+                                { recorded.Store with
+                                    Bindings =
+                                        { recorded.Store.Bindings with
+                                            State = Map.add key (JValObj.toObj result) recorded.Store.Bindings.State } } }
+
+                perform rest landed
+
     /// Run a handler's stages in order against `store`, committing only if every
-    /// stage succeeded. `nodeId` is the originating event's node, threaded into
-    /// the shared interpreter exactly as the other placements thread it.
+    /// stage planned and every staged host call then performed. `nodeId` is the
+    /// originating event's node, threaded into the shared interpreter exactly as
+    /// the other placements thread it.
     let run
         (registry: ServerEffectRegistry)
         (resolve: string -> Result<Fuaran.Core.Table, Fuaran.Core.EvalError>)
@@ -308,12 +444,14 @@ module Handler =
             { Store = store
               Halted = false
               Performed = []
+              Externally = []
+              Staged = []
               Patches = []
               Notifications = []
               ClientEffects = []
               Diagnostics = [] }
 
-        let final =
+        let planned =
             handler.Stages
             |> List.fold
                 (fun acc stage ->
@@ -323,13 +461,27 @@ module Handler =
                         runStage registry resolve nodeId stage acc)
                 start
 
+        // The phase boundary. Nothing external has run above this line, and
+        // nothing below it can be undone — which is the entire content of the
+        // atomicity decision, in one `if`.
+        let final =
+            if planned.Halted then
+                planned
+            else
+                perform (List.rev planned.Staged) planned
+
         if final.Halted then
             // Roll back to the entry state. The diagnostics survive: they are
             // the entire record of why nothing happened, and discarding them
             // would turn a refusal into a silence.
+            //
+            // `Performed` is NOT emptied: a perform-phase failure leaves its
+            // predecessors run, and reporting `[]` there would be the one lie
+            // this design exists to avoid. A plan-phase halt leaves it empty on
+            // its own, because nothing ever reached the perform phase.
             { Store = store
               Committed = false
-              Performed = []
+              Performed = List.rev final.Externally
               Patches = []
               Notifications = []
               ClientEffects = []
@@ -337,7 +489,10 @@ module Handler =
         else
             { Store = final.Store
               Committed = true
-              Performed = List.rev final.Performed
+              // Plan-phase capabilities in stage order, then the host calls the
+              // perform phase ran — execution order, which is what an audit
+              // trail is for.
+              Performed = List.rev final.Performed @ List.rev final.Externally
               Patches = List.rev final.Patches
               Notifications = List.rev final.Notifications
               ClientEffects = List.rev final.ClientEffects

@@ -9,6 +9,14 @@ position rather than from whatever the code happened to do.
 They are recorded because a spike's real output is what it *found*, and a question answered silently
 in code is a question that gets re-answered differently by the next person.
 
+> **Three of the questions below have since been DECIDED**, deliberately and before the wire cut, and
+> the decisions bind where this note does not: the host-effect atomicity mode (§1 →
+> [D8](../DECISIONS.md)), result-target ownership (§3's last open item → D9), and where a nested call
+> is recognised (§4's first finding → D7). The open items around them — replay modes, the idempotency
+> key, the static schema check, concurrency — are untouched and still open. The sections are kept as
+> they were written, with a marker at each decided point, because the argument that led to a decision
+> is worth more than the decision restated.
+
 ---
 
 ## 1. Transaction and atomicity semantics for a multi-stage handler
@@ -51,6 +59,15 @@ wire-family decision:
 The spike deliberately implements none of them: it performs effects in stage order and reports the
 truth. Picking one without demand evidence would be exactly the premature commitment the spike
 exists to avoid.
+
+> **DECIDED — two-phase staging ([D8](../DECISIONS.md)).** Chosen on the arguments above: it needs no
+> new authoring vocabulary, so every handler written before the decision gains the property. Only
+> `HostCall` stages — the reads and the accumulating arms were never performed by the handler in the
+> first place, and deferring a read would break the read → compute → mutate shape a stage list exists
+> for. The stated cost (a later stage cannot read an earlier host call's result) is now structural.
+> The residual the decision does **not** abolish — a performer failing in the perform phase leaves its
+> predecessors run — is reported rather than absorbed: `Committed = false` with `Performed` naming the
+> calls that did happen, under a `PerformFailed` diagnostic distinct from the planning-phase `Failed`.
 
 *Concurrency is not addressed at all.* One session, one event, one handler. Two sessions running
 handlers against the same domain tree is a question about where durable state actually lives, which
@@ -136,6 +153,14 @@ schema-coupling decision — does the **tree** say where a handler's answer goes
 which keeps the handler reusable), or does the **handler** (the writer's view, which keeps the
 contract in one place)? The spike takes the second by omission, not by argument.
 
+> **DECIDED — the handler declares, and the tree's target is REFUSED ([D9](../DECISIONS.md)).** The
+> spike's answer survives, now by argument: a tree-declared landing slot would let an untrusted tree
+> choose where a privileged handler's answer is written, which is the one thing the fixed capability
+> envelope exists to prevent — and one target cannot in any case address a handler's several
+> result-landing stages. Refusal rather than silent omission is the load-bearing half: the retired
+> mechanism now says so out loud instead of looking alive to anyone reading the wire vocabulary. The
+> reusability the reader's view bought is recovered by registering one stage list under two endpoints.
+
 ---
 
 ## 4. Smaller findings, recorded so they are not rediscovered
@@ -145,6 +170,14 @@ contract in one place)? The spike takes the second by omission, not by argument.
   matching on an action a second time, which is precisely what D1 forbids; doing it properly means
   the shared fold itself gaining a handler-effect arm, which is a change to the shared algebra and
   not a spike's decision. The wire cut should take it deliberately, in the fold, once.
+
+  > **DECIDED — taken in the fold, once ([D7](../DECISIONS.md)).** The fold gained the handler-effect
+  > arm and the placement supplies only the answer, so recognition is uniform at any depth and a
+  > nested call is spliced in place. The guard the finding was worried about came out stronger, not
+  > weaker: exactly one site in the domain interprets an action, and the server package matches on an
+  > `Action` nowhere at all. One boundary is drawn deliberately — a call inside a *handler
+  > stage* stays the no-op, which keeps handler composition a host act and keeps D2's totality
+  > structural rather than budget-dependent.
 - **A handler's body is host data; only its name comes off the wire.** That is what makes it safe to
   log a host-function name and unsafe to log an endpoint, and it is why the unregistered-handler
   diagnostic deliberately does not say which endpoint was named. When handlers gain a wire form,

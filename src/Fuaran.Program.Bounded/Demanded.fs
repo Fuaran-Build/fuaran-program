@@ -73,8 +73,9 @@ type HostCallDemand =
 type StateNamespaceDemand =
     {
         Namespace: string
-        /// The tree can write into this namespace (`Action.SetState`, or an
-        /// `Action.Call` whose result lands in a state slot).
+        /// The tree can write into this namespace (`Action.SetState` — the only
+        /// write the bounded vocabulary offers a tree; a handler's landing slots
+        /// are host-declared and so are not a demand OF the tree).
         Written: bool
         /// The tree reads this namespace at DISPATCH time (a `SetState.valueFrom`
         /// binding). Display-time reads are deliberately absent — see
@@ -271,15 +272,15 @@ module Demanded =
 
             effects, calls, (namespaceOf key, true) :: reads
 
-        | Action.Call(endpoint, _, into) ->
-            let target =
-                match into with
-                | Some(CallResultTarget.State key) -> [ namespaceOf key, true ], []
-                | Some(CallResultTarget.Query name) -> [], [ { Channel = "Query"; Name = name } ]
-                | None -> [], []
-
-            let namespaces, queryCalls = target
-            effects, { Channel = "Call"; Name = endpoint } :: queryCalls, namespaces
+        | Action.Call(endpoint, _, _) ->
+            // The endpoint is the demand, and the whole of it. A tree-declared
+            // result target demands nothing, because it IS nothing here: result-
+            // target ownership sits with the handler (DECISIONS.md D9), and the
+            // fold refuses a call that declares one — so a target could only
+            // ever ride on a call that reaches no host at all. Projecting it
+            // would report a demand for a slot no host will ever be asked to
+            // cover.
+            effects, [ { Channel = "Call"; Name = endpoint } ], []
 
         | Action.Invoke(capabilityId, _) ->
             effects,
