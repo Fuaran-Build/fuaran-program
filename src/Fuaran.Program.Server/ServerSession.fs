@@ -175,6 +175,49 @@ module ServerSession =
           NodeCount = cost
           Services = services }
 
+    /// This host's coverage, with its SERVER tier read off the services it was
+    /// wired with and its client tier taken from the caller.
+    ///
+    /// The asymmetry is the honest one: read what you have, be told what you do
+    /// not. The effect registry here IS this host's server-side declaration, so
+    /// reading it removes the way the two could disagree. Client effects are the
+    /// other half — a `Compute` stage's closure-free effects leave this
+    /// placement entirely and are performed by whatever client is connected, and
+    /// this session holds no registry for them. Asserting either "covered" or
+    /// "uncovered" on the caller's behalf would be a claim it cannot make, so it
+    /// asks — the same reason the bounded driver's `initStrict` takes coverage
+    /// as an argument rather than deriving it.
+    let coverageOf (coverage: HostCoverage) (services: ServerServices) : HostCoverage =
+        coverage
+        |> HostCoverage.withServer (ServerDemanded.coverageOfRegistry services.Effects)
+
+    /// Build a session ONLY if this host can cover everything the program is able
+    /// to ask for ACROSS BOTH PLACEMENTS — the tree's own demands and those of
+    /// every handler the tree can name — checked BEFORE any event runs.
+    ///
+    /// **Opt-in, and `init` remains the default**, for the reason the other two
+    /// placements' strict paths record: the standing posture is that an
+    /// uncoverable demand is refused where it is made and recorded there, which
+    /// keeps a program that is mostly serviceable serviceable. A host that would
+    /// rather not start at all reaches for this — and at THIS placement the
+    /// argument for reaching is strongest, since a handler mutates durable state
+    /// and the demand being refused is the host's own registration rather than
+    /// anything the tree chose.
+    ///
+    /// `Error` carries EVERY finding, not the first.
+    let initStrict
+        (coverage: HostCoverage)
+        (services: ServerServices)
+        (store: BoundedStore)
+        (wire: WireTree)
+        : Result<ServerSession, CoverageFinding list> =
+        let projection =
+            ServerDemanded.ofTreeAndHandlers services.Handlers (WireTree.reify wire)
+
+        match Demanded.checkProjection (coverageOf coverage services) projection with
+        | [] -> Ok(init services store wire)
+        | findings -> Error findings
+
     let private inert (session: ServerSession) : ServerStepOutput =
         { Resolved = session.Resolved
           Ops = []

@@ -78,6 +78,32 @@ the tree that reads its result — are written down in
 [`docs/server-handler-atomicity.md`](../../docs/server-handler-atomicity.md) as input to the wire cut,
 rather than being settled silently in code.
 
+## Asking before running: the capability envelope, both placements at once
+
+`ServerDemanded.ofTreeAndHandlers handlers tree` answers **what this program on this host can ever
+ask for**, as one document spanning both placements: the tree's own client-tier demands, plus, for
+every handler the tree can NAME, that handler's server-effect discriminators, the capabilities its
+gate will be asked about, the host functions and channels it reaches, and the state namespaces its
+landing slots write. Every one of those names is read off the effect value through the same two
+functions the interpreter and the gate use, so a demanded capability and a gated one are the same
+string by construction rather than by agreement.
+
+It is exact for a stronger reason than the client tier's. A handler is host-registered data whose
+stage list is fixed before any untrusted tree arrives, so the walk is not inferring an envelope — it
+is reading one the host already wrote down.
+
+`ServerSession.initStrict` is the opt-in construction path over it, and it reads its server-side
+coverage off the effect registry the session was wired with rather than asking for it twice.
+Unregistered and gate-refused stay **separate findings**, mirroring the runtime denial vocabulary: a
+host function with no performer is absent whatever the policy says, and only the second is fixed by a
+policy change. `init` remains the default — an uncoverable demand is still refused where it is made.
+
+Three silences are deliberate. An endpoint with no registered handler contributes nothing and yields
+no finding: that string is the one value in this subsystem that comes off the wire, and a
+pre-execution finding naming it would be exactly the leak the payload-free denials avoid. A call
+action inside a stage demands nothing, because it is the documented no-op. And a query's landing slot
+is not a demand — the source it reads is.
+
 ## Defaults are closed
 
 `ServerServices.create` denies every dispatch, registers no handler, permits no effect and resolves
