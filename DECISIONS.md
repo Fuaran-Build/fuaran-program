@@ -251,3 +251,42 @@ the declared-slot-schema option arriving by another door — it has to be argued
 field the walk quietly starts reading. Recorded as an open gap rather than a limitation resolved: a
 binding that TRANSFORMS a query slot client-side is a reader whose expectation is this walk composed
 with its own pipeline, and that composition is not attempted.
+
+## D11 — The evaluation suite lives outside this repository
+
+**2026-08-22.**
+
+A companion **evaluation suite** for this domain exists: a corpus of
+program-emission tasks put to a model, whose emissions are gated by this
+repository's own shipped machinery — the handler wire decoder, the
+demanded-coverage check, the replay classification — with the refusal class each
+produces carried through unedited. It does **not** live here, and the reason is
+worth recording rather than leaving a reader to wonder where the tests went.
+
+An evaluation suite names things this repository cannot. It pins model
+identifiers and provider vocabulary; it consumes packages that are not published;
+its corpus and its stored result cells carry both freely. This repository is
+Apache-2.0 and written for an outside reader, and none of that belongs beside a
+licence that invites the world to read it. So the suite sits in a **sibling
+repository**, and what crosses the boundary is one-way: it consumes the
+`Fuaran.Program.*` packages, and nothing here references it. Its location is a
+maintainers' workspace concern, like the other cross-repo conventions this file
+declines to ship.
+
+**What this repository owes it is a forward-coupling obligation, not a
+dependency.** The suite's whole design rests on the gate being *this* domain's:
+its corpus's repair tier hands a model whatever the shipped decoder says about a
+broken emission, its census clusters on the specification's own refusal classes,
+and its provenance stamps name the codec assembly's version. So a change to the
+refusal vocabulary, to the closed effect vocabularies, or to what a coverage
+finding says is a change to what that suite measures — visible to it immediately
+and to nobody here. That is the correct direction (a measured thing should not
+have to know about its instrument), and it is why the obligation is recorded as a
+decision rather than assumed.
+
+**Why the boundary is drawn at the repository and not at a folder.** The
+structured-document domain in this family reached the same conclusion and could
+implement it as a folder, because its estate directory already held several
+sibling repositories with room beside them. This repository *is* its directory:
+there is nowhere inside it that is not inside the publishable artefact. A sibling
+is therefore the only shape that satisfies the boundary, not merely the tidiest.
