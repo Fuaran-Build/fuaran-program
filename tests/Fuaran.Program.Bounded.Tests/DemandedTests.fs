@@ -282,7 +282,7 @@ let tests =
 
               let json = Demanded.encode a
               Expect.stringContains json "\"kind\":\"demanded\"" "carries its own kind"
-              Expect.stringContains json "\"version\":2" "carries its own version"
+              Expect.stringContains json "\"version\":3" "carries its own version"
               Expect.stringContains json "\"effects\":[\"Navigate\",\"WriteToClipboard\"]" "the effect set"
 
               // The server tier's key is present on EVERY document, `null` where

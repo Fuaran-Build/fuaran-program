@@ -21,6 +21,11 @@
     <!-- The program wire's placement half: the handler declared form, the
          server-effect vocabulary and the outcome report, as documents. -->
     <Compile Include="HandlerWire.fs" />
+    <!-- Replay must FOLLOW HandlerWire: the admission decision and the posture
+         join both read the classification the wire half derives. It is also why
+         the posture is joined onto the projection here rather than produced by
+         the walk in ServerDemanded, which compiles earlier. -->
+    <Compile Include="Replay.fs" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Fuaran.Program.Bounded\Fuaran.Program.Bounded.fsproj" />

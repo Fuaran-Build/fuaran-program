@@ -239,43 +239,69 @@ module HandlerWire =
 
     // ─── the derived replay classification ───────────────────────────────────
 
-    /// A handler's replay safety, DERIVED from its declared form.
+    /// WHY a handler is not provably re-runnable, in stage order — the
+    /// primitive from which the classification below is derived.
     ///
-    /// It is never declared beside the handler: a declaration is free to drift
-    /// from the thing it describes, and this one need not exist at all.
+    /// A verdict alone says a handler cannot be resumed; it does not say what to
+    /// change. These do, and they do it without naming anything the document
+    /// supplied: a closed defect vocabulary and a stage ORDINAL, so a reason is
+    /// as log-safe as the verdict it explains.
+    ///
+    /// Reasons within one stage are DISTINCT — an `ApplyOps` carrying nine
+    /// relatively-addressed ops is one fact about that stage, not nine — while
+    /// two stages with the same defect keep both entries, because they are two
+    /// places to go and look.
     ///
     /// The action half runs over the ENCODED action rather than over the action
     /// value, which is what keeps this package free of a second `Action` match
     /// AND keeps this rule literally identical to the one the conformance
     /// corpus's own emitter applies.
-    let replaySafety (handler: Handler) : ReplaySafety =
+    let replayReasons (handler: Handler) : ReplayReason list =
         let ofEffect effect =
             match effect with
-            | ServerEffect.RunQuery _ -> ReplaySafety.Safe
+            | ServerEffect.RunQuery _ -> []
             | ServerEffect.ApplyOps ops
             | ServerEffect.EmitPatch ops ->
                 ops
-                |> List.fold
-                    (fun acc op ->
-                        match ProgramWire.encodeOp op with
-                        | Ok encoded -> ProgramWire.worst acc (ProgramWire.replaySafetyOfOp encoded)
-                        | Error _ -> ProgramWire.worst acc ReplaySafety.Unknown)
-                    ReplaySafety.Safe
+                |> List.collect (fun op ->
+                    match ProgramWire.encodeOp op with
+                    | Ok encoded -> ProgramWire.replayDefectsOfOp encoded
+                    | Error _ -> [ ReplayDefect.UnencodableOp ])
             // Both reach outside: one commits somewhere this host does not own,
             // the other ships a message a second run would duplicate.
-            | ServerEffect.HostCall _
-            | ServerEffect.Notify _ -> ReplaySafety.Unsafe
+            | ServerEffect.HostCall _ -> [ ReplayDefect.OpaqueHostCall ]
+            | ServerEffect.Notify _ -> [ ReplayDefect.OutboundNotification ]
 
         handler.Stages
-        |> List.fold
-            (fun acc stage ->
-                let here =
-                    match stage with
-                    | Effect effect -> ofEffect effect
-                    | Compute action -> ProgramWire.replaySafetyOfAction (ProgramWire.encodeAction action)
+        |> List.mapi (fun index stage ->
+            let defects =
+                match stage with
+                | Effect effect -> ofEffect effect
+                | Compute action -> ProgramWire.replayDefectsOfAction (ProgramWire.encodeAction action)
 
-                ProgramWire.worst acc here)
-            ReplaySafety.Safe
+            // Qualified: the projection document declares a record with the same
+            // two field names, and its `Defect` is the wire TOKEN rather than
+            // the value. The two are one conversion apart and inference cannot
+            // be left to pick.
+            defects
+            |> List.distinct
+            |> List.map (fun defect ->
+                { ReplayReason.Stage = index
+                  Defect = defect }))
+        |> List.concat
+
+    /// A handler's replay safety, DERIVED from its declared form.
+    ///
+    /// It is never declared beside the handler: a declaration is free to drift
+    /// from the thing it describes, and this one need not exist at all.
+    ///
+    /// Derived from `replayReasons` rather than walked a second time. The two
+    /// therefore cannot disagree by construction, which matters more than it
+    /// looks: the corpus pins this function's answer per vector, so a reasons
+    /// walk that drifted from it would be a set of explanations for a verdict
+    /// nobody reached.
+    let replaySafety (handler: Handler) : ReplaySafety =
+        replayReasons handler |> ProgramWire.verdictOfReasons
 
     // ─── the outcome report ──────────────────────────────────────────────────
 

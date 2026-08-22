@@ -116,6 +116,42 @@ type ServerFunctionDemand =
         Capability: string
     }
 
+/// One reason a handler is not provably re-runnable, as the document carries
+/// it: a stage ORDINAL and a token from the derivation's closed defect
+/// vocabulary. Both are derived facts, so a posture is log-safe on exactly the
+/// terms the rest of this document is.
+type ReplayReasonDemand =
+    {
+        /// The stage's position in the declared list, zero-based.
+        Stage: int
+        /// The defect's wire token — `relative-addressing`, `non-literal-write`,
+        /// `opaque-host-call`, and the rest of the closed set.
+        Defect: string
+    }
+
+/// One handler's replay posture, derived from its declared form.
+///
+/// Carried per handler rather than aggregated, because that is the granularity
+/// the decision is made at: a host resuming a session resumes particular
+/// handlers, and a tier-wide verdict would say only that SOMETHING in the
+/// registration reaches outside.
+///
+/// `Reasons` is empty exactly when `Safety` is `safe`. It is present for
+/// `unknown` as well as for `unsafe`, and that is the point of carrying reasons
+/// at all: `unknown` is the honest answer where no proof is available, and a
+/// consumer that cannot see WHICH stage was undecidable has been told nothing it
+/// can act on.
+type ReplayPosture =
+    {
+        /// The handler's registration key — an author-declared name, the same
+        /// class of string as an endpoint or a capability id, never a payload.
+        Handler: string
+        /// `safe` | `unsafe` | `unknown`.
+        Safety: string
+        /// Why, in stage order. Empty for `safe`.
+        Reasons: ReplayReasonDemand list
+    }
+
 /// What a SERVER placement's handler registration can ever ask of its host —
 /// the second tier of the document, and the half a program tree cannot express.
 ///
@@ -140,6 +176,16 @@ type ServerDemand =
         /// shape as the client tier's host calls, and checked the same way —
         /// only against a host that DECLARED a surface.
         Channels: HostCallDemand list
+        /// The replay posture of each handler that contributed to this tier.
+        ///
+        /// DESCRIPTIVE, like `Effects` and unlike `Capabilities`: no coverage
+        /// finding is computed from it, because a posture is not a demand on a
+        /// host — it is a property of the handler that a host consults when it
+        /// decides whether a session may be RESUMED. The enforcement of that
+        /// decision lives at the placement, where the mode is known; this is the
+        /// fact it enforces against, published so a capability manifest can
+        /// state the posture without re-deriving it.
+        Replay: ReplayPosture list
     }
 
 /// What a program tree can ever ask of its host, as data.
@@ -520,7 +566,12 @@ module Demanded =
                 { Effects = s.Effects |> List.distinct |> List.sort
                   Capabilities = s.Capabilities |> List.distinct |> List.sort
                   Functions = s.Functions |> List.distinct |> List.sortBy (fun f -> f.Function, f.Capability)
-                  Channels = s.Channels |> List.distinct |> List.sortBy (fun c -> c.Channel, c.Name) }) }
+                  Channels = s.Channels |> List.distinct |> List.sortBy (fun c -> c.Channel, c.Name)
+                  // Sorted by NAME only, and the reasons within a posture are
+                  // left in stage order: they are a sequence through one
+                  // handler, not a set, and sorting them would destroy the one
+                  // thing that makes a stage ordinal useful.
+                  Replay = s.Replay |> List.distinct |> List.sortBy _.Handler }) }
 
     /// The projection that demands nothing. The identity of `union`, and what a
     /// tree with no reachable handler slot projects.
@@ -577,7 +628,10 @@ module Demanded =
                         |> List.collect (fun p -> p.Server |> Option.map _.Functions |> Option.defaultValue [])
                       Channels =
                         projections
-                        |> List.collect (fun p -> p.Server |> Option.map _.Channels |> Option.defaultValue []) }
+                        |> List.collect (fun p -> p.Server |> Option.map _.Channels |> Option.defaultValue [])
+                      Replay =
+                        projections
+                        |> List.collect (fun p -> p.Server |> Option.map _.Replay |> Option.defaultValue []) }
             else
                 None
 
@@ -678,6 +732,17 @@ module Demanded =
     /// others, which is a worse contract than one honest number: a consumer
     /// could not tell "this producer is older than the server tier" from "this
     /// program has no server side", and those need different answers.
+    ///
+    /// **Version 3 adds the replay posture**, on exactly that argument rather
+    /// than by analogy to it. The `replay` key is present on EVERY server tier
+    /// from here on — `[]` where the walk contributed no posture — so the same
+    /// two facts stay distinguishable one level down: an ABSENT `replay` says
+    /// "this producer predates the posture", an EMPTY one says "this
+    /// registration was walked and no handler contributed". Emitting the key
+    /// only when a posture exists would collapse those, and a consumer deciding
+    /// whether a session may be resumed is the last consumer that should have to
+    /// guess which of the two it is holding. The number is in-band and cheap;
+    /// the ambiguity would not have been.
     let encode (projection: DemandedProjection) : string =
         let effects = projection.Effects |> List.map q |> arr
 
@@ -713,9 +778,20 @@ module Demanded =
                     |> List.map (fun c -> $"""{{"channel":{q c.Channel},"name":{q c.Name}}}""")
                     |> arr
 
-                $"""{{"effects":{se},"capabilities":{sc},"functions":{fns},"channels":{channels}}}"""
+                let replay =
+                    s.Replay
+                    |> List.map (fun p ->
+                        let reasons =
+                            p.Reasons
+                            |> List.map (fun r -> $"""{{"stage":{r.Stage},"defect":{q r.Defect}}}""")
+                            |> arr
 
-        $"""{{"kind":"demanded","version":2,"effects":{effects},"hostCalls":{hostCalls},"stateNamespaces":{namespaces},"opaqueHandlers":{opaque},"server":{server}}}"""
+                        $"""{{"handler":{q p.Handler},"safety":{q p.Safety},"reasons":{reasons}}}""")
+                    |> arr
+
+                $"""{{"effects":{se},"capabilities":{sc},"functions":{fns},"channels":{channels},"replay":{replay}}}"""
+
+        $"""{{"kind":"demanded","version":3,"effects":{effects},"hostCalls":{hostCalls},"stateNamespaces":{namespaces},"opaqueHandlers":{opaque},"server":{server}}}"""
 
     // ─── the coverage validator ──────────────────────────────────────────────
 
