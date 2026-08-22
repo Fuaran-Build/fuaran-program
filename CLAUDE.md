@@ -9,13 +9,31 @@ the program loop that connects it to a host. Ships as the `Fuaran.Program.*` NuG
 interpreter, the binding re-resolution pass, the resource budget and the server driver — moved whole
 from the UI tier's server-driven package, so exactly one interpreter serves every placement.
 `Fuaran.Program.Runtime` runs a wire-decoded tree interactively in the browser with no hand-authored
-update function. `Fuaran.Program.Server` is a **spike** at the third placement: a generated tree
-names a host-registered handler, and the handler runs as data behind a closed, default-deny
-server-effect vocabulary. It commits no wire form — see
-[`docs/server-handler-atomicity.md`](docs/server-handler-atomicity.md) for the questions the wire cut
-inherits, four of which are now decided ahead of it: where a call is recognised (D7), the host-effect
-atomicity mode (D8), result-target ownership (D9), and what a query's reader declares (D10) — the last
-taken because that note's most valuable follow-on, the pre-execution query-schema check, is now built.
+update function. `Fuaran.Program.Server` is the third placement: a generated tree names a
+host-registered handler, and the handler runs as data behind a closed, default-deny server-effect
+vocabulary. The design questions it opened are recorded in
+[`docs/server-handler-atomicity.md`](docs/server-handler-atomicity.md); four were decided ahead of the
+wire cut — where a call is recognised (D7), the host-effect atomicity mode (D8), result-target
+ownership (D9), and what a query's reader declares (D10).
+
+**The wire cut has happened, and this repo is its first conformant host.** The handler declared form,
+the two effect vocabularies, the invocation record and the outcome report now have a **specification
+and an executable conformance corpus of their own**, in a sibling home; `ProgramWire` (shared) and
+`HandlerWire` (this placement) are the codec, and a fixture-driven suite certifies them against that
+corpus. Three consequences are worth knowing before touching either file:
+
+- **The corpus is a BUILD INPUT to this repo's gate, not a reference.** It is resolved as a sibling
+  clone (the suite names the path it expects and honours `FUARAN_PROGRAM_SPEC`), and its absence
+  **fails** the suite rather than skipping it — a conformance check that passes when its oracle is
+  missing is worse than no check.
+- **Forward coupling spans repositories.** A change to any specified member, ordering, encoding,
+  refusal class or derived value updates the normative text, the schemas, the corpus's own emitter,
+  its manifest **and** this codec, in one change-set. The corpus's `CONTRIBUTING.md` states the rule;
+  landing four fifths of it leaves a specification of nothing.
+- **Every string in a handler is now untrusted.** That was the asymmetry the spike relied on — a
+  handler's body was host data, so only an endpoint came off the wire — and giving handlers a wire
+  form abolished it. It changed no algorithm; it changed what a diagnostic is allowed to *say*. A
+  diagnostic carries the derived capability, never a name a document supplied.
 
 The dependency direction is settled and one-way — this repo consumes published `Fuaran.UI.*`
 packages, and nothing in the UI tier references back ([DECISIONS.md](DECISIONS.md) D4/D5). That is
@@ -46,7 +64,7 @@ fuaran-program/
 ├── src/Fuaran.Program/                    # the domain package (skeleton — About only, today)
 ├── src/Fuaran.Program.Bounded/            # the bounded interpreter + re-resolution + budget + server driver
 ├── src/Fuaran.Program.Runtime/            # the client (browser) placement of the program loop
-├── src/Fuaran.Program.Server/             # the server-logic placement — handlers as data (spike)
+├── src/Fuaran.Program.Server/             # the server-logic placement — handlers as data + their wire form
 ├── docs/                                  # design notes: open questions recorded as input to later cuts
 ├── samples/client-program/                # the browser placement, wired to a real host
 ├── tests/                                 # one Expecto assembly runner per suite (see tests/README.md)
@@ -58,12 +76,20 @@ fuaran-program/
 Every test project is its own Expecto assembly runner; `run.ps1` invokes each in turn, then runs the
 tier-parity family's Fable leg under node.
 
+**One directory the tree above does not show, because this repository does not contain it:** the
+program wire specification and its conformance corpus, resolved as a sibling clone. The conformance
+suite reads it and names the exact path it expects; `FUARAN_PROGRAM_SPEC` overrides that path.
+
 ## Build pipeline
 
 ```powershell
 pwsh ./run.ps1              # format -> build -> test (the pre-commit gate)
 pwsh ./run.ps1 -SkipFormat  # fast iteration
 ```
+
+The gate needs the conformance corpus present (see the note above). That is deliberate: the corpus,
+not this repository, is the authority on the wire, so a gate that could go green without consulting it
+would be certifying this host against itself.
 
 ## Formatting mandate
 

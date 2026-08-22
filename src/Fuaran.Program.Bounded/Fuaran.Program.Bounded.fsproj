@@ -29,6 +29,10 @@
     <!-- Demanded must precede BoundedDriver: the driver's strict construction
          path consults the projection before it builds a session. -->
     <Compile Include="Demanded.fs" />
+    <!-- The program wire's shared half: the canonical discipline, the refusal
+         vocabulary, the referenced positions and the replay classification of an
+         action. Placement-neutral by construction, exactly as the interpreter is. -->
+    <Compile Include="ProgramWire.fs" />
     <Compile Include="BoundedDriver.fs" />
   </ItemGroup>
   <!-- The UI-typed first instantiation (DECISIONS.md D4): this package consumes
@@ -41,6 +45,7 @@
     <PackageReference Include="Fuaran.UI.Ops.Abstractions" />
     <PackageReference Include="Fuaran.UI.Ops" />
     <PackageReference Include="Fuaran.UI.Renderer.Core" />
+    <PackageReference Include="Fuaran.UI.OpStream.Abstractions" />
     <PackageReference Include="Fuaran.UI.OpStream.Replay" />
     <PackageReference Include="Fuaran.UI.ServerDriven" />
   </ItemGroup>

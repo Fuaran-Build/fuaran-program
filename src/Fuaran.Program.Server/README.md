@@ -3,10 +3,17 @@
 The **server-logic placement** of the bounded program loop: a generated tree names a handler, and
 the handler runs as data — read, compute, mutate, respond — with no hand-authored update function.
 
-> **This is a spike.** It exists to answer whether the same algebra reaches across the client/server
-> boundary without being reimplemented. It commits **no wire form**: a handler is host-registered
-> data, the tree carries only the endpoint that names one, and giving handlers a serialised form is
-> a later, separate act.
+> **The handler now has a wire form** (`HandlerWire`), specified and conformance-tested against a
+> corpus that lives outside this package. A handler is still host-registered: the tree carries only
+> the endpoint that names one, and nothing here makes a received handler runnable — registration
+> stays a host act. What the wire form changes is that a handler can now be *shipped, inspected,
+> diffed and checked* somewhere it does not run.
+>
+> One consequence is easy to miss because it changes no code: **every string in a wire-carried
+> handler is untrusted**. Before, a handler's body was host data and only the endpoint came off the
+> wire — which is why it was safe to record a host-function name in a log and unsafe to record an
+> endpoint. That asymmetry is gone, so a diagnostic carries the *derived* capability and never a name
+> a document supplied.
 
 ## The shape
 

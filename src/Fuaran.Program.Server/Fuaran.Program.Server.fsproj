@@ -4,7 +4,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <IsPackable>true</IsPackable>
     <PackageId>Fuaran.Program.Server</PackageId>
-    <Description>Fuaran.Program.Server — the server-logic placement of the bounded program loop: run a named, host-registered handler as data behind a program tree's call action, with a closed server-effect vocabulary (query, op-apply, host call, patch, notify) behind a default-deny gate. Shares the interpreter, the resource budget and the binding re-resolution pass with the other placements rather than reimplementing them. A spike: no wire form is committed. Apache-2.0 licensed.</Description>
+    <Description>Fuaran.Program.Server — the server-logic placement of the bounded program loop: run a named, host-registered handler as data behind a program tree's call action, with a closed server-effect vocabulary (query, op-apply, host call, patch, notify) behind a default-deny gate. Shares the interpreter, the resource budget and the binding re-resolution pass with the other placements rather than reimplementing them. Carries the codec for the handler declared form, the effect vocabulary and the outcome report, certified against their own conformance corpus. Apache-2.0 licensed.</Description>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageTags>fuaran;program;bounded;server;handler</PackageTags>
   </PropertyGroup>
@@ -18,6 +18,9 @@
          construction path consults the projection before it builds a session. -->
     <Compile Include="ServerDemanded.fs" />
     <Compile Include="ServerSession.fs" />
+    <!-- The program wire's placement half: the handler declared form, the
+         server-effect vocabulary and the outcome report, as documents. -->
+    <Compile Include="HandlerWire.fs" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Fuaran.Program.Bounded\Fuaran.Program.Bounded.fsproj" />
@@ -30,6 +33,7 @@
     <PackageReference Include="Fuaran.UI.Ops.Abstractions" />
     <PackageReference Include="Fuaran.UI.Ops" />
     <PackageReference Include="Fuaran.UI.Renderer.Core" />
+    <PackageReference Include="Fuaran.UI.OpStream.Abstractions" />
     <PackageReference Include="Fuaran.UI.OpStream.Replay" />
     <PackageReference Include="Fuaran.UI.ServerDriven" />
   </ItemGroup>

@@ -11,6 +11,7 @@
     <Compile Include="ServerDemandedTests.fs" />
     <Compile Include="QuerySchemaTests.fs" />
     <Compile Include="ServerParityTests.fs" />
+    <Compile Include="ProgramWireConformanceTests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
   <ItemGroup>
