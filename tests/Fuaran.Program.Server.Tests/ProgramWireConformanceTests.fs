@@ -8,19 +8,43 @@ module Fuaran.Program.Server.Tests.ProgramWireConformanceTests
 // carries. Nothing here enumerates a fixture by hand, because a hand-kept list
 // is exactly how a corpus and a host quietly stop describing the same thing.
 //
-// Four properties, and the last two are the ones that make the first two mean
+// Five properties, and the last two are the ones that make the first three mean
 // something:
 //
 //   1. every `round-trip` vector decodes and re-encodes BYTE-IDENTICALLY;
 //   2. every `reject` vector is refused FOR THE CLASS the manifest names — a
 //      refusal for some other reason is not a pass, because "my parser threw"
 //      and "my reader applied the rule" are different facts;
-//   3. the number of vectors this suite ran equals the number the manifest
+//   3. every derived value a vector declares is RECOMPUTED — the `replaySafety`
+//      of §7.4 and the `replayReasons` of §7.5, the second of which is what
+//      discriminates an arm rather than a grade;
+//   4. the number of vectors this suite ran equals the number the manifest
 //      enumerates — a harness that silently skipped a family reports the same
 //      green as one that passed it;
-//   4. a mutated fixture makes this harness go red. A conformance harness is
+//   5. a mutated fixture makes this harness go red. A conformance harness is
 //      exactly the kind of code that passes by doing nothing, so its ability to
 //      fail is asserted rather than assumed.
+//
+// ── The coverage pin, and why HALF of it lives here ──────────────────────────
+// `ReplayDefect` is a closed vocabulary, so "closed" is a claim something can be
+// measured against: an arm no expectation exhibits is one this host can classify
+// wrongly while every gate stays green. The measurement is split, and neither
+// half can do the other's job.
+//
+// The CORPUS checker enforces that every DOCUMENT-REACHABLE arm has a vector
+// discriminating it, because the corpus is what a third-party host certifies
+// against and an uncovered arm there is uncovered for everyone. It cannot
+// enumerate this DU — it has never seen an F# type.
+//
+// THIS suite enforces the other direction: every arm of the DU is discriminated
+// by something, whether a corpus vector or a case constructed here. It is the
+// only place the DU can be enumerated at all, so it is the only place a SEVENTH
+// arm can be made to arrive with its coverage or turn the gate red. And it is
+// the only place `unencodable-op` can be reached: that arm names a defect in
+// this reader's own rendering of a referenced position, and no conformant
+// document produces it — an op that does not decode is refused before any
+// classification runs. §7.5 records that asymmetry rather than leaving it to be
+// rediscovered as a gap.
 //
 // ── The corpus is a BUILD INPUT, and its absence is a failure ────────────────
 // The corpus lives in a sibling clone. A suite that skipped when it was missing
@@ -29,8 +53,11 @@ module Fuaran.Program.Server.Tests.ProgramWireConformanceTests
 
 open System
 open System.IO
+open FSharp.Reflection
 open Expecto
 open Fuaran.Core
+open Fuaran.UI.Types
+open Fuaran.UI.Ops.Types
 open Fuaran.Program.Bounded
 open Fuaran.Program.Server
 
@@ -48,17 +75,77 @@ let private corpusRoot: string =
 
 /// One vector, as the manifest declares it.
 type private Vector =
-    { Id: string
-      Kind: string
-      Document: string
-      File: string
-      Reject: string option
-      ReplaySafety: string option }
+    {
+        Id: string
+        Kind: string
+        Document: string
+        File: string
+        Reject: string option
+        ReplaySafety: string option
+        /// §7.5, in the manifest's own spelling: a stage ORDINAL and a defect
+        /// token. `None` where the vector declares none — which is every vector
+        /// outside the handler round-trip family, and is not the same fact as an
+        /// empty list (a handler with nothing to report).
+        ReplayReasons: (int * string) list option
+    }
 
 let private str (name: string) (value: JVal) : string =
     match ProgramWire.tryString name value with
     | Some s -> s
     | None -> failwithf "manifest vector has no '%s'" name
+
+/// The declared reasons of one vector, in order. A malformed entry FAILS rather
+/// than being dropped: a reason this reader could not parse would otherwise
+/// shrink the expectation it is supposed to raise.
+let private reasonsOf (entry: JVal) : (int * string) list option =
+    match ProgramWire.tryMember "replayReasons" entry with
+    | None -> None
+    | Some(JArr items) ->
+        items
+        |> List.map (fun item ->
+            match ProgramWire.tryMember "stage" item, ProgramWire.tryString "defect" item with
+            | Some(JInt stage), Some defect -> stage, defect
+            | _ -> failwithf "a manifest reason is not a stage ordinal and a defect token")
+        |> Some
+    | Some _ -> failwith "a manifest vector's replayReasons is not an array"
+
+/// The reasons this host derives for a handler, in the manifest's spelling.
+let private derivedReasons (handler: Handler) : (int * string) list =
+    HandlerWire.replayReasons handler
+    |> List.map (fun reason -> reason.Stage, ProgramWire.replayDefectTag reason.Defect)
+
+/// Every token `ReplayDefect` spells, enumerated FROM THE TYPE.
+///
+/// A list written out beside the DU would be a second copy of the vocabulary,
+/// and a seventh arm would arrive without disturbing it — which is the whole
+/// failure this pin exists to prevent, reintroduced inside the pin.
+let private allDefectTokens: string list =
+    FSharpType.GetUnionCases typeof<ReplayDefect>
+    |> Array.map (fun case ->
+        FSharpValue.MakeUnion(case, [||]) :?> ReplayDefect
+        |> ProgramWire.replayDefectTag)
+    |> Array.toList
+
+/// The arms a covered-set leaves unaccounted for. A pure function so its
+/// ability to report a missing arm can be demonstrated rather than trusted.
+let private uncoveredArms (covered: Set<string>) : string list =
+    allDefectTokens |> List.filter (covered.Contains >> not)
+
+/// Arms reachable only from a value a host built itself, with the handler that
+/// reaches each.
+///
+/// `unencodable-op` fires when this reader cannot put an op back on the wire.
+/// The op below is the hazard `PropValue.Native`'s own documentation names — a
+/// boxed `None` is a CLR null, which renders as the JSON token `null`, which
+/// the canonical parser refuses. No document can carry it: a wire `null` is
+/// refused at parse, long before anything is classified.
+let private hostConstructedCases: (string * Handler) list =
+    [ "unencodable-op",
+      { Name = "orders.snapshot"
+        Stages =
+          [ Effect(
+                ServerEffect.ApplyOps [ TreeOp.UpdateProp(NodeId "orders-total", "Label", PropValue.Native(box None)) ]
+            ) ] } ]
 
 let private vectors () : Vector list =
     let manifestPath = Path.Combine(corpusRoot, "manifest.json")
@@ -83,7 +170,8 @@ let private vectors () : Vector list =
                   Document = str "document" entry
                   File = str "file" entry
                   Reject = ProgramWire.tryString "reject" entry
-                  ReplaySafety = ProgramWire.tryString "replaySafety" entry })
+                  ReplaySafety = ProgramWire.tryString "replaySafety" entry
+                  ReplayReasons = reasonsOf entry })
         | _ -> failwith "the corpus manifest declares no vector array"
 
 /// Decode a document of the named kind and re-encode it. `Ok` carries the bytes
@@ -202,6 +290,106 @@ let tests =
                   expectations |> List.choose _.ReplaySafety |> List.distinct |> List.sort
 
               Expect.equal distinct [ "safe"; "unknown"; "unsafe" ] "and the expectations span all three values"
+          }
+
+          test "every handler vector's declared replay reasons are reproduced" {
+              // §7.5. The finer of the two derived expectations, and the one
+              // that discriminates an ARM rather than a grade: two defects of
+              // one grade produce one `replaySafety`, so the test above cannot
+              // tell `relative-addressing` from `non-literal-write` however it
+              // is written.
+              let expectations = all |> List.filter (fun v -> v.ReplayReasons.IsSome)
+
+              let ran =
+                  expectations
+                  |> List.map (fun v ->
+                      match ProgramWire.parseDocument (read v) |> Result.bind HandlerWire.decodeHandlerJson with
+                      | Error refusal -> failtestf "%s was refused (%s)" v.Id refusal.Class
+                      | Ok handler ->
+                          // Compared as an ORDERED SEQUENCE, not a set: the
+                          // stage ordinal is half of a reason, and a defect
+                          // attributed to the wrong stage points a reader at
+                          // the wrong place while the verdict stays right.
+                          Expect.equal
+                              (derivedReasons handler)
+                              v.ReplayReasons.Value
+                              $"{v.Id} reports the reasons it declares, in order"
+
+                          v.Id)
+
+              Expect.isNonEmpty ran "the manifest declares replay-reason expectations"
+
+              // Every vector carrying a classification carries reasons too:
+              // the two are one fact stated at two grains, and a vector with
+              // only the coarse one is a vector this suite cannot discriminate.
+              let missing =
+                  all
+                  |> List.filter (fun v -> v.ReplaySafety.IsSome && v.ReplayReasons.IsNone)
+                  |> List.map _.Id
+
+              Expect.isEmpty missing "every vector declaring a classification declares its reasons"
+          }
+
+          test "an arm reachable only from a host-built value is discriminated here" {
+              // The corpus structurally cannot carry these, so the coverage pin
+              // below would otherwise be satisfied by a claim rather than by a
+              // computation. Each case is RUN, and its reasons must name its
+              // token and nothing else.
+              for token, handler in hostConstructedCases do
+                  Expect.equal
+                      (derivedReasons handler)
+                      [ 0, token ]
+                      $"the host-constructed case for {token} reports exactly that reason"
+
+                  Expect.equal
+                      (ProgramWire.replaySafetyTag (HandlerWire.replaySafety handler))
+                      "unknown"
+                      $"…and the verdict it carries is the one {token} forces"
+          }
+
+          test "every arm of the defect vocabulary is discriminated by something" {
+              // The coverage pin. Enumerated from the DU, so a seventh arm
+              // arrives with its discriminating expectation or this goes red
+              // naming it — which is the one thing no corpus checker can do,
+              // never having seen an F# type.
+              //
+              // DISCRIMINATED, not merely present: a vector whose reasons name
+              // two tokens covers neither, because a walk that confused one of
+              // them for the other would leave that vector's expectation
+              // untouched.
+              let discriminatedByCorpus =
+                  all
+                  |> List.choose _.ReplayReasons
+                  |> List.choose (fun reasons ->
+                      match reasons |> List.map snd |> List.distinct with
+                      | [ single ] -> Some single
+                      | _ -> None)
+                  |> Set.ofList
+
+              let discriminatedByHost = hostConstructedCases |> List.map fst |> Set.ofList
+              let covered = Set.union discriminatedByCorpus discriminatedByHost
+
+              Expect.isEmpty
+                  (uncoveredArms covered)
+                  "every ReplayDefect arm has an expectation that fails when it alone is mis-classified"
+
+              // The asymmetry §7.5 records, checked rather than commented: this
+              // arm is not document-reachable, so finding it covered BY THE
+              // CORPUS would mean either the corpus or the specification had
+              // moved and someone should look at which.
+              Expect.isFalse
+                  (discriminatedByCorpus.Contains "unencodable-op")
+                  "no corpus vector reaches the arm §7.5 says a document cannot produce"
+
+              // …and the pin can report a gap. A coverage check that could not
+              // name a missing arm would be the "passes by doing nothing" shape
+              // the corpus forbids of a harness, applied to the harness's own
+              // coverage claim.
+              for token in allDefectTokens do
+                  Expect.equal
+                      (uncoveredArms (Set.remove token covered))
+                      [ token ]
+                      $"hiding {token} makes the pin name it, and name only it"
           }
 
           test "the harness can go red: a mutated fixture is not accepted unchanged" {
