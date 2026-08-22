@@ -26,6 +26,10 @@
          the posture is joined onto the projection here rather than produced by
          the walk in ServerDemanded, which compiles earlier. -->
     <Compile Include="Replay.fs" />
+    <!-- Harvest must FOLLOW Replay: the published document carries the replay
+         postures, so the one call that produces it consults the join rather
+         than reproducing a second walk beside it. -->
+    <Compile Include="Harvest.fs" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Fuaran.Program.Bounded\Fuaran.Program.Bounded.fsproj" />

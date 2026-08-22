@@ -96,6 +96,17 @@ module RefusalClass =
     [<Literal>]
     let MalformedReferencedValue = "malformed-referenced-value"
 
+    [<Literal>]
+    let MalformedContentAddress = "malformed-content-address"
+
+    /// The one class in Appendix A that no single document can exhibit: it needs
+    /// a pinned reference AND the document published under its identifier, and
+    /// the second is not in this corpus. Declared here anyway, because the
+    /// consumer that holds both is exactly who the rule is for — and a class
+    /// spelled at a call site rather than here is a string nothing checks.
+    [<Literal>]
+    let ContentAddressMismatch = "content-address-mismatch"
+
 /// The specification's three-valued replay classification. `Unknown` is not a
 /// failure and is never rounded to a neighbour: only a PROOF is a finding, and a
 /// classification that fired on ordinary correct handlers would be one people
@@ -146,11 +157,20 @@ type ReplayDefect =
 /// applied to the locator rather than to the finding.
 type ReplayReason = { Stage: int; Defect: ReplayDefect }
 
-/// A composition surface naming a program by identifier. One bounded reference
-/// and nothing else — the opaqueness is enforced by what this record OMITS,
-/// which is why the decoder refuses an undeclared member rather than consulting
-/// a list of forbidden ones.
-type LogicTreeRef = { Ref: string }
+/// A composition surface naming a program by identifier, optionally
+/// content-addressed. A bounded reference and an optional address, and nothing
+/// else — the opaqueness is enforced by what this record OMITS, which is why the
+/// decoder refuses an undeclared member rather than consulting a list of
+/// forbidden ones.
+///
+/// `Hash` is the content address of the demand projection published under `Ref`.
+/// `None` means UNPINNED — the posture every reference took before the member
+/// existed — and is a different fact from "any document will do": a reference
+/// that declined to say has not said anything. Nothing in this package resolves
+/// a published projection, so nothing here can check the address against one;
+/// what this codec owes is that the value is well formed and that its absence
+/// survives a round trip as an absence.
+type LogicTreeRef = { Ref: string; Hash: string option }
 
 /// What reaches a handler, and under what identity. `Endpoint` and `NodeId` are
 /// exactly what the shared fold already hands a placement's handler arm; the key
@@ -471,11 +491,44 @@ module ProgramWire =
     /// The rendered slot identity this specification uses.
     let logicTreeSlot: string = LogicTreeNamespace + "/" + LogicTreeKind
 
+    /// The content address prefix, and the digest length behind it. The
+    /// algorithm rides IN the value rather than being agreed out of band, so a
+    /// later digest is a value change with a visible name rather than a silent
+    /// reinterpretation of the same 64 characters.
+    [<Literal>]
+    let ContentAddressPrefix = "sha256:"
+
+    [<Literal>]
+    let ContentAddressDigestLength = 64
+
+    /// Whether a content address is well formed: the prefix, then exactly 64
+    /// LOWER-CASE hex digits.
+    ///
+    /// The case rule is part of the value and not a nicety. An address is
+    /// compared for equality against one a consumer recomputed, and two
+    /// spellings of one digest compare unequal — so admitting both would make a
+    /// pinned reference fail against the very document it addresses, which is
+    /// the one failure mode a pin exists to rule out.
+    let isContentAddress (value: string) : bool =
+        value.StartsWith ContentAddressPrefix
+        && value.Length = ContentAddressPrefix.Length + ContentAddressDigestLength
+        && value
+           |> Seq.skip ContentAddressPrefix.Length
+           |> Seq.forall (fun c -> (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))
+
     let encodeLogicTreeRef (reference: LogicTreeRef) : JVal =
-        Canon.typed "LogicTreeRef" [ "ref", JStr reference.Ref; "slot", JStr logicTreeSlot ]
+        // OMITTED when absent, never nulled: there is no null on this wire, and
+        // an always-emitted member would also change the bytes — and therefore
+        // the address — of every reference ever written without one.
+        Canon.typed
+            "LogicTreeRef"
+            ([ "ref", JStr reference.Ref; "slot", JStr logicTreeSlot ]
+             @ (reference.Hash
+                |> Option.map (fun h -> [ "hash", JStr h ])
+                |> Option.defaultValue []))
 
     let decodeLogicTreeRef (value: JVal) : Result<LogicTreeRef, WireRefusal> =
-        declaredOnly [ "$type"; "ref"; "slot" ] value
+        declaredOnly [ "$type"; "hash"; "ref"; "slot" ] value
         |> Result.bind (fun () -> requireString "slot" value)
         |> Result.bind (fun slot ->
             if slot <> logicTreeSlot then
@@ -488,7 +541,26 @@ module ProgramWire =
             elif reference.Length > 256 then
                 refuse RefusalClass.NameTooLong "the reference exceeds 256 characters"
             else
-                Ok { Ref = reference })
+                Ok reference)
+        |> Result.bind (fun reference ->
+            // Absent is a posture; present-and-unreadable is a broken record.
+            // Collapsing the second into the first would let a malformed value
+            // buy the unpinned treatment, which is the reading that makes
+            // pinning worth defeating.
+            match tryString "hash" value with
+            | None ->
+                match tryMember "hash" value with
+                | Some _ -> refuse RefusalClass.MalformedContentAddress "member 'hash' is not a string"
+                | None -> Ok { Ref = reference; Hash = None }
+            | Some address when isContentAddress address -> Ok { Ref = reference; Hash = Some address }
+            | Some _ ->
+                refuse
+                    RefusalClass.MalformedContentAddress
+                    ("member 'hash' is not '"
+                     + ContentAddressPrefix
+                     + "' followed by "
+                     + string ContentAddressDigestLength
+                     + " lower-case hex digits"))
 
     // ─── the invocation record ───────────────────────────────────────────────
 
