@@ -55,21 +55,34 @@ if (-not $SkipTests) {
 
 if (-not $SkipTests -and -not $SkipFable) {
     # Leg (c) of the tier-parity family: the SAME runner compiled to JavaScript,
-    # reading the SAME fixture files. "It compiles under Fable" and "it behaves
-    # the same under Fable" are different claims and only the second one matters,
-    # which is why this is a run and not just a compile.
+    # reading the SAME scenario files — the conformance corpus's driver-semantics
+    # family. "It compiles under Fable" and "it behaves the same under Fable" are
+    # different claims and only the second one matters, which is why this is a run
+    # and not just a compile.
     #
     # --noCache is load-bearing: a cached Fable compile can serve a pass for
     # sources that no longer exist, which is the false-clean this leg exists to
     # rule out.
+    #
+    # The corpus is a sibling clone and a BUILD INPUT, resolved the same way the
+    # .NET legs resolve it: FUARAN_PROGRAM_SPEC, else the sibling path. Its
+    # absence fails this leg rather than skipping it.
     if (-not (Get-Command node -CommandType Application -ErrorAction SilentlyContinue)) {
         Write-Host "── parity leg (Fable): SKIPPED — node not found on PATH ──" -ForegroundColor Yellow
     }
     else {
+        $spec =
+            if ($env:FUARAN_PROGRAM_SPEC) { $env:FUARAN_PROGRAM_SPEC }
+            else { Join-Path $PSScriptRoot '../Fuaran-UI/fuaran-program-spec' }
+        $corpus = Join-Path $spec 'wire-fixtures'
+        if (-not (Test-Path (Join-Path $corpus 'manifest.json'))) {
+            throw "The conformance corpus is not present at '$corpus'. It is a sibling clone and a BUILD INPUT to this gate — clone it beside this repository, or point FUARAN_PROGRAM_SPEC at it."
+        }
+
         Write-Host "── parity leg (Fable/node) ──"
         dotnet fable tests/Fuaran.Program.Parity.Fable/FableParity.fsproj -o tests/Fuaran.Program.Parity.Fable/output --noCache
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-        node tests/Fuaran.Program.Parity.Fable/output/Main.js tests/fixtures
+        node tests/Fuaran.Program.Parity.Fable/output/Main.js (Resolve-Path $corpus).Path
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     }
 }

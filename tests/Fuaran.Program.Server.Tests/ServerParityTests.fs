@@ -42,14 +42,13 @@ open Fuaran.Program.Server
 open Fuaran.Program.Parity
 open Fuaran.Program.Parity.Runner
 
-/// The fixture root, resolved from this source file rather than the working
-/// directory — a suite that only passes when invoked from one directory is a
-/// coincidence, not a gate.
-let private fixtureRoot =
-    System.IO.Path.Combine(__SOURCE_DIRECTORY__, "..", "fixtures")
-    |> System.IO.Path.GetFullPath
+/// The corpus's fixture root — the driver-semantics family is read from the
+/// same sibling clone the codec suite certifies against, through the SAME
+/// loader the other legs use. A separate corpus would prove nothing, and a
+/// second copy of one would be the drift class the graduation removed.
+let private fixturesRoot = FixtureIo.fixturesRoot
 
-/// The endpoint the corpus's handler fixture names.
+/// The endpoint the corpus's handler scenario names.
 [<Literal>]
 let private handlerEndpoint = "/handlers/refresh"
 
@@ -90,7 +89,7 @@ let private runServerLogicPlacement
                     next,
                     Some
                         { ResolvedJson = CanonicalJson.encodeNode out.Resolved
-                          Effects = out.ClientEffects |> List.map ClientEffect.kind
+                          Effects = out.ClientEffects |> List.map ClientEffect.encode
                           Refused = out.Rejected.IsSome })
                 (session, None)
             |> List.choose snd
@@ -151,14 +150,14 @@ let private readAt (id: string) (tree: Node<obj>) : string option =
 
 [<Tests>]
 let tests =
-    let fixtures = FixtureIo.load fixtureRoot
+    let fixtures = FixtureIo.load fixturesRoot
 
     testList
         "tier parity — the server-logic placement"
         [ test "the fixture corpus is present" {
               // A parity leg that silently found no fixtures would report green
               // while asserting nothing.
-              Expect.isNonEmpty fixtures $"no fixtures under {fixtureRoot}"
+              Expect.isNonEmpty fixtures $"the corpus enumerates no driver-semantics scenario under {fixturesRoot}"
 
               Expect.isTrue
                   (fixtures |> List.exists (fun f -> f.Name = handlerFixture))

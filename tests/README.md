@@ -14,13 +14,19 @@ Five suites, each its own Expecto assembly runner, plus the Fable parity leg.
 
 ## The tier-parity family
 
-One tree, one event script, identical everywhere. `fixtures/<name>/` holds the
-triple:
+One tree, one event script, identical everywhere.
+
+**The scenarios are not in this repository.** They are the **driver-semantics
+family** of the program wire conformance corpus — the sibling clone the codec
+suite already certifies against — and this repository reads them as a *host*
+rather than owning them. Same resolution as the codec suite: the sibling path,
+overridable with `FUARAN_PROGRAM_SPEC`, and its absence **fails** the gate rather
+than skipping it. Each scenario is a directory of three files:
 
 ```
-tree.json                the wire tree, canonical JSON
-events.json              the scripted events
-expected-resolved.json   one entry per step, index 0 = before any event
+tree.json          the wire tree the scenario starts from
+events.json        the scripted events
+expectation.json   one entry per step, index 0 = before any event
 ```
 
 Four legs read those same files: the server driver (`BoundedDriver`), the client
@@ -28,7 +34,22 @@ placement on .NET, the client placement compiled to JavaScript, and the
 server-logic placement (`ServerSession`). The comparison is **per step**, and it
 reports the FIRST divergence — comparing only final trees would pass a fold that
 diverges at step 2 and re-converges at step 5, which is precisely the bug this
-family exists to catch.
+family exists to catch. The corpus states that as a harness obligation, so it is
+now a contract rather than a local convention.
+
+**Two comparison rules, and they are not the same.** A step's recorded tree is an
+embedded *document*, so it is decoded and re-encoded through THIS host's own
+encoder before anything is compared (`Runner.normaliseExpectation`) — a host with
+a different canonical form is measured against its own bytes. A step's client
+effects are recorded as strings holding those documents' own bytes and are
+compared byte-for-byte, because that family's envelope is the specification's one
+enumerated exception; putting them through a canonical encoder is exactly the
+"fix" that would erase it.
+
+**The enumeration is the corpus manifest, never a directory listing.** A scenario
+the manifest forgot is a behaviour nobody is required to reproduce, and every leg
+here asserts that the number of scenarios it ran equals the number the manifest
+declares.
 
 Leg (d) lives in `Fuaran.Program.Server.Tests` rather than in the shared runner,
 because the shared runner is Fable-clean — leg (c) compiles it to JavaScript, and
@@ -53,9 +74,17 @@ family also carries the visible consequence of two-phase staging (D8) — the au
 trail is execution order, not stage order.
 
 **Regenerating:** `dotnet run --project tests/Fuaran.Program.Parity.Tests --
---emit-fixtures`. The emit refuses to write an expectation while the placements
-disagree, because an expectation minted from a divergence enshrines the bug as
-the contract.
+--emit-fixtures [corpus/wire-fixtures]`. The emit refuses to write an expectation
+while the placements disagree, because an expectation minted from a divergence
+enshrines the bug as the contract. It survived the move into the corpus unchanged:
+the home moved, the rule did not.
+
+It writes the scenario **bytes** and nothing else. The corpus's manifest is the
+authoritative enumeration and belongs to the corpus, so refreshing its digests and
+step counts is that repository's own tool's job (`node
+wire-fixtures/check-scenarios.mjs --write`), and adding a scenario to the index is
+a deliberate hand edit there. A host able to add itself to the index it is
+certified against would be grading its own paper.
 
 **Two things this family has already caught**, both worth keeping in mind:
 
@@ -68,26 +97,31 @@ the contract.
   `run.ps1` therefore invokes `dotnet run` WITHOUT `--no-build`. Do not add it
   back.
 
-## Graduating these fixtures to a public corpus
+## Graduation — done, and what it settled
 
-Not done here, and deliberately so — recorded for whoever picks it up.
+This family used to live here and is now the corpus's. Four things had to be
+decided for it to travel, and all four are in the specification rather than in a
+harness:
 
-A public driver-semantics family would need, beyond what is on disk today:
+- **A manifest and a family discriminator.** Scenarios are enumerated in their own
+  top-level array, under their own family list, with a `kind` no wire vector may
+  spell — and they are directories of three files where a vector is one file whose
+  bytes are the document. A codec harness cannot mistake one for the other, and
+  the corpus's manifest checker enforces all three separations.
+- **A stated host obligation.** The family applies only to a host that has
+  **declared** it implements the bounded path. A host that only decodes, records,
+  relays or validates these documents is **out of scope** — a different verdict
+  from non-conformant, and kept different deliberately.
+- **A placement-independent expectation format.** The two rules above, plus
+  first-divergence reporting stated as a harness obligation rather than assumed.
+- **A decision about the effect vocabulary.** Recognition is normative;
+  *performance* is host-defined, so a surface that satisfies an effect differently
+  is conformant; *refusal* is conformant too, because the vocabularies default to
+  deny — but it must be reported as a denial carrying the derived capability.
+  Silence is the only non-conformant answer, because a silently-dropped effect and
+  a performed one are indistinguishable in the outcome document.
 
-- **Naming and a manifest.** The estate's wire-format corpus is authoritative
-  through its `manifest.json` rather than through counts stated in prose; a
-  driver-semantics family would need the same, plus a family discriminator so it
-  is not mistaken for a codec fixture.
-- **A stated host obligation.** These fixtures assert what a *bounded program
-  loop* does, which is a stronger claim than wire round-tripping. A conformant
-  host would have to declare that it implements the bounded path at all before
-  the family means anything for it — a host that only decodes is not
-  non-conformant, it is out of scope.
-- **A placement-independent expectation format.** `expected-resolved.json`
-  currently embeds canonical JSON produced by this repo's encoder. A public
-  family would need the expectation expressed so a host with its own encoder can
-  compare semantically rather than byte-for-byte.
-- **A decision about the effect vocabulary.** Effects here are compared by
-  discriminator. A public family would have to say whether a host that performs
-  an effect differently (or refuses it) is conformant — which is a question about
-  the closed-vocabulary decision, not about fixtures.
+**Not done, and not pretended:** a second, independently-written bounded loop. One
+host reproducing the family shows it is implementable; it does not triangulate it.
+The corpus records that as deliberately deferred — and it now has a contract for
+such a leg to certify against, which it did not before.

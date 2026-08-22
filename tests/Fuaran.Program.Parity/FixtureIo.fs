@@ -5,29 +5,67 @@ module Fuaran.Program.Parity.FixtureIo
 // Fable compilation rather than shimmed.
 #if !FABLE_COMPILER
 
+open System
 open System.IO
 open System.Text.Json
 open Fuaran.Program.Parity.Runner
 
 // ============================================================================
-//  Fixture IO for the .NET legs.
+//  Scenario IO for the .NET legs.
 //
 //  Deliberately NOT in `Parity.fs`: reading a directory is the one part of this
 //  family that genuinely differs per host, so it is the one part that is
 //  host-specific. The Fable leg has its own loader over node's `fs` and reads
-//  the SAME files — which is the point. A fixture that only one host can read
-//  would not be a parity fixture.
+//  the SAME files — which is the point. A scenario that only one host can read
+//  would not be a parity scenario.
 //
-//  On-disk shape, one directory per fixture:
+//  ── The scenarios come from the conformance corpus ──────────────────────────
+//  They are the corpus's DRIVER-SEMANTICS family. The corpus is a sibling clone
+//  and a BUILD INPUT to this gate, exactly as it is for the codec suite: its
+//  absence FAILS rather than skips, because a conformance check that passes
+//  when its oracle is missing is worse than no check.
 //
-//    <name>/tree.json              the wire tree, canonical JSON
-//    <name>/events.json            [ { "nodeId", "event", "payload" } ]
-//    <name>/expected-resolved.json [ { "resolved", "effects", "refused" } ]
+//  The MANIFEST is what is enumerated, never the directory listing. A scenario
+//  present on disk but absent from the manifest is not a harmless extra: it is
+//  a behaviour nobody is required to reproduce, and every host still reports
+//  full conformance. Reading the directory would hide exactly that.
 //
-//  `expected-resolved.json` carries one entry per STEP, index 0 being the state
+//  On-disk shape, one directory per scenario:
+//
+//    <name>/tree.json         the wire tree the scenario starts from
+//    <name>/events.json       [ { "nodeId", "event", "payload" } ]
+//    <name>/expectation.json  [ { "tree", "effects", "refused" } ]
+//
+//  `expectation.json` carries one entry per STEP, index 0 being the state
 //  before any event — so a placement that resolved the initial tree differently
 //  fails at step 0 rather than looking like a fold bug later.
 // ============================================================================
+
+/// The conformance corpus, resolved from THIS source file rather than the
+/// working directory — a suite that only passes when invoked from one directory
+/// is not a gate, it is a coincidence. `FUARAN_PROGRAM_SPEC` overrides the path.
+let corpusRoot: string =
+    match Environment.GetEnvironmentVariable "FUARAN_PROGRAM_SPEC" with
+    | null
+    | "" ->
+        Path.Combine(__SOURCE_DIRECTORY__, "..", "..", "..", "Fuaran-UI", "fuaran-program-spec")
+        |> Path.GetFullPath
+    | declared -> Path.GetFullPath declared
+
+/// The corpus's fixture root — the directory the manifest sits in.
+let fixturesRoot: string = Path.Combine(corpusRoot, "wire-fixtures")
+
+/// The driver-semantics family's own subtree, which is where a regenerated
+/// scenario is written.
+let scenarioFamily: string = "driver-semantics"
+
+let private missing (path: string) : 'a =
+    failwithf
+        "the conformance corpus is not present at '%s'. It is a sibling clone and a BUILD INPUT to this gate, \
+         not an optional extra — clone it beside this repository, or point FUARAN_PROGRAM_SPEC at it. This \
+         suite fails rather than skipping, deliberately: a conformance check that passes when its oracle is \
+         missing is worse than no check."
+        path
 
 let private readEvents (json: string) : ScriptedEvent list =
     use doc = JsonDocument.Parse json
@@ -42,47 +80,108 @@ let private readEvents (json: string) : ScriptedEvent list =
                   |> Map.ofList
               | _ -> Map.empty } ]
 
-let private readExpected (json: string) : StepObservation list =
+let private readExpectation (json: string) : StepObservation list =
     use doc = JsonDocument.Parse json
 
     [ for el in doc.RootElement.EnumerateArray() ->
-          { ResolvedJson = el.GetProperty("resolved").GetString()
+          // The tree is an embedded DOCUMENT, not a string of somebody's bytes.
+          // Taking its raw text hands the decoder a document with the right
+          // MEANING; `normaliseExpectation` is what puts it into this host's own
+          // bytes before anything is compared.
+          { ResolvedJson = el.GetProperty("tree").GetRawText()
             Effects = [ for e in el.GetProperty("effects").EnumerateArray() -> e.GetString() ]
             Refused = el.GetProperty("refused").GetBoolean() } ]
 
-/// Load every fixture directory under `root`, in name order so a failure report
-/// is stable run to run.
-let load (root: string) : Fixture list =
-    if not (Directory.Exists root) then
-        []
-    else
-        Directory.GetDirectories root
-        |> Array.sortBy Path.GetFileName
-        |> Array.toList
-        |> List.map (fun dir ->
-            let read name =
-                File.ReadAllText(Path.Combine(dir, name))
+/// One scenario as the corpus manifest declares it. The host reads the
+/// manifest's enumeration and nothing else.
+type ScenarioEntry =
+    { Name: string
+      Dir: string
+      Tree: string
+      Events: string
+      Expectation: string
+      Steps: int }
 
-            let expectedPath = Path.Combine(dir, "expected-resolved.json")
+/// The manifest's driver-semantics enumeration, in declared order.
+let scenarios (fixturesRoot: string) : ScenarioEntry list =
+    let manifestPath = Path.Combine(fixturesRoot, "manifest.json")
 
-            { Name = Path.GetFileName dir
-              TreeJson = read "tree.json"
-              Events = readEvents (read "events.json")
-              Expected =
-                if File.Exists expectedPath then
-                    readExpected (read "expected-resolved.json")
-                else
-                    [] })
+    if not (File.Exists manifestPath) then
+        missing fixturesRoot
 
-let private escape (s: string) : string = JsonSerializer.Serialize s
+    use doc = JsonDocument.Parse(File.ReadAllText manifestPath)
 
-/// Write a fixture's tree + event script. Together with `writeExpected` this is
-/// the whole on-disk artefact — the thing every leg reads, including the ones
-/// that cannot run F#.
-let writeTree (root: string) (fixture: Fixture) : unit =
-    let dir = Path.Combine(root, fixture.Name)
+    match doc.RootElement.TryGetProperty "scenarios" with
+    | false, _ -> failwith "the corpus manifest declares no scenario array"
+    | true, entries ->
+        [ for el in entries.EnumerateArray() ->
+              let files = el.GetProperty "files"
+
+              { Name = el.GetProperty("name").GetString()
+                Dir = el.GetProperty("dir").GetString()
+                Tree = files.GetProperty("tree").GetString()
+                Events = files.GetProperty("events").GetString()
+                Expectation = files.GetProperty("expectation").GetString()
+                Steps = el.GetProperty("steps").GetInt32() } ]
+
+/// Load every scenario the manifest enumerates. A file the manifest names but
+/// the tree does not carry is a failure, not an omission.
+let load (fixturesRoot: string) : Fixture list =
+    scenarios fixturesRoot
+    |> List.map (fun entry ->
+        let read (relative: string) =
+            let path = Path.Combine(fixturesRoot, relative)
+
+            if not (File.Exists path) then
+                failwithf "the corpus enumerates '%s', which is not present at '%s'" relative path
+
+            File.ReadAllText path
+
+        { Name = entry.Name
+          TreeJson = read entry.Tree
+          Events = readEvents (read entry.Events)
+          Expected = readExpectation (read entry.Expectation) })
+
+// ─── Writing: the `--emit-fixtures` path ─────────────────────────────────────
+
+/// §2.7's escaping, applied to a string this host writes into the corpus:
+/// `"`, `\` and the control range, and nothing else. Deliberately NOT
+/// `JsonSerializer.Serialize`, whose default escaping spells an ordinary quote
+/// `"` — valid, and unreadable in a corpus a human is meant to review.
+let private quoted (s: string) : string =
+    let sb = Text.StringBuilder()
+    sb.Append '"' |> ignore
+
+    for ch in s do
+        if ch = '"' then
+            sb.Append "\\\"" |> ignore
+        elif ch = '\\' then
+            sb.Append "\\\\" |> ignore
+        elif ch < ' ' then
+            sb.AppendFormat("\\u{0:x4}", int ch) |> ignore
+        else
+            sb.Append ch |> ignore
+
+    sb.Append '"' |> ignore
+    sb.ToString()
+
+/// Every scenario file is written WITHOUT a trailing newline, for the reason the
+/// corpus applies to its wire vectors: the manifest digests the file, and a
+/// trailing newline is a byte like any other.
+let private writeFile (path: string) (text: string) : unit =
+    File.WriteAllText(path, text, Text.UTF8Encoding false)
+
+let private scenarioDir (fixturesRoot: string) (name: string) : string =
+    let dir = Path.Combine(fixturesRoot, scenarioFamily, name)
     Directory.CreateDirectory dir |> ignore
-    File.WriteAllText(Path.Combine(dir, "tree.json"), fixture.TreeJson)
+    dir
+
+/// Write a scenario's tree + event script. Together with `writeExpectation` this
+/// is the whole on-disk artefact — the thing every leg reads, including the ones
+/// that cannot run F#.
+let writeTree (fixturesRoot: string) (fixture: Fixture) : unit =
+    let dir = scenarioDir fixturesRoot fixture.Name
+    writeFile (Path.Combine(dir, "tree.json")) fixture.TreeJson
 
     let events =
         fixture.Events
@@ -90,47 +189,46 @@ let writeTree (root: string) (fixture: Fixture) : unit =
             let payload =
                 ev.Payload
                 |> Map.toList
-                |> List.map (fun (k, v) -> sprintf "%s: %s" (escape k) (escape v))
+                |> List.map (fun (k, v) -> sprintf "%s: %s" (quoted k) (quoted v))
                 |> String.concat ", "
 
             sprintf
                 "  { \"nodeId\": %s, \"event\": %s, \"payload\": {%s} }"
-                (escape ev.NodeId)
-                (escape ev.Event)
+                (quoted ev.NodeId)
+                (quoted ev.Event)
                 payload)
-        |> String.concat
-            ",
-"
+        |> String.concat ",\n"
 
-    File.WriteAllText(
-        Path.Combine(dir, "events.json"),
-        "[
-"
-        + events
-        + "
-]
-"
-    )
+    writeFile (Path.Combine(dir, "events.json")) ("[\n" + events + "\n]")
 
-/// Write a fixture's expectation from an observed run — the `--emit-fixtures`
-/// path, mirroring the estate's corpus-emit convention. Emitting is a
-/// DELIBERATE act: it records what the placements currently agree on, so it must
-/// only ever run when they DO agree, which the caller checks first.
-let writeExpected (root: string) (fixture: Fixture) (observations: StepObservation list) : unit =
-    let dir = Path.Combine(root, fixture.Name)
-    Directory.CreateDirectory dir |> ignore
+/// Write a scenario's expectation from an observed run — the `--emit-fixtures`
+/// path, mirroring the corpus's own emit convention. Emitting is a DELIBERATE
+/// act: it records what the placements currently agree on, so it must only ever
+/// run when they DO agree, which the caller checks first.
+///
+/// The tree is spliced in as a DOCUMENT rather than as an escaped string of this
+/// host's bytes: that is what makes the expectation placement-independent, since
+/// a reader decodes it with its own decoder rather than diffing it against its
+/// own output. The effects beside it stay escaped strings on purpose — their
+/// bytes are the specification's enumerated envelope exception, and embedding
+/// them as objects would licence any JSON writer to reorder their members and
+/// erase it.
+let writeExpectation (fixturesRoot: string) (fixture: Fixture) (observations: StepObservation list) : unit =
+    let dir = scenarioDir fixturesRoot fixture.Name
 
     let body =
         observations
         |> List.map (fun o ->
-            let effects = o.Effects |> List.map escape |> String.concat ","
+            let effects = o.Effects |> List.map quoted |> String.concat ", "
 
-            sprintf
-                "  { \"resolved\": %s, \"effects\": [%s], \"refused\": %s }"
-                (escape o.ResolvedJson)
-                effects
-                (if o.Refused then "true" else "false"))
+            String.concat
+                "\n"
+                [ "  {"
+                  sprintf "    \"tree\": %s," o.ResolvedJson
+                  sprintf "    \"effects\": [%s]," effects
+                  sprintf "    \"refused\": %s" (if o.Refused then "true" else "false")
+                  "  }" ])
         |> String.concat ",\n"
 
-    File.WriteAllText(Path.Combine(dir, "expected-resolved.json"), "[\n" + body + "\n]\n")
+    writeFile (Path.Combine(dir, "expectation.json")) ("[\n" + body + "\n]")
 #endif

@@ -25,7 +25,10 @@ corpus. Three consequences are worth knowing before touching either file:
 - **The corpus is a BUILD INPUT to this repo's gate, not a reference.** It is resolved as a sibling
   clone (the suite names the path it expects and honours `FUARAN_PROGRAM_SPEC`), and its absence
   **fails** the suite rather than skipping it — a conformance check that passes when its oracle is
-  missing is worse than no check.
+  missing is worse than no check. **That now covers the tier-parity family too**: its scenarios
+  graduated into the corpus as the driver-semantics family, so `tests/fixtures/` is gone and all four
+  legs read the corpus. Graduation moved the home, not the truth — the emit path still refuses to
+  record a trace while the placements disagree.
 - **Forward coupling spans repositories.** A change to any specified member, ordering, encoding,
   refusal class or derived value updates the normative text, the schemas, the corpus's own emitter,
   its manifest **and** this codec, in one change-set. The corpus's `CONTRIBUTING.md` states the rule;

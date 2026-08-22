@@ -15,7 +15,7 @@ open Fuaran.Program.Runtime
 //
 //  "One algebra, two placements" is a claim about behaviour, and a claim about
 //  behaviour is worth exactly what its executable check is worth. This module is
-//  that check: it drives ONE fixture through every placement and compares them
+//  that check: it drives ONE scenario through every placement and compares them
 //  STEP BY STEP.
 //
 //  Per-step is the load-bearing part. Comparing only final trees tells you that
@@ -29,8 +29,22 @@ open Fuaran.Program.Runtime
 //    (c) the client placement under Fable — the same runner, compiled to JS
 //
 //  This module is Fable-clean and does no IO, so all three legs run the SAME
-//  comparison code. Reading fixtures from disk is the host's job, because that
+//  comparison code. Reading scenarios from disk is the host's job, because that
 //  is the one part that genuinely differs between .NET and node.
+//
+//  ── The scenarios live in the conformance corpus ────────────────────────────
+//  They are the corpus's DRIVER-SEMANTICS family, not this repository's private
+//  fixtures: the same directory that specifies the wire also specifies what a
+//  bounded loop DOES with it, and this repository certifies against that as a
+//  host rather than as its author. Two rules follow, and both are stated where
+//  they are enforced below:
+//
+//    - a step's resolved tree is compared SEMANTICALLY — the corpus's document
+//      is decoded and re-encoded through THIS host's encoder before comparison,
+//      so a host whose encoder differs is measured against its own bytes;
+//    - a step's client effects are compared BYTE-for-byte, deliberately — their
+//      envelope is the specification's one enumerated exception, and putting
+//      them through a canonical encoder is exactly the "fix" that would erase it.
 // ============================================================================
 
 /// One scripted event. Deliberately narrower than `LiveEvent` — a fixture
@@ -40,9 +54,20 @@ type ScriptedEvent =
       Event: string
       Payload: Map<string, string> }
 
-/// What a placement produced at one step: the resolved tree in canonical JSON
-/// (the comparable form — a `Node` carries closures and so has no equality) plus
-/// the closure-free effects it emitted and whether it refused.
+/// What a placement produced at one step, and what the corpus records for it.
+///
+/// `ResolvedJson` is a wire TREE DOCUMENT. From a placement it is that
+/// placement's own encoding of the resolved tree (a `Node` carries closures and
+/// so has no structural equality — encoding is what makes two placements
+/// comparable at all). From the corpus it is the document the scenario records,
+/// which is why it must go through `normaliseExpectation` before a comparison:
+/// the two are the same MEANING, and only accidentally the same bytes.
+///
+/// `Effects` are client-effect documents in their AS-EMITTED form, one per
+/// effect, in order. Not merely the arm names: a family that recorded only the
+/// arm could not tell a navigation to one route from a navigation to another,
+/// and computing the wrong route is precisely the kind of fold defect this
+/// family exists to catch.
 type StepObservation =
     { ResolvedJson: string
       Effects: string list
@@ -73,8 +98,8 @@ module Divergence =
             d.LegB
             d.ValueB
 
-/// A fixture: a wire tree, the event script to drive it with, and the
-/// per-step expectation. `Expected` is empty when the fixture is being
+/// A scenario: a wire tree, the event script to drive it with, and the
+/// per-step expectation. `Expected` is empty when the scenario is being
 /// generated rather than checked.
 type Fixture =
     { Name: string
@@ -119,7 +144,7 @@ let runServerPlacement (fixture: Fixture) : Result<StepObservation list, string>
                     next,
                     Some
                         { ResolvedJson = canonical next.Resolved
-                          Effects = out.Effects |> List.map ClientEffect.kind
+                          Effects = out.Effects |> List.map ClientEffect.encode
                           Refused = out.Rejected.IsSome })
                 (session, None)
             |> List.choose snd
@@ -171,7 +196,7 @@ let runClientPlacement (fixture: Fixture) : Result<StepObservation list, string>
                     next,
                     Some
                         { ResolvedJson = canonical out.Resolved
-                          Effects = out.Effects |> List.map ClientEffect.kind
+                          Effects = out.Effects |> List.map ClientEffect.encode
                           Refused = out.Rejected.IsSome })
                 (program, None)
             |> List.choose snd
@@ -223,6 +248,42 @@ let compare (fixture: string) (legA: string) (a: StepObservation list) (legB: st
             else
                 None)
 
+// ─── The expectation, made placement-independent ─────────────────────────────
+
+/// Bring a recorded expectation into THIS host's own terms before comparing it.
+///
+/// The corpus records each step's resolved tree as a wire tree DOCUMENT, not as
+/// a string of one implementation's bytes. A host is therefore never held to the
+/// corpus's encoder: it decodes the recorded document with its own decoder and
+/// re-encodes it with its own encoder, so both sides of the comparison are its
+/// own bytes and the only thing being compared is the MEANING.
+///
+/// The effects beside it are deliberately left alone. Their envelope is the
+/// specification's one enumerated exception — a `kind` discriminator and
+/// declaration-ordered members — and those bytes are pinned normatively rather
+/// than left to a host. Putting them through a canonical encoder here would
+/// silently "correct" the exception the family is supposed to preserve, so this
+/// function touches the tree and nothing else.
+let normaliseExpectation (name: string) (expected: StepObservation list) : Result<StepObservation list, string> =
+    let rec go (index: int) (acc: StepObservation list) (rest: StepObservation list) =
+        match rest with
+        | [] -> Ok(List.rev acc)
+        | step :: tail ->
+            match JsonDecode.decodeNode step.ResolvedJson with
+            | Error err -> Error(sprintf "%s: the expectation's tree at step %d does not decode: %A" name index err)
+            | Ok wire ->
+                // Reifying is safe and is the point: the recorded tree is being
+                // re-ENCODED, never dispatched through, so its inert closure
+                // slots are exactly what a resolved tree's are.
+                go
+                    (index + 1)
+                    ({ step with
+                        ResolvedJson = canonical (Fuaran.UI.Ops.Types.WireTree.reify wire) }
+                     :: acc)
+                    tail
+
+    go 0 [] expected
+
 /// Run every placement available in this host and compare them pairwise against
 /// the first. Returns the divergences found, empty when the placements agree.
 let checkFixture (fixture: Fixture) : Result<Divergence list, string> =
@@ -233,11 +294,13 @@ let checkFixture (fixture: Fixture) : Result<Divergence list, string> =
         let againstEachOther =
             compare fixture.Name "BoundedDriver" server "Runtime" client |> Option.toList
 
-        let againstExpected =
-            if List.isEmpty fixture.Expected then
-                []
-            else
-                compare fixture.Name "expected" fixture.Expected "Runtime" client
-                |> Option.toList
-
-        Ok(againstEachOther @ againstExpected)
+        if List.isEmpty fixture.Expected then
+            Ok againstEachOther
+        else
+            match normaliseExpectation fixture.Name fixture.Expected with
+            | Error e -> Error e
+            | Ok expected ->
+                Ok(
+                    againstEachOther
+                    @ (compare fixture.Name "expected" expected "Runtime" client |> Option.toList)
+                )
