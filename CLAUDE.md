@@ -13,8 +13,9 @@ update function. `Fuaran.Program.Server` is a **spike** at the third placement: 
 names a host-registered handler, and the handler runs as data behind a closed, default-deny
 server-effect vocabulary. It commits no wire form — see
 [`docs/server-handler-atomicity.md`](docs/server-handler-atomicity.md) for the questions the wire cut
-inherits, three of which are now decided ahead of it: where a call is recognised (D7), the host-effect
-atomicity mode (D8), and result-target ownership (D9).
+inherits, four of which are now decided ahead of it: where a call is recognised (D7), the host-effect
+atomicity mode (D8), result-target ownership (D9), and what a query's reader declares (D10) — the last
+taken because that note's most valuable follow-on, the pre-execution query-schema check, is now built.
 
 The dependency direction is settled and one-way — this repo consumes published `Fuaran.UI.*`
 packages, and nothing in the UI tier references back ([DECISIONS.md](DECISIONS.md) D4/D5). That is

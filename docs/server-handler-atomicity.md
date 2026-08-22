@@ -9,13 +9,14 @@ position rather than from whatever the code happened to do.
 They are recorded because a spike's real output is what it *found*, and a question answered silently
 in code is a question that gets re-answered differently by the next person.
 
-> **Three of the questions below have since been DECIDED**, deliberately and before the wire cut, and
+> **Four of the questions below have since been DECIDED**, deliberately and before the wire cut, and
 > the decisions bind where this note does not: the host-effect atomicity mode (§1 →
-> [D8](../DECISIONS.md)), result-target ownership (§3's last open item → D9), and where a nested call
-> is recognised (§4's first finding → D7). The open items around them — replay modes, the idempotency
-> key, the static schema check, concurrency — are untouched and still open. The sections are kept as
-> they were written, with a marker at each decided point, because the argument that led to a decision
-> is worth more than the decision restated.
+> [D8](../DECISIONS.md)), result-target ownership (§3's last open item → D9), where a nested call is
+> recognised (§4's first finding → D7), and what a query's reader declares (§3 → D10). **§3's static
+> schema check — the follow-on this note calls its most valuable — is now BUILT**, which is why D10 had
+> to be taken. The open items around them — replay modes, the idempotency key, concurrency — are
+> untouched and still open. The sections are kept as they were written, with a marker at each decided
+> point, because the argument that led to a decision is worth more than the decision restated.
 
 ---
 
@@ -136,15 +137,39 @@ query cannot satisfy its reader before the tree ever runs — the same posture t
 its pre-emit validator, applied to the compute layer. This is the most valuable single follow-on this
 note identifies.
 
+> **BUILT — the walk exists, and so does the detailed error.** `Schema.ofTransform` derives a
+> pipeline's output schema over the closed verb set without evaluating anything, and a validator family
+> checks it against the tree's readers at the server placement's opt-in strict construction. A handler
+> whose query drops a column its reader needs is now refused *before* the untrusted tree runs, and the
+> refusal names the column, the reader, and what the query does provide. **The cost this section
+> recorded is repaid rather than removed:** the runtime diagnostic still carries the discriminator
+> only — it is still the thing that runs while a wire-carried pipeline is in scope — and the detailed
+> error now exists on the side where names cost nothing. The two are pinned by one test read twice.
+
 *What the reader declares is undecided.* The check needs an expectation to compare against, and the
 reading node does not declare one — the accessor is the only statement of what shape it wants. Either
 the slot gains a declared schema (typed, checkable, more to author) or the expectation is inferred
 from the accessor (no authoring cost, and inference across a wire boundary is exactly where inference
 stops being cheap).
 
+> **DECIDED — declared, and the declaration already existed ([D10](../DECISIONS.md)).** Neither option
+> above ships. Inference from the accessor is not merely expensive across the wire, it is EMPTY there:
+> the accessor is a closure and decodes to an identity projection, so it says nothing about columns on
+> exactly the trees this check exists for. And a new declared slot schema is D9's problem again — a
+> chart names its axes and a grid column names its field, in wire-carried strings, so a second
+> declaration would be two mechanisms for one job with the new one free to drift. The expectation is
+> therefore declared by the reading node's EXISTING fields and harvested rather than deduced; a
+> closure-held projection makes it a lower bound, reported as such.
+
 *A `Ref` source has no schema at validation time.* Its rows are host-side by design — the wire carries
 the name, never the data. So a pipeline over a `Ref` either degrades the check to "unknown", or the
 host declares source schemas as part of wiring its sources. The second is better and is not free.
+
+> **DECIDED — both, in that order ([D10](../DECISIONS.md)).** The host declares source schemas at
+> registration, beside the resolver that serves the rows; an undeclared source degrades to "unknown"
+> and the report says which query it cost. The third option the paragraph does not name — resolve the
+> source at validation time and read the schema off the table — was refused explicitly: a check that
+> calls a host's data resolver to decide whether a handler may run has already run half the handler.
 
 *The call action's result target is not honoured, and that is a schema question too.* The tree's call
 action carries an optional result target, and this spike ignores it: the handler's own stages declare

@@ -21,6 +21,11 @@
     <Compile Include="BoundedActions.fs" />
     <Compile Include="Budget.fs" />
     <Compile Include="Resolve.fs" />
+    <!-- Schema stands alone: the static query-schema walk depends on nothing in
+         this package, and nothing here depends on it. The placements compose
+         it, which is why it sits beside the demanded projection rather than
+         inside it. -->
+    <Compile Include="Schema.fs" />
     <!-- Demanded must precede BoundedDriver: the driver's strict construction
          path consults the projection before it builds a session. -->
     <Compile Include="Demanded.fs" />

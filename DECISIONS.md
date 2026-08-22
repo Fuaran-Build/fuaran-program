@@ -194,3 +194,60 @@ believing an answer lands somewhere it never does, and would leave the retired m
 to anyone reading the wire vocabulary. This costs nothing today, because no bounded placement ever
 honoured the target: it has been inert since the interpreter was written, and refusing it merely says
 so out loud.
+
+## D10 — The reader's expectation is DECLARED, and the declaration already exists (2026-08-22)
+
+A query lands a table in a named slot and some node reads it. To check the two against each other
+before anything runs, the check needs an expectation to compare the derived output schema against.
+The design note left two ways to get one: the reading slot gains a **declared schema** (typed,
+checkable, more to author), or the expectation is **inferred from the accessor** (no authoring cost,
+and inference across a wire boundary is where inference stops being cheap). **Neither of those two
+ships**, and the reason is worth more than the answer.
+
+**Inference from the accessor is not expensive across the wire; it is EMPTY across the wire.** A
+query binding's accessor is a closure, and a closure does not survive decoding — the decoder
+substitutes an identity projection, so on a decoded tree the accessor says nothing whatsoever about
+columns. Inference would work only on a hand-authored tree, which is precisely the tree that does not
+need this check: the check exists because a *generated* tree arrived and the host would like to know,
+before running it, whether its own queries can serve it.
+
+**A declared slot schema was refused for D9's reason: the tree already declares this.** A chart names
+its `xField` and its `yFields`; a grid column names its `field`; a grid names its `rowKeyField`. Those
+are ordinary wire-carried strings, not closures, and they are the whole of what the render vocabulary
+reads from a row. Minting a second declaration beside them would be two mechanisms for one job — and
+the new one would be the one free to drift, because nothing renders it.
+
+**So the expectation is DECLARED, by the reading node's existing fields, and the walk HARVESTS that
+declaration rather than inferring one.** The distinction is not pedantry: reading a string an author
+wrote is a different act from deducing what an author meant, and only the first has a defined answer
+when it is wrong. Where a reader's projection *is* closure-held — a grid column with no `field`, whose
+content is the closure; a closure row key — the harvested expectation is a **lower bound**, reported as
+such and never completed by a guess.
+
+**The `Ref` half is the same shape one layer down: the host declares, at registration, beside the
+resolver that serves the rows.** The tempting alternative was to *resolve* the source and read the
+schema off the table. It is refused: this family exists to answer a question before anything external
+runs, and a check that calls a host's data resolver to decide whether a handler may run has already run
+half the handler. An undeclared source degrades to "unknown" — reported, never guessed, and never a
+refusal, because refusing a handler over a schema nobody declared would punish a host for not answering
+a question it was never asked.
+
+**Only a PROOF is a finding.** The walk refuses on what it can demonstrate — a column the query
+provably does not produce, a step reading a column its input provably lacks, a union whose two sides
+provably disagree — and everything it merely cannot decide is DATA on the report: a query whose output
+is not statically closed (a pivot names its value columns from the data; an undeclared `Ref` names
+nothing), and a reader whose projection is closure-held. That is `OpaqueHandlers`' choice, taken again
+for its reason: a finding that fires on ordinary correct trees is one people learn to scroll past, and
+then the real ones go with it.
+
+**The runtime posture is untouched.** The dispatch-time diagnostic still carries the evaluation error's
+discriminator and nothing else, because it is still the thing that runs while a wire-carried pipeline is
+in scope. What changed is that the detailed error now exists *somewhere* — before the untrusted tree is
+involved, where names cost nothing.
+
+**What it forecloses.** A reader can only ever state a column expectation the RENDER vocabulary spells.
+A node that needs a column for something other than display has no way to say so, and giving it one is
+the declared-slot-schema option arriving by another door — it has to be argued here, not added as a
+field the walk quietly starts reading. Recorded as an open gap rather than a limitation resolved: a
+binding that TRANSFORMS a query slot client-side is a reader whose expectation is this walk composed
+with its own pipeline, and that composition is not attempted.

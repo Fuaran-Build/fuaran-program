@@ -8,7 +8,7 @@ Five suites, each its own Expecto assembly runner, plus the Fable parity leg.
 | `Fuaran.Program.Tests` | the skeleton package |
 | `Fuaran.Program.Bounded.Tests` | the interpreter's invariants and the server driver's loop |
 | `Fuaran.Program.Runtime.Tests` | the client placement's loop and the effect seam |
-| `Fuaran.Program.Server.Tests` | the server-logic placement: handlers, the server-effect seam, and tier-parity leg (d) |
+| `Fuaran.Program.Server.Tests` | the server-logic placement: handlers, the server-effect seam, the pre-execution query-schema check, and tier-parity leg (d) |
 | `Fuaran.Program.Parity.Tests` | tier parity, .NET legs (a) + (b) |
 | `Fuaran.Program.Parity.Fable` | tier parity, leg (c) — the same runner under node |
 

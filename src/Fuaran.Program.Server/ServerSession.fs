@@ -73,6 +73,12 @@ type ServerServices =
         /// Resolves a named data source for `ServerEffect.RunQuery`. Defaults to
         /// refusing every name, so a host that wires no data serves no query.
         Sources: string -> Result<Fuaran.Core.Table, Fuaran.Core.EvalError>
+        /// The SCHEMAS of those named sources, declared here beside the resolver
+        /// that serves their rows. Read only by the pre-execution query-schema
+        /// walk, never by the loop: a `Ref`'s rows are host-side by design, so
+        /// its columns are whatever the host says they are, and an undeclared
+        /// name degrades the walk to "unknown" rather than to a guess.
+        SourceSchemas: SourceSchemas
         /// The ops applied this step, for the journal / telemetry sink — the
         /// same seam, by the same name, as the other placements.
         OnApply: TreeOp<obj> list -> unit
@@ -96,6 +102,7 @@ module ServerServices =
           Handlers = Map.empty
           Effects = ServerEffectRegistry.denyAll
           Sources = Fuaran.Core.DataFrame.noResolve
+          SourceSchemas = SourceSchemas.none
           OnApply = ignore
           Budget = InteractionBudget.defaults }
 
@@ -111,12 +118,46 @@ module ServerServices =
         { services with
             Handlers = Map.add endpoint handler services.Handlers }
 
+    /// Declare the schema a named `Ref` source resolves to.
+    ///
+    /// Separate from wiring the resolver, and deliberately: a host may serve
+    /// rows it cannot describe statically (a foreign table, a projection built
+    /// at request time), and forcing a schema alongside every resolver would
+    /// make it invent one. Declaring is what buys the check; not declaring costs
+    /// only the check, and says so on the report.
+    let withSourceSchema (name: string) (schema: Fuaran.Core.Schema) (services: ServerServices) : ServerServices =
+        { services with
+            SourceSchemas = SourceSchemas.declare name schema services.SourceSchemas }
+
 /// Why the server placement produced no change: a G1 gate rejection or a G2
 /// budget breach — the same two refusal classes the other placements report, by
 /// the same names.
 type ServerReject =
     | Gate of Validation.RejectReason
     | BudgetExceeded of detail: string
+
+/// Why a strict construction refused to build a session. Two vocabularies,
+/// deliberately kept apart rather than merged into one finding type: one asks
+/// whether this host can PERFORM what the tree can ask for, the other whether
+/// the host's own queries can SATISFY what the tree reads. A host correcting the
+/// first edits its registry; a host correcting the second edits a pipeline or a
+/// grid, and collapsing them would make the list harder to act on, not shorter.
+[<RequireQualifiedAccess>]
+type ServerStrictFinding =
+    /// The demanded-effect coverage check: the tree can ask for something this
+    /// host does not offer or its policy refuses.
+    | Coverage of CoverageFinding
+    /// The pre-execution query-schema check: a pipeline cannot satisfy a reader,
+    /// or cannot run at all against its own source.
+    | QuerySchema of QuerySchemaFinding
+
+module ServerStrictFinding =
+    /// Human-readable, and detailed on the query side — see `QuerySchema.describe`
+    /// for why that side can afford names where the runtime cannot.
+    let describe (finding: ServerStrictFinding) : string =
+        match finding with
+        | ServerStrictFinding.Coverage f -> Demanded.describe f
+        | ServerStrictFinding.QuerySchema f -> QuerySchema.describe f
 
 /// One connection's server-logic state: the domain tree (which a handler's
 /// `ApplyOps` may edit — unlike the other placements, where the base tree is
@@ -174,6 +215,75 @@ module ServerSession =
                  Resolve.resolveTree store tree)
           NodeCount = cost
           Services = services }
+
+    /// Every query the registered handlers declare, with the handler and slot it
+    /// belongs to.
+    ///
+    /// Every REGISTERED handler, not only the ones this tree names. A handler
+    /// whose pipeline cannot run against its own source is a defect in the
+    /// host's registration, and it is one whether or not today's tree happens to
+    /// call it — the tree decides which handlers RUN, never which are correct.
+    let private declaredQueries
+        (services: ServerServices)
+        : (QueryOrigin * Fuaran.Core.DataSource * Fuaran.Core.Transform list) list =
+        services.Handlers
+        |> Map.toList
+        |> List.collect (fun (_, handler) ->
+            handler.Stages
+            |> List.choose (fun stage ->
+                match stage with
+                | Effect(ServerEffect.RunQuery(slot, source, pipeline)) ->
+                    Some({ Handler = handler.Name; Slot = slot }, source, pipeline)
+                | _ -> None))
+
+    /// What the static query-schema walk decided about this host's queries and
+    /// this tree's readers — findings, plus the two kinds of thing it declined
+    /// to decide.
+    ///
+    /// Exposed as DATA and not only as a refusal, for the reason
+    /// `Demanded.ofTree` is: a host may want to see what could not be checked
+    /// (an undeclared `Ref`, a pivot, a closure-projecting grid) without being
+    /// stopped by it, and a host that reads the report and starts anyway is
+    /// making a different, legitimate choice from one that never looked.
+    let querySchemaReport (services: ServerServices) (wire: WireTree) : QuerySchemaReport =
+        let readers = QuerySchema.readersOfTree (WireTree.reify wire)
+
+        declaredQueries services
+        |> List.map (fun (origin, source, pipeline) ->
+            QuerySchema.checkQuery services.SourceSchemas origin source pipeline readers)
+        |> QuerySchemaReport.concat
+
+    /// Build a session ONLY if this host can cover what the tree can ask for AND
+    /// its own queries can satisfy what the tree reads.
+    ///
+    /// **Opt-in, and `init` remains the default** — the same posture the bounded
+    /// driver's strict construction takes, and for the same reason: a session
+    /// whose tree names one uncoverable effect still works for everything else,
+    /// and refusing it wholesale is a stricter policy than the interpreter's
+    /// own. What is new here is the second half. The effect check asks what the
+    /// tree can DEMAND; the schema check asks whether what the host will PRODUCE
+    /// fits what the tree will READ — and that question had no answer before
+    /// execution at all, only a thin runtime error after it.
+    ///
+    /// `Error` carries EVERY finding from both checks, never the first: a host
+    /// correcting its registration wants the whole list, and stopping early
+    /// makes that an iterative guessing game.
+    let initStrict
+        (coverage: HostCoverage)
+        (services: ServerServices)
+        (store: BoundedStore)
+        (wire: WireTree)
+        : Result<ServerSession, ServerStrictFinding list> =
+        let tree = WireTree.reify wire
+
+        let findings =
+            (Demanded.check coverage tree |> List.map ServerStrictFinding.Coverage)
+            @ ((querySchemaReport services wire).Findings
+               |> List.map ServerStrictFinding.QuerySchema)
+
+        match findings with
+        | [] -> Ok(init services store wire)
+        | _ -> Error findings
 
     let private inert (session: ServerSession) : ServerStepOutput =
         { Resolved = session.Resolved

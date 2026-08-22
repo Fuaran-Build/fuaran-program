@@ -73,10 +73,28 @@ price is stated: a later stage cannot read an earlier host call's result. The re
 not abolish — a performer failing in the perform phase leaves its predecessors run — is reported, as
 `Committed = false` with `Performed` naming exactly the calls that happened.
 
-The questions that remain open — idempotency on replay, and the schema coupling between a query and
-the tree that reads its result — are written down in
+The question that remains open — idempotency on replay — is written down in
 [`docs/server-handler-atomicity.md`](../../docs/server-handler-atomicity.md) as input to the wire cut,
 rather than being settled silently in code.
+
+## Refusing an unsatisfiable handler before the tree runs
+
+The schema coupling between a query and the node that reads its result used to be a runtime failure,
+and a deliberately thin one — the diagnostic carries the evaluation error's discriminator and never
+its message, because the message quotes names taken from a pipeline that is host-declared today and
+wire-carried after the cut.
+
+`ServerSession.initStrict` is the other half of that trade. It builds a session only if this host can
+cover what the tree can demand **and** its own queries can satisfy what the tree reads, deriving each
+pipeline's output schema statically (`Schema.ofTransform`) and checking it against the readers' declared
+columns. The refusal names the column, the reader and what the query does provide — it can, because it
+happens before the untrusted tree is involved. The runtime posture is unchanged.
+
+`ServerSession.querySchemaReport` returns the same walk as data, including what it declined to decide:
+a query whose output is not statically closed and a reader whose projection is closure-held are both
+legitimate, so neither is a finding. `ServerServices.withSourceSchema` declares a named source's schema
+beside the resolver that serves its rows; declaring buys the check, and not declaring costs only the
+check. `init` remains the default, exactly as at the other placements.
 
 ## Defaults are closed
 
@@ -94,7 +112,8 @@ behind a registered, policy-gated seam), D4/D5 (the UI-typed first instantiation
 dependency direction), D6 (the by-id reference vocabulary for placing a program tree), D7 (call
 recognition is an arm of the shared fold, so this package matches on an `Action` nowhere), D8
 (host-effect atomicity is two-phase staging), D9 (the handler declares where its results land; a
-tree-declared result target is refused).
+tree-declared result target is refused), D10 (a query reader's expectation is declared, by the fields
+the reading node already carries).
 
 ## Licence
 

@@ -55,6 +55,28 @@ refusing it wholesale would be stricter than the interpreter's own behaviour. A 
 rather not start at all reaches for `BoundedDriver.initStrict` / `Program.mkBoundedStrict`, which
 check first and return every finding rather than the first.
 
+## Asking before running, the other half: the query-schema walk
+
+A handler declares a query as a source plus an ordered `Transform` pipeline, and lands the result in a
+named slot that some node reads. `Schema.ofTransform` derives that pipeline's **output schema from its
+input schema without evaluating anything** — the same move the demanded projection makes, one layer
+down, and possible for the same reason: the verb set is a closed DU, the expression algebra is a closed
+DU, and neither carries code.
+
+`QuerySchema` turns that into a verdict. It harvests each reading node's declared column names — a
+chart's axes, a grid column's field — and reports the columns a query provably fails to produce, the
+steps that read a column their input provably lacks, and the unions whose sides provably disagree. A
+placement wires it into an opt-in strict construction (the server placement's `initStrict`), so an
+unsatisfiable handler is refused **before** the untrusted tree runs.
+
+**It refuses only what it can prove, and is explicit about the rest.** `SchemaKnowledge` distinguishes a
+closed column set — the only one from which "that column is absent" follows — from one that is merely
+known to *contain* certain columns. A derived column's type comes from the data, a pivot's value columns
+are *named* by the data, and a named source's schema is whatever the host declared. Each of those is
+reported as data on the report, never as a finding: a check that fired on ordinary correct trees is one
+people learn to scroll past. Which side of that line the expectation and the source schemas fall, and
+why, is [`DECISIONS.md`](../../DECISIONS.md) **D10**.
+
 ## Design commitments
 
 The algebra's shape — a pipeline core, with richer control structure expressed as vocabulary atop it
