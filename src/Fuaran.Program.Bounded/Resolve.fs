@@ -24,6 +24,14 @@ open Fuaran.UI.Renderer.BindingResolver
 //  can see and patch. A hand-authored loop sidesteps this by baking state into
 //  the tree in its `view`; the bounded path has no `view`, so it resolves.
 //
+//  ── The base tree is FIXED (specified — §10.5) ──────────────────────────────
+//  `resolveTree` is applied to the tree the program started from, never to the
+//  previous step's output. Folding a step's substitutions into the next step's
+//  input makes an earlier resolution unrecoverable, and the store stops being
+//  the only thing carrying state. The corpus pins it with a multi-event
+//  scenario (`fixed-base-reresolution`) — the one shape that tells the two
+//  readings apart, since every one-event scenario passes under both.
+//
 //  ── Coverage floor (documented) ─────────────────────────────────────────────
 //  `resolveTree` covers the state-reactive Display / Input / Layout kinds
 //  generators actually use for live content (Heading / Markdown / Badge / Metric
@@ -34,6 +42,15 @@ open Fuaran.UI.Renderer.BindingResolver
 //  state change inside them won't patch yet (the documented coarse floor; the
 //  follow-on extends the per-kind coverage). Containers recurse generically via
 //  `Introspect.getChildren` / `withChildren`, so structure is never lost.
+//
+//  §10.5 rules that arrangement normative: a floor EXISTS and is neither
+//  everything nor nothing — which is the part a host cannot derive from the text
+//  — while its membership is enumerated by the corpus's driver-semantics
+//  scenarios rather than tabulated in a document that does not own the tree
+//  vocabulary. A scenario recording a PASS-THROUGH is as binding as one
+//  recording a resolution, so widening this floor moves a recorded expectation
+//  in the same change-set. For a kind no scenario reaches, the floor above is
+//  this host's own and this paragraph is the declaration §10.5 asks for.
 // ============================================================================
 
 /// Substitute a binding with `Binding.Static (resolved value)` when it resolves;

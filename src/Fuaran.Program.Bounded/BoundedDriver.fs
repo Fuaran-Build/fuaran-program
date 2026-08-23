@@ -188,6 +188,12 @@ let private rejected (r: BoundedReject) : BoundedStepOutput =
 /// G1 rejection or a G2 budget breach the session is returned UNCHANGED with
 /// `Rejected = Some _` and no patches (default-deny by shape; no hang).
 ///
+/// `Rejected` is the EVENT-level refusal and nothing else (§10.5) — the trust
+/// boundary or a budget declining the event itself. An arm that declines inside
+/// an admitted event (a reserved state key, an unsafe destination) leaves it
+/// `None` and shows as an ABSENT effect, which is what keeps "this surface was
+/// rejected" and "this surface was inert" two different reports.
+///
 /// G1 validates against the CURRENT RESOLVED tree so a `Select` whose options
 /// resolved to `Binding.Static` gets a precise bounds check; the resolved tree's
 /// `Action` handlers are untouched by resolution, so action resolution is
@@ -196,7 +202,13 @@ let step (session: BoundedSession) (ev: LiveEvent) : BoundedSession * BoundedSte
     match Validation.validate session.Services.CanDispatch session.Resolved ev with
     | Error reason -> session, rejected (Gate reason)
     | Ok { Action = None } ->
-        // Legitimate but no resolvable action — no state change.
+        // Legitimate but no resolvable action — no state change, and per §10.5
+        // deliberately NOT a refusal: the event was admitted and the fold found
+        // nothing to run, which is a different fact from a rejected surface. It
+        // is the ordinary outcome for a control whose behaviour rides a closure
+        // slot, since the wire carries no closure and a decoder must not invent
+        // one — inert at every host, whatever mechanism each uses to model the
+        // erasure.
         session,
         { Patches = []
           Effects = []

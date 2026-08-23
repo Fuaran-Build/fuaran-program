@@ -226,7 +226,12 @@ module BoundedActions =
             // The host-reserved key namespace is closed on the bounded path too.
             // This loop's whole premise is that the tree is untrusted, so a
             // generated tree writing `host.<x>` is exactly the case the
-            // namespace exists for.
+            // namespace exists for. Specified — §4.3 rules the reservation a
+            // property of the NAMESPACE, binding every placement, since
+            // untrustedness does not vary by which loop is running. Only the
+            // refusal's shape is placement-specific: this is a legitimate
+            // document whose action does nothing, not a decode failure, and per
+            // §10.5 it leaves the step's event-level refusal unset.
             (if Fuaran.UI.Renderer.StateKeys.isHostReserved key then
                  refused
                      nodeId
@@ -265,6 +270,14 @@ module BoundedActions =
         // navigates with its own router, so an unsafe scheme emitted here would
         // land as a client-side sink. A refusal emits no effect and one
         // diagnostic, never a silently-neutered `about:blank`.
+        //
+        // The PREDICATE is not this host's to choose: it is the tree wire
+        // specification's renderer URL floor, which names the navigation
+        // destination among the slots it governs and reaches the program wire as
+        // a referenced value (§3). §10.5 adds only the RESPONSE — decline the
+        // action, because a loop emits no markup for that floor's own rejection
+        // rule to govern. `sanitizeUrl` is that floor and nothing stricter; a
+        // host adding strictness must declare the divergence.
         | Action.Navigate route ->
             (match Fuaran.UI.Renderer.Sanitize.sanitizeUrl route with
              | Some safe ->
@@ -282,6 +295,12 @@ module BoundedActions =
             // The `onRead` closure (3rd field) is the inert decode sentinel — NOT
             // invoked here. The host reads the browser-held blob and round-trips
             // the body back as a fresh `file-read` LiveEvent.
+            //
+            // The emitted `nodeId` is the node the EVENT came from, which §5.2
+            // now states: the surface holds the selected file against that node,
+            // so an identity taken from the action would name something it
+            // cannot resolve — and the returning event closes on the identity
+            // the read opened on.
             let enc =
                 match encoding with
                 | FileReadEncoding.Text -> "Text"

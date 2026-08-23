@@ -71,6 +71,26 @@ let private chainFolds =
               bound "readout" "msg" "init" ])
         [ click "set" ]
 
+/// Re-resolution is against the FIXED tree the program started from, never the
+/// previous step's output (§10.5). Two writes to one key, one per EVENT — which
+/// is the only shape that can tell the two readings apart.
+///
+/// Under the fixed-base reading the readout reads `init`, then `alpha`, then
+/// `beta`. Under the fold-your-own-output reading the first step resolves the
+/// binding away, so the second event has no binding left to reach and the
+/// readout stays `alpha` — a divergence at step 2, on the `tree` member.
+///
+/// Every one-event scenario beside it passes under BOTH readings, which is why
+/// this one exists: the choice is invisible until a second event arrives.
+let private fixedBaseReresolution =
+    fixture
+        "fixed-base-reresolution"
+        (dash
+            [ button "alpha" (Action.SetState("msg", Some(jstr "alpha"), None))
+              button "beta" (Action.SetState("msg", Some(jstr "beta"), None))
+              bound "readout" "msg" "init" ])
+        [ click "alpha"; click "beta" ]
+
 /// The documented no-ops. Each is inert on the bounded path BY DESIGN, and both
 /// placements must be inert in the same way — a placement that quietly grew a
 /// `Notify` implementation would diverge here.
@@ -188,6 +208,7 @@ let private nestedHandlerCall =
 let all: Fixture list =
     [ setStateRebinds
       chainFolds
+      fixedBaseReresolution
       documentedNoOps
       closureFreeEffects
       refusedNavigate
