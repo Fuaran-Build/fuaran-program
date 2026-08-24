@@ -74,9 +74,10 @@ let private runServerLogicPlacement
     (services: ServerServices)
     (fixture: Fixture)
     : Result<StepObservation list, string> =
-    match JsonDecode.decodeNode fixture.TreeJson with
-    | Error err -> Error(sprintf "decode failed: %A" err)
-    | Ok wire ->
+    match JsonDecode.decodeNode fixture.TreeJson, registryFor fixture.HostPolicy with
+    | Error err, _ -> Error(sprintf "decode failed: %A" err)
+    | _, Error e -> Error(sprintf "%s: %s" fixture.Name e)
+    | Ok wire, Ok registry ->
         let session = ServerSession.init services empty wire
 
         let observations =
@@ -90,14 +91,21 @@ let private runServerLogicPlacement
                     Some
                         { ResolvedJson = CanonicalJson.encodeNode out.Resolved
                           Effects = out.ClientEffects |> List.map ClientEffect.encode
-                          Refused = out.Rejected.IsSome })
+                          Refused = out.Rejected.IsSome
+                          // Like the bounded driver, this placement does not
+                          // PERFORM a client effect — it ships one to the
+                          // surface that will — so the seam is applied here, to
+                          // what the loop emitted, through the same decision
+                          // procedure every other placement uses.
+                          Denials = observeDenials fixture.HostPolicy registry out.ClientEffects })
                 (session, None)
             |> List.choose snd
 
         Ok(
             { ResolvedJson = CanonicalJson.encodeNode session.Resolved
               Effects = []
-              Refused = false }
+              Refused = false
+              Denials = observeDenials fixture.HostPolicy registry [] }
             :: observations
         )
 

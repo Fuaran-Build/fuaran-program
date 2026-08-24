@@ -93,6 +93,17 @@ let tests =
                                 onDisk.Events
                                 seed.Events
                                 $"{seed.Name}: the on-disk events.json is stale — re-run --emit-fixtures"
+
+                            // The policy is the one part of a scenario that
+                            // lives in the manifest rather than in the three
+                            // files, so nothing above would catch it drifting —
+                            // and a seed emitted under one policy against a
+                            // manifest naming another produces a trace no host
+                            // can reproduce, with every file looking correct.
+                            Expect.equal
+                                onDisk.HostPolicy
+                                seed.HostPolicy
+                                $"{seed.Name}: the manifest's hostPolicy and the seed's disagree — the recorded denials were minted under a policy the corpus does not name"
                     } ]
 
           test "the comparison DETECTS a divergence (the probe, verified)" {
@@ -101,18 +112,22 @@ let tests =
               let a =
                   [ { ResolvedJson = "same"
                       Effects = []
-                      Refused = false }
+                      Refused = false
+                      Denials = None }
                     { ResolvedJson = "left"
                       Effects = []
-                      Refused = false } ]
+                      Refused = false
+                      Denials = None } ]
 
               let b =
                   [ { ResolvedJson = "same"
                       Effects = []
-                      Refused = false }
+                      Refused = false
+                      Denials = None }
                     { ResolvedJson = "right"
                       Effects = []
-                      Refused = false } ]
+                      Refused = false
+                      Denials = None } ]
 
               match compare "probe" "A" a "B" b with
               | None -> failtest "the comparison missed a divergence it was handed"
@@ -125,9 +140,56 @@ let tests =
               let a =
                   [ { ResolvedJson = "x"
                       Effects = []
-                      Refused = false } ]
+                      Refused = false
+                      Denials = None } ]
 
               Expect.isSome (compare "probe" "A" a "B" []) "a placement that stopped early is a divergence"
+          }
+
+          test "a host that PERFORMS the denied effect fails exactly the scenario that records it" {
+              // The go-red proof for the denials member, measured by
+              // perturbation rather than asserted.
+              //
+              // The perturbation is a HOST, not a fixture: the claim under test
+              // is that a host which sends the effect where this policy forbids
+              // would be caught, and the only faithful way to stage that is to
+              // run the scenario under a host that does. So the scenario is
+              // re-run with its policy replaced by the permissive one — which is
+              // precisely "a host that performs the denied effect" — and the
+              // comparison must fail, on `denials` and on nothing else.
+              //
+              // The second half matters as much as the first. Every other member
+              // is identical between the two hosts, and that is the finding
+              // rather than a detail: it is why the family could not see this
+              // failure before, and it is why a divergence reported anywhere but
+              // `denials` would mean the probe had staged something else.
+              match fixtures |> List.tryFind (fun f -> f.HostPolicy.IsSome) with
+              | None ->
+                  failtest
+                      "no scenario declares a hostPolicy, so this probe stages nothing — the denials member is unexercised"
+              | Some scenario ->
+                  let permissiveHost = { scenario with HostPolicy = None }
+
+                  match runClientPlacement scenario, runClientPlacement permissiveHost with
+                  | Error e, _
+                  | _, Error e -> failtestf "%s" e
+                  | Ok declined, Ok performed ->
+                      let stripSeam (steps: StepObservation list) =
+                          steps |> List.map (fun s -> { s with Denials = None })
+
+                      Expect.isNone
+                          (compare scenario.Name "declining" (stripSeam declined) "performing" (stripSeam performed))
+                          "the two hosts fold IDENTICALLY — which is the finding: before denials, nothing here could tell them apart"
+
+                      // And with the seam back in view, they must not.
+                      let observedPerformed =
+                          performed |> List.map (fun s -> { s with Denials = Some [] })
+
+                      match compare scenario.Name "expected" declined "performing" observedPerformed with
+                      | None ->
+                          failtest
+                              "a host that performed the denied effect passed — this scenario cannot detect the thing it exists to detect"
+                      | Some d -> Expect.equal d.Field "denials" "and it diverged on the denials, not on something else"
           }
 
           test "the expectation is compared SEMANTICALLY, not byte-for-byte" {

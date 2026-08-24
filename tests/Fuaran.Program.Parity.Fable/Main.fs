@@ -2,6 +2,7 @@ module Fuaran.Program.Parity.Fable.Main
 
 open Fable.Core
 open Fable.Core.JsInterop
+open Fuaran.Program.Runtime
 open Fuaran.Program.Parity.Runner
 open Fuaran.Program.Parity
 
@@ -53,13 +54,37 @@ let private parseEvents (json: string) : ScriptedEvent list =
           Event = el?event
           Payload = keys |> Array.map (fun k -> k, unbox<string> payload?(k)) |> Map.ofArray })
 
-let private parseExpectation (json: string) : StepObservation list =
+/// Read one recorded denial into this host's own vocabulary — the same
+/// obligation the .NET loader has, for the same reason: a harness holding the
+/// recorded bytes beside its own would compare strings and assert nothing about
+/// whether this host RECOGNISES §5.3's vocabulary.
+let private parseDenial (name: string) (index: int) (d: obj) : EffectDenial =
+    let stringMember (key: string) : string option =
+        let v: obj = d?(key)
+        if isNullOrUndefined v then None else Some(unbox<string> v)
+
+    let arm =
+        match stringMember "$type" with
+        | Some t -> t
+        | None -> failwithf "%s: step %d records a denial with no '$type'" name index
+
+    let capability =
+        match stringMember "capability" with
+        | Some c -> c
+        | None -> failwithf "%s: step %d records a denial with no 'capability'" name index
+
+    match EffectDenial.ofWire arm capability (stringMember "origin") with
+    | Ok denial -> denial
+    | Error message -> failwithf "%s: step %d: %s" name index message
+
+let private parseExpectation (name: string) (json: string) : StepObservation list =
     let arr: obj array = JS.JSON.parse json |> unbox
 
     arr
     |> Array.toList
-    |> List.map (fun el ->
+    |> List.mapi (fun index el ->
         let effects: string array = el?effects |> unbox
+        let recordedDenials: obj = el?denials
 
         // The tree is an embedded DOCUMENT. Re-serialising it here hands the
         // decoder the right MEANING, never the right bytes — which is the
@@ -67,7 +92,17 @@ let private parseExpectation (json: string) : StepObservation list =
         // writer is not the corpus's, and nothing downstream cares.
         { ResolvedJson = JS.JSON.stringify (el?tree)
           Effects = List.ofArray effects
-          Refused = el?refused })
+          Refused = el?refused
+          // Absent and empty are different facts (§10.3), which is exactly the
+          // distinction `isNullOrUndefined` is here to preserve: an absent
+          // member means the seam was unobserved, an empty array means it was
+          // observed and declined nothing.
+          Denials =
+            if isNullOrUndefined recordedDenials then
+                None
+            else
+                let ds: obj array = unbox recordedDenials
+                Some(ds |> Array.toList |> List.map (parseDenial name index)) })
 
 /// The manifest's driver-semantics enumeration. Reading the index rather than
 /// the directory is what makes "every scenario the corpus declares was run" a
@@ -89,11 +124,18 @@ let private loadScenarios (fixturesRoot: string) : Fixture list =
     |> Array.toList
     |> List.map (fun entry ->
         let files: obj = entry?files
+        let name: string = entry?name
+        let policy: obj = entry?hostPolicy
 
-        { Name = entry?name
+        { Name = name
           TreeJson = read (fixturesRoot + "/" + unbox<string> files?tree)
           Events = parseEvents (read (fixturesRoot + "/" + unbox<string> files?events))
-          Expected = parseExpectation (read (fixturesRoot + "/" + unbox<string> files?expectation)) })
+          Expected = parseExpectation name (read (fixturesRoot + "/" + unbox<string> files?expectation))
+          HostPolicy =
+            if isNullOrUndefined policy then
+                None
+            else
+                Some(unbox<string> policy) })
 
 let private run () =
     let root = if argv.Length > 0 then argv.[0] else "../wire-fixtures"

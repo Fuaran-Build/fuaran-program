@@ -1,5 +1,6 @@
 namespace Fuaran.Program.Runtime
 
+open Fuaran.Core
 open Fuaran.UI.ServerDriven
 
 // ============================================================================
@@ -356,6 +357,56 @@ type EffectDenial =
     | DestinationRefused of effect: string * origin: string
 
 module EffectDenial =
+
+    // ─── The wire projection ─────────────────────────────────────────────────
+    //
+    //  The program wire specification's §5.3 declares the denial as a document
+    //  with TWO arms and an optional `origin`, and this host's DU has three
+    //  arms. That is not a mismatch to reconcile away: the specification's
+    //  `GateRefused` says *this host has the capability and refused this use of
+    //  it*, which is exactly what both `GateRefused` and `DestinationRefused`
+    //  say here — they differ in the GROUND, and the ground is what `origin`
+    //  carries. So the projection is total in both directions, and the three
+    //  local arms survive because the seam's own reader wants them apart.
+    //
+    //  The alternative — a third arm on the wire — was available and reads more
+    //  naturally. It is a breaking change to a closed vocabulary, and the fact
+    //  it would carry is one `GateRefused` already carries; §11.1 records the
+    //  arithmetic.
+
+    /// The specification's §5.3 document for this denial, canonically encoded.
+    /// `$type` first, then `capability`, then `origin` where the refusal's
+    /// ground was a destination — which is Ordinal order as well as the order
+    /// the specification's table lists them.
+    let encodeWire (d: EffectDenial) : string =
+        let doc =
+            match d with
+            | EffectDenial.Unregistered name -> Canon.typed "Unregistered" [ "capability", JStr name ]
+            | EffectDenial.GateRefused name -> Canon.typed "GateRefused" [ "capability", JStr name ]
+            | EffectDenial.DestinationRefused(name, origin) ->
+                Canon.typed "GateRefused" [ "capability", JStr name; "origin", JStr origin ]
+
+        Canon.render doc
+
+    /// Read a denial back from the three positions §5.3 declares — the arm, the
+    /// capability, and the origin where one is present.
+    ///
+    /// **Reading rather than diffing bytes is the point.** A conformance harness
+    /// comparing recorded denials could hold two opaque strings side by side and
+    /// learn nothing about whether this host RECOGNISES the vocabulary; going
+    /// through this function means an arm outside §5.3, or an `origin` on an arm
+    /// that never consulted a destination, fails to load rather than passing
+    /// through as a value somebody expected to be honoured.
+    let ofWire (arm: string) (capability: string) (origin: string option) : Result<EffectDenial, string> =
+        match arm, origin with
+        | "Unregistered", None -> Ok(EffectDenial.Unregistered capability)
+        | "Unregistered", Some _ ->
+            Error
+                "an Unregistered denial carries an origin: the capability was never reachable, so no destination was ever consulted (§5.3)"
+        | "GateRefused", None -> Ok(EffectDenial.GateRefused capability)
+        | "GateRefused", Some o -> Ok(EffectDenial.DestinationRefused(capability, o))
+        | other, _ -> Error(sprintf "'%s' is not an arm of the denial vocabulary (§5.3)" other)
+
     /// Human-readable, log-safe description. Carries the effect's DISCRIMINATOR
     /// only, never its payload — a denied `Navigate` must not log the route it
     /// wanted, and a denied `WriteToClipboard` must not log the text. The
@@ -453,8 +504,13 @@ module EffectRegistry =
     let registered (registry: EffectRegistry) : string list =
         registry.Performers |> Map.toList |> List.map fst
 
-    /// Perform one effect, or record why not. The order is load-bearing at
-    /// three points, and each one is a decision rather than an accident:
+    /// Decide one effect: `None` permits it, `Some denial` declines it and says
+    /// why. Pure — it performs nothing and records nothing, which is what lets
+    /// the same decision serve `perform` (which acts on it) and a conformance
+    /// harness (which compares it).
+    ///
+    /// The order is load-bearing at three points, and each one is a decision
+    /// rather than an accident:
     ///
     ///   1. registration, then policy, then the performer — no performer
     ///      side-effect can precede a policy decision, because the performer is
@@ -468,18 +524,50 @@ module EffectRegistry =
     ///      refused it" and "the destination was undeclared" are answers to
     ///      different questions, and emitting both would make a log read as two
     ///      attempts.
-    let perform (registry: EffectRegistry) (effect: ClientEffect) : unit =
+    let decide (registry: EffectRegistry) (effect: ClientEffect) : EffectDenial option =
         let name = ClientEffect.kind effect
 
         match Map.tryFind name registry.Performers with
-        | None -> registry.OnDenied(EffectDenial.Unregistered name)
-        | Some performer ->
+        | None -> Some(EffectDenial.Unregistered name)
+        | Some _ ->
             if not (registry.Gate name) then
-                registry.OnDenied(EffectDenial.GateRefused name)
+                Some(EffectDenial.GateRefused name)
             else
                 let destination = ClientEffectDestination.destinationOf effect
 
                 if EgressPolicy.permits registry.Egress name destination then
-                    performer effect
+                    None
                 else
-                    registry.OnDenied(EffectDenial.DestinationRefused(name, EffectDestination.describe destination))
+                    Some(EffectDenial.DestinationRefused(name, EffectDestination.describe destination))
+
+    let perform (registry: EffectRegistry) (effect: ClientEffect) : unit =
+        match decide registry effect with
+        | Some denial -> registry.OnDenied denial
+        | None ->
+            match Map.tryFind (ClientEffect.kind effect) registry.Performers with
+            | Some performer -> performer effect
+            // Unreachable: `decide` returns `None` only where a performer was
+            // found. Matched rather than asserted because the alternative is an
+            // exception in a loop whose whole premise is totality.
+            | None -> ()
+
+    /// Perform a step's effects in order and return the denials, in order.
+    ///
+    /// The list is what a caller needs and `perform` alone cannot give it: the
+    /// sink is a side-effect a host wires for logging, and a conformance harness
+    /// comparing two placements needs the refusals as a VALUE. One decision per
+    /// effect either way — this is `decide` and `perform` composed, not a second
+    /// walk that could drift from the first.
+    let performAll (registry: EffectRegistry) (effects: ClientEffect list) : EffectDenial list =
+        effects
+        |> List.choose (fun effect ->
+            match decide registry effect with
+            | Some denial ->
+                registry.OnDenied denial
+                Some denial
+            | None ->
+                match Map.tryFind (ClientEffect.kind effect) registry.Performers with
+                | Some performer -> performer effect
+                | None -> ()
+
+                None)

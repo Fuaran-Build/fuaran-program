@@ -8,6 +8,7 @@ module Fuaran.Program.Parity.FixtureIo
 open System
 open System.IO
 open System.Text.Json
+open Fuaran.Program.Runtime
 open Fuaran.Program.Parity.Runner
 
 // ============================================================================
@@ -80,27 +81,71 @@ let private readEvents (json: string) : ScriptedEvent list =
                   |> Map.ofList
               | _ -> Map.empty } ]
 
-let private readExpectation (json: string) : StepObservation list =
+/// Read one recorded denial into this host's own vocabulary.
+///
+/// **Decoded, never carried as an opaque value.** A harness that held the
+/// recorded bytes beside its own would compare two strings and assert nothing
+/// about whether this host RECOGNISES §5.3 — so an arm outside the vocabulary,
+/// or an `origin` on one that never consulted a destination, fails to load here
+/// rather than travelling on as something somebody expected to be honoured.
+let private readDenial (name: string) (index: int) (el: JsonElement) : EffectDenial =
+    let stringMember (key: string) =
+        match el.TryGetProperty key with
+        | true, v when v.ValueKind = JsonValueKind.String -> Some(v.GetString())
+        | true, _ -> failwithf "%s: step %d records a denial whose '%s' is not a string" name index key
+        | _ -> None
+
+    let arm =
+        match stringMember "$type" with
+        | Some t -> t
+        | None -> failwithf "%s: step %d records a denial with no '$type'" name index
+
+    let capability =
+        match stringMember "capability" with
+        | Some c -> c
+        | None -> failwithf "%s: step %d records a denial with no 'capability'" name index
+
+    match EffectDenial.ofWire arm capability (stringMember "origin") with
+    | Ok denial -> denial
+    | Error message -> failwithf "%s: step %d: %s" name index message
+
+let private readExpectation (name: string) (json: string) : StepObservation list =
     use doc = JsonDocument.Parse json
 
-    [ for el in doc.RootElement.EnumerateArray() ->
+    [ for index, el in doc.RootElement.EnumerateArray() |> Seq.indexed ->
           // The tree is an embedded DOCUMENT, not a string of somebody's bytes.
           // Taking its raw text hands the decoder a document with the right
           // MEANING; `normaliseExpectation` is what puts it into this host's own
           // bytes before anything is compared.
           { ResolvedJson = el.GetProperty("tree").GetRawText()
             Effects = [ for e in el.GetProperty("effects").EnumerateArray() -> e.GetString() ]
-            Refused = el.GetProperty("refused").GetBoolean() } ]
+            Refused = el.GetProperty("refused").GetBoolean()
+            // ABSENT and EMPTY are different facts here (§10.3): absent means
+            // the seam was not observed, empty means it was and declined
+            // nothing. So the member is read as an option rather than defaulted
+            // to a list, which is the one place a defaulting reader would turn
+            // a silence into a claim.
+            Denials =
+              match el.TryGetProperty "denials" with
+              | true, arr -> Some [ for d in arr.EnumerateArray() -> readDenial name index d ]
+              | _ -> None } ]
 
 /// One scenario as the corpus manifest declares it. The host reads the
 /// manifest's enumeration and nothing else.
 type ScenarioEntry =
-    { Name: string
-      Dir: string
-      Tree: string
-      Events: string
-      Expectation: string
-      Steps: int }
+    {
+        Name: string
+        Dir: string
+        Tree: string
+        Events: string
+        Expectation: string
+        Steps: int
+        /// The §10.3 host-policy NAME, where the scenario declares one. Read from
+        /// the manifest because that is where the corpus puts it — a policy is a
+        /// fact about a host, so the index names it and every host constructs what
+        /// the name denotes.
+        HostPolicy: string option
+    }
 
 /// The manifest's driver-semantics enumeration, in declared order.
 let scenarios (fixturesRoot: string) : ScenarioEntry list =
@@ -122,7 +167,11 @@ let scenarios (fixturesRoot: string) : ScenarioEntry list =
                 Tree = files.GetProperty("tree").GetString()
                 Events = files.GetProperty("events").GetString()
                 Expectation = files.GetProperty("expectation").GetString()
-                Steps = el.GetProperty("steps").GetInt32() } ]
+                Steps = el.GetProperty("steps").GetInt32()
+                HostPolicy =
+                  match el.TryGetProperty "hostPolicy" with
+                  | true, p -> Some(p.GetString())
+                  | _ -> None } ]
 
 /// Load every scenario the manifest enumerates. A file the manifest names but
 /// the tree does not carry is a failure, not an omission.
@@ -140,7 +189,8 @@ let load (fixturesRoot: string) : Fixture list =
         { Name = entry.Name
           TreeJson = read entry.Tree
           Events = readEvents (read entry.Events)
-          Expected = readExpectation (read entry.Expectation) })
+          Expected = readExpectation entry.Name (read entry.Expectation)
+          HostPolicy = entry.HostPolicy })
 
 // ─── Writing: the `--emit-fixtures` path ─────────────────────────────────────
 
@@ -221,13 +271,29 @@ let writeExpectation (fixturesRoot: string) (fixture: Fixture) (observations: St
         |> List.map (fun o ->
             let effects = o.Effects |> List.map quoted |> String.concat ", "
 
+            // The denials are spliced in as DOCUMENTS, unlike the effects beside
+            // them and for the opposite reason: this specification owns their
+            // envelope outright, so there is no exception a JSON writer could
+            // erase and nothing to protect by carrying them as strings. An
+            // OMITTED member and an empty array are different facts (§10.3), so
+            // `None` writes no member at all rather than `[]`.
+            let denials =
+                match o.Denials with
+                | None -> []
+                | Some list ->
+                    [ sprintf "    \"denials\": [%s]" (list |> List.map EffectDenial.encodeWire |> String.concat ", ") ]
+
             String.concat
                 "\n"
-                [ "  {"
-                  sprintf "    \"tree\": %s," o.ResolvedJson
-                  sprintf "    \"effects\": [%s]," effects
-                  sprintf "    \"refused\": %s" (if o.Refused then "true" else "false")
-                  "  }" ])
+                ([ "  {"
+                   sprintf "    \"tree\": %s," o.ResolvedJson
+                   sprintf "    \"effects\": [%s]," effects
+                   sprintf
+                       "    \"refused\": %s%s"
+                       (if o.Refused then "true" else "false")
+                       (if denials.IsEmpty then "" else ",") ]
+                 @ denials
+                 @ [ "  }" ]))
         |> String.concat ",\n"
 
     writeFile (Path.Combine(dir, "expectation.json")) ("[\n" + body + "\n]")

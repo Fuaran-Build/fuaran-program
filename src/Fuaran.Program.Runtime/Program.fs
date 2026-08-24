@@ -99,9 +99,25 @@ type StepOutput =
     {
         /// The resolved tree after this step (unchanged on a refusal).
         Resolved: Node<obj>
-        /// Closure-free effects performed this step, in order. Reported as well
-        /// as performed so a test can assert on them without a performer.
+        /// Closure-free effects this step REACHED, in order. Reported as well as
+        /// performed so a test can assert on them without a performer — and
+        /// reported whether or not the host's policy then permitted them, which
+        /// is what keeps this member a record of the fold rather than of the
+        /// seam.
         Effects: ClientEffect list
+        /// The effects this host's registry DECLINED, in order, each naming the
+        /// capability it declined and — where the ground was the destination —
+        /// the origin it declined it for.
+        ///
+        /// Beside `Effects` rather than subtracted from it, deliberately. The
+        /// two members answer different questions: which arm the fold reached
+        /// with which values, and what this host then did about it. A host that
+        /// declines every effect folds identically to one that performs them
+        /// all, so collapsing the pair would report a policy decision as a fold
+        /// difference — and dropping the denial instead would leave "nothing
+        /// happened" and "this host refused that" indistinguishable in the one
+        /// record a caller has.
+        Denials: EffectDenial list
         Rejected: ProgramReject option
         Diagnostics: BoundedDiagnostic list
     }
@@ -187,6 +203,7 @@ module Program =
         program,
         { Resolved = program.Resolved
           Effects = []
+          Denials = []
           Rejected = Some r
           Diagnostics = [] }
 
@@ -207,6 +224,7 @@ module Program =
             program,
             { Resolved = program.Resolved
               Effects = []
+              Denials = []
               Rejected = None
               Diagnostics = [] }
         | Ok { Action = Some action } ->
@@ -233,14 +251,18 @@ module Program =
 
                 program.Services.Render newResolved
 
-                for effect in outcome.Effects do
-                    EffectRegistry.perform program.Services.Effects effect
+                // One decision per effect, performed and REPORTED. The denials
+                // are a value rather than only a sink firing, because a caller
+                // comparing two placements needs the refusals it can hold, and
+                // the sink is a host's logging seam rather than an observation.
+                let denials = EffectRegistry.performAll program.Services.Effects outcome.Effects
 
                 { program with
                     Store = outcome.Store
                     Resolved = newResolved },
                 { Resolved = newResolved
                   Effects = outcome.Effects
+                  Denials = denials
                   Rejected = None
                   Diagnostics = outcome.Diagnostics }
 
