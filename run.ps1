@@ -1,6 +1,6 @@
 #Requires -Version 7.0
 # fuaran-program — "drop into the repo, run one command, the thing works".
-# Stage-0 shape (library-only): tool restore -> format -> build -> test [-> pack].
+# Stage-0 shape (library-only): tool restore -> format -> pins -> build -> test [-> pack].
 [CmdletBinding()]
 param(
     [switch] $SkipFormat,
@@ -9,6 +9,11 @@ param(
     # Skip the Fable parity leg (needs node + the Fable tool). The .NET legs
     # still run — a partial gate is honest; a silently-skipped one is not.
     [switch] $SkipFable,
+    # Skip the pin preflight. It reaches the package registry; an unreachable
+    # one is already reported as unverified rather than failed, so this is for
+    # deliberately working against an unpublished local pack, not for going
+    # offline.
+    [switch] $SkipPins,
     # Pack the shipping packages into the shared local feed for downstream
     # consumption. Off by default: packing is an inner-loop publication step,
     # not part of the verify gate.
@@ -22,6 +27,17 @@ if (-not $SkipFormat) {
     dotnet tool restore
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     dotnet fantomas src tests
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
+
+if (-not $SkipPins) {
+    # BEFORE the build, deliberately. A pin naming a version no source serves is
+    # not an error to NuGet — it is NU1603, a warning, after which the nearest
+    # higher version is substituted and the build proceeds against a package
+    # nobody chose. Downstream that float has already presented as four
+    # assembly-reference errors in the Fable leg, naming its cause nowhere. Run
+    # first, so the one-line diagnosis arrives before the misdirection does.
+    & (Join-Path $PSScriptRoot 'tools/check-pins.ps1')
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 

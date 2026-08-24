@@ -220,6 +220,13 @@ let tests =
                                 XField = "x"
                                 YFields = [ "y" ]
                                 Title = None
+                                ValueFormat = None
+                                XTitle = None
+                                YTitle = None
+                                Subtitle = None
+                                LegendPosition = None
+                                DataLabels = None
+                                XScale = None
                                 OnPointClick = None }
                           ) }
 

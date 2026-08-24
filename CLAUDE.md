@@ -72,8 +72,9 @@ fuaran-program/
 ├── samples/client-program/                # the browser placement, wired to a real host
 ├── tests/                                 # one Expecto assembly runner per suite (see tests/README.md)
 ├── Fuaran.Program.slnx
+├── tools/check-pins.ps1                   # preflight: every Fuaran.* pin resolves EXACTLY
 ├── pack-all.ps1                           # pack the producers into the shared local feed
-└── run.ps1                                # tool restore -> format -> build -> test [-> pack]
+└── run.ps1                                # tool restore -> format -> pins -> build -> test [-> pack]
 ```
 
 Every test project is its own Expecto assembly runner; `run.ps1` invokes each in turn, then runs the
@@ -86,7 +87,7 @@ suite reads it and names the exact path it expects; `FUARAN_PROGRAM_SPEC` overri
 ## Build pipeline
 
 ```powershell
-pwsh ./run.ps1              # format -> build -> test (the pre-commit gate)
+pwsh ./run.ps1              # format -> pins -> build -> test (the pre-commit gate)
 pwsh ./run.ps1 -SkipFormat  # fast iteration
 ```
 

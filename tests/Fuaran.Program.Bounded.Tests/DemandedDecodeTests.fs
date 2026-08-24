@@ -404,6 +404,31 @@ let private behaviour: Test list =
           Expect.equal (refusal "null").Defect DemandedDefect.NotJson "a bare root"
       }
 
+      test "a control character in a name survives the round trip rather than breaking the document" {
+          // The encoder's escape set covered `\` `"` `\n` `\r` `\t` and nothing
+          // else, so any OTHER control character went to the wire raw — and a raw
+          // control byte inside a JSON string is invalid JSON. The document this
+          // encoder produced was then refused by this decoder, which is the one
+          // failure a self-describing projection must not have: the producer and
+          // the reader are the same repository.
+          //
+          // Nothing this encoder writes carries a control character today, so
+          // this moved no existing byte. It closes the case where a host names
+          // one, which nothing structurally prevents.
+          let hostile = dash [ btn "b" (Action.Call("/api/\u0001x\u001F", None, None)) ]
+          let json = Demanded.encode (Demanded.ofTree hostile)
+
+          Expect.stringContains json "\\u0001" "U+0001 escapes rather than going raw"
+          Expect.stringContains json "\\u001f" "U+001F likewise"
+
+          Expect.isFalse
+              (json |> Seq.exists (fun c -> c < ' '))
+              "and no control character reaches the wire raw, whatever its name"
+
+          let back = decoded json
+          Expect.equal back (Demanded.ofTree hostile) "the document its own reader accepts, unchanged"
+      }
+
       test "a document whose lists are not canonical is refused, naming the list" {
           // Two documents comparing by value is the property this encoding
           // provides, and an unsorted or duplicated list is a document that does

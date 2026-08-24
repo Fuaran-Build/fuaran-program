@@ -764,8 +764,32 @@ module Demanded =
     [<Literal>]
     let Version = 3
 
+    /// The three common control characters keep their short escapes; every other
+    /// control character (U+0000–U+001F) is escaped as `\u00XX`. A raw control
+    /// byte inside a JSON string is invalid JSON, so this is a validity
+    /// requirement rather than a style choice: the five-character escape set this
+    /// replaced could emit a document its own decoder then refused as not-JSON,
+    /// which is the one failure a self-describing projection must not have.
+    ///
+    /// No name this encoder writes carries a control character today — the
+    /// projection's strings are effect names, host-call names, state namespaces
+    /// and handler ids — so this moves no byte of any existing document. It
+    /// closes the case where a host registers one, which nothing structurally
+    /// prevents.
     let private esc (s: string) : string =
-        s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n").Replace("\r", "\\r").Replace("\t", "\\t")
+        let sb = System.Text.StringBuilder(s.Length)
+
+        for ch in s do
+            match ch with
+            | '\\' -> sb.Append "\\\\" |> ignore
+            | '"' -> sb.Append "\\\"" |> ignore
+            | '\n' -> sb.Append "\\n" |> ignore
+            | '\r' -> sb.Append "\\r" |> ignore
+            | '\t' -> sb.Append "\\t" |> ignore
+            | c when c < ' ' -> sb.Append(sprintf "\\u%04x" (int c)) |> ignore
+            | c -> sb.Append c |> ignore
+
+        sb.ToString()
 
     let private q (s: string) : string = "\"" + esc s + "\""
 
@@ -941,8 +965,7 @@ module Demanded =
     ///
     /// A member spelled `null` IS an absent member: `{"a":null}` reads exactly as
     /// `{}`. That is not a rule invented here — it is the wire's own read policy
-    /// for the token, applied at the read side because the pinned parser predates
-    /// the policy and has no `null` in its value model at all. Every OTHER
+    /// for the token. Every OTHER
     /// position is refused rather than erased, on the policy's own reasoning:
     /// a bare root would make the whole document vanish and an array element
     /// would silently renumber every later index, so neither has an absence to
@@ -952,6 +975,19 @@ module Demanded =
     /// reports the position of the first null it meets and this rewrites at
     /// exactly that position or gives up — so a `null` inside a string value is
     /// structurally out of reach.
+    ///
+    /// **Why this stays, now that the parser has the policy of its own.** The
+    /// pinned wire tier carries a null-tolerant read (`Json.parseTolerantOfNull`,
+    /// `NullPolicy.EraseMemberNull`) which erases member-nulls at every depth —
+    /// strictly better erasure than this does. What it does not do is SAY WHICH
+    /// MEMBERS it erased, and that report is the whole reason this exists: under
+    /// the tolerant read `{"server":null}` and a document with no `server` member
+    /// at all parse to the same value, so the reader below could no longer tell a
+    /// walk that did not run from a document that does not describe this version.
+    /// The policy's arrival was expected to retire this; measured, it is necessary
+    /// and not sufficient. Retiring it means the tier reporting its erasures, or
+    /// this document carrying the tier's absence as something other than `null` —
+    /// and the second is a wire change with a version, not a cleanup.
     let private eraseMemberNullAt (text: string) (position: int) : (string * string) option =
         let isWs (c: char) =
             c = ' ' || c = '\t' || c = '\n' || c = '\r'
@@ -1339,10 +1375,12 @@ module Demanded =
                     // and not its depth, so a nested member also named `server`
                     // spelled `null`, in a document that omits the top-level
                     // one, would be read as the tier's absence. It is recorded
-                    // rather than closed — closing it means the wire's own
-                    // null-erasing read policy, which this reader's pinned
-                    // parser predates and which retires this shim when it
-                    // arrives.
+                    // rather than closed, and the route once expected to close
+                    // it does not: the pinned wire tier now HAS its own
+                    // null-erasing read policy, and adopting it loses the
+                    // erased-key report these three readings rest on — see the
+                    // note on `eraseMemberNullAt`. Closing it means the tier
+                    // reporting WHERE it erased, not merely THAT it does.
                     match memberOf "server" root with
                     | Some(Fuaran.Core.JObj _ as tier) ->
                         decodeServer v "server" tier
