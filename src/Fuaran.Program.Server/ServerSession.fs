@@ -385,7 +385,15 @@ module ServerSession =
     /// is a fact about this host, reported as `HandlerUnregistered` rather than
     /// as the shared fold's "no form on this path", because those say different
     /// things to whoever is debugging an emission.
-    let private handlerArm (services: ServerServices) : HandlerArm<HandlerTally> =
+    ///
+    /// **Public, and the seam a second interpreter plugs into.** The loop below
+    /// takes the arm as an argument rather than building one, so an interpreter
+    /// with a different discipline — deterministic replay over a journal, say —
+    /// reaches the placement without reproducing the validate / budget / fold /
+    /// re-resolve sequence beside it. A second copy of that sequence would be a
+    /// second placement wearing this one's name, which is the thing the whole
+    /// arrangement exists to avoid.
+    let directArm (services: ServerServices) : HandlerArm<HandlerTally> =
         { Answer =
             fun nodeId endpoint bindings tally ->
                 match Map.tryFind endpoint services.Handlers with
@@ -430,12 +438,17 @@ module ServerSession =
                               Notifications = tally.Notifications @ outcome.Notifications
                               Diagnostics = tally.Diagnostics @ outcome.Diagnostics } } }
 
-    /// Step the session with one untrusted inbound event.
+    /// Step the session with one untrusted inbound event, with `arm` deciding
+    /// what a call action MEANS here.
     ///
     /// On a G1 rejection or a G2 budget breach the session is returned UNCHANGED
     /// with `Rejected = Some _` — default-deny by shape, no hang, no partial
     /// state, exactly as at the other placements.
-    let step (session: ServerSession) (ev: LiveEvent) : ServerSession * ServerStepOutput =
+    let stepWith
+        (arm: HandlerArm<HandlerTally>)
+        (session: ServerSession)
+        (ev: LiveEvent)
+        : ServerSession * ServerStepOutput =
         match Validation.validate session.Services.CanDispatch session.Resolved ev with
         | Error reason -> session, rejected session (Gate reason)
         | Ok { Action = None } -> session, inert session
@@ -459,7 +472,7 @@ module ServerSession =
                 // asks the arm below what they mean here.
                 let bounded, tally =
                     BoundedActions.runBoundedActionWith
-                        (handlerArm session.Services)
+                        arm
                         ev.NodeId
                         action
                         session.Store
@@ -483,3 +496,13 @@ module ServerSession =
                       Diagnostics = (bounded.Diagnostics |> List.map ServerDiagnostic.Bounded) @ tally.Diagnostics }
 
                 commit session tally.Tree bounded.Store outcome
+
+    /// Step the session with one untrusted inbound event, under THIS placement's
+    /// own interpreter — the direct, two-phase-staging one.
+    ///
+    /// `stepWith directArm`, and it is worth being exactly that rather than a
+    /// separate path: the default interpreter has no privilege over a second
+    /// one, and a difference between them would then have to be a difference in
+    /// the arm, which is the only place a difference belongs.
+    let step (session: ServerSession) (ev: LiveEvent) : ServerSession * ServerStepOutput =
+        stepWith (directArm session.Services) session ev

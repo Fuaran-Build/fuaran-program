@@ -30,6 +30,14 @@
          postures, so the one call that produces it consults the join rather
          than reproducing a second walk beside it. -->
     <Compile Include="Harvest.fs" />
+    <!-- The durable-execution tier, appended last so it can reach everything
+         above it and nothing above it has to know it exists. Journal (the
+         durability port) then Facets (what a placement guarantees, which is a
+         function of the discipline) then Durable (the second interpreter, which
+         reads both and calls Handler.run rather than reproducing it). -->
+    <Compile Include="Journal.fs" />
+    <Compile Include="Facets.fs" />
+    <Compile Include="Durable.fs" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Fuaran.Program.Bounded\Fuaran.Program.Bounded.fsproj" />

@@ -80,9 +80,73 @@ price is stated: a later stage cannot read an earlier host call's result. The re
 not abolish — a performer failing in the perform phase leaves its predecessors run — is reported, as
 `Committed = false` with `Performed` naming exactly the calls that happened.
 
-The question that remains open — idempotency on replay — is written down in
-[`docs/server-handler-atomicity.md`](../../docs/server-handler-atomicity.md) as input to the wire cut,
-rather than being settled silently in code.
+The question the note left open — **idempotency on replay** — is answered by the second interpreter
+below, and answered with its boundary attached rather than in general. The note itself
+([`docs/server-handler-atomicity.md`](../../docs/server-handler-atomicity.md)) remains the record of
+how the trade was framed.
+
+## A second interpreter: durable execution
+
+The same algebra, a different discipline. `Durable.run` interprets the **same handler**, through the
+**same stage fold**, under **deterministic replay over an effect journal**: re-running an invocation
+from its entry state recomputes every step it took, and the one kind of step a re-run cannot
+recompute — a `HostCall`, whose answer came from outside — is served from the journal instead of
+being repeated.
+
+It calls `Handler.run` rather than reproducing it. What it supplies is a registry whose performers
+consult the journal first, which puts the entire difference between the two interpreters at the one
+arm that commits outside. `ServerSession.stepWith` takes the arm as an argument, so the second
+interpreter reaches the placement without a second copy of the validate → budget → fold →
+re-resolve sequence.
+
+A step is journaled **twice** — `Attempted` before the effect and `Completed`/`Refused` after — so a
+crash has three readable outcomes rather than two:
+
+| The journal says | What a replay does |
+|---|---|
+| nothing | run the step |
+| attempted, and a result | **serve the result**; the performer is not invoked |
+| attempted, no result | **indeterminate** — refused by default |
+
+The third row is where "exactly once" genuinely ends, and nothing in this package closes it: the
+effect commits in a system this host does not own, and the journal is a second system, so a crash can
+land between them. `DurableServices.acceptingIndeterminateReplay` is the named opt-in that re-invokes
+instead — taking the duplicate hazard rather than the loss — and it returns an override **record**,
+on exactly the terms `Replay.admit`'s does.
+
+A replay that reaches an ordinal holding a *different* capability from the recorded run is refused
+(`durable-replay-divergence`) rather than served the wrong answer.
+
+## The facet a placement may claim
+
+`Facets` derives what a registration guarantees — a delivery facet, an idempotency facet and a
+restart visibility — from the handler stages **and** the interpreter's discipline, because the same
+stage list guarantees different things under the two. The vocabulary mirrors a composition
+contract's, tag for tag, so the two sides agree on names without either taking a type dependency on
+the other.
+
+Delivery is deliberately **not ranked** — at-most-once may lose, at-least-once may duplicate, neither
+dominates — so the conjunction runs over the hazard (may lose, may duplicate) where union is
+associative, commutative, idempotent and has an identity. The composition is therefore never stronger
+than any arm it holds, and where a registration proves *both* hazards the answer is that **no named
+facet says it**, rather than whichever of the two reads better.
+
+`ExactlyOnceEffective` is reachable and is not free:
+
+- the four arms that never leave the interpreter earn it under replay, because they are recomputed
+  rather than re-performed;
+- a `HostCall` earns it only where the host has **declared** the performer idempotent, or declared it
+  deduplicated by a store *and* configured re-invocation;
+- an **undeclared** performer earns it under no configuration at all — strict refusal makes the
+  placement at-most-once and re-invocation makes it at-least-once, and neither is exactly-once;
+- a journal that does not survive a restart derives the direct interpreter's posture exactly.
+
+`Facets.checkDeclaration` is the end-to-end check: from the registration, through the per-arm
+derivation and the conjunction, to the triple a composition's logic-tree slot carries. A declaration
+that promises **less** raises nothing; one that promises more is refused, per axis
+(`facet-delivery-inflated` and its siblings), with an `facet-undeclared-performer` line saying why the
+derivation was weak. `Durable.declaration` produces the honest declaration directly, naming the
+placement (`PlacementId.durable`) and the logic tree it is about by the D6 by-id reference.
 
 ## Replay: two modes, and a classification that says why
 
@@ -176,7 +240,9 @@ dependency direction), D6 (the by-id reference vocabulary for placing a program 
 recognition is an arm of the shared fold, so this package matches on an `Action` nowhere), D8
 (host-effect atomicity is two-phase staging), D9 (the handler declares where its results land; a
 tree-declared result target is refused), D10 (a query reader's expectation is declared, by the fields
-the reading node already carries).
+the reading node already carries), D11 (the evaluation suite lives outside this repository), D12 (the
+durable interpreter journals the one arm that reaches outside, and the indeterminate window is
+declared rather than closed).
 
 ## Licence
 

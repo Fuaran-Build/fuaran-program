@@ -290,3 +290,52 @@ implement it as a folder, because its estate directory already held several
 sibling repositories with room beside them. This repository *is* its directory:
 there is nowhere inside it that is not inside the publishable artefact. A sibling
 is therefore the only shape that satisfies the boundary, not merely the tidiest.
+
+## D12 — The durable interpreter journals the ONE arm that reaches outside, and the indeterminate window is DECLARED rather than closed (2026-08-25)
+
+A second interpreter of the same server-placement algebra runs handlers under **deterministic replay
+over an effect journal**. Three things about it are decisions rather than implementation detail, and
+each forecloses something.
+
+**It calls the stage fold; it does not fork it.** `Durable.run` supplies a registry whose performers
+consult the journal and then invokes `Handler.run`. The alternative — a second fold that journals as
+it goes — was refused for D1's reason read one level up: two folds over one stage vocabulary is a
+second evaluator of the handler algebra, kept in step by hand, and the parity claim between the two
+interpreters would then be a coincidence somebody has to maintain rather than a property of the code.
+The consequence is that the durable interpreter cannot change *when* a stage runs, only what a host
+call means the second time round. A discipline needing a different phase order would have to argue for
+it here.
+
+**Only `HostCall` is journaled, and that follows from D8 rather than from convenience.** Of the five
+arms, four never leave the interpreter: a query reads, an op edits an in-memory tree the caller may
+discard, and a patch and a notification accumulate as values the caller performs after the handler
+returns. A re-run cannot perform any of them twice because it does not perform them at all — it
+RECOMPUTES them, from the entry state, which is what makes deterministic replay worth having rather
+than an extra ledger to keep. So the exactly-once claim this placement makes is about **what it
+performs**; what a caller does with a returned notification is the caller's own delivery posture, and
+the composition joins the two rather than this package asserting it.
+
+**The indeterminate window is not closed, and no configuration hides it.** A step is journaled twice —
+attempted before the effect, decided after — so a crash leaves three readable states, and the third is
+"attempted, no result": the effect may have happened and may not. It cannot be resolved here, because
+the effect commits in a system this host does not own and the journal is a second system, and no
+ordering of two writes to two systems is one transaction. **The default is to REFUSE the replay of such
+a step**, on the same argument `Replay.strict` makes; `acceptingIndeterminateReplay` is the named
+opt-in that re-invokes instead, and it returns an override record so a resume that overrode is
+afterwards distinguishable from one that never needed to.
+
+What that buys is the honest facet. A host call reaches `ExactlyOnceEffective` only where the host has
+DECLARED the performer idempotent (or deduplicated by a store, and configured re-invocation); an
+undeclared performer reaches it under no configuration, because strict refusal may lose the call and
+re-invocation may duplicate it and neither of those is exactly-once. **The conjunction is stated over
+the delivery HAZARD** — may lose, may duplicate — rather than over the three named facets, because the
+named set is not closed under combination: a registration can prove both hazards, and the honest answer
+there is that no facet says it, not whichever of the two reads better. A declaration may promise less
+than the derivation; a declaration that promises more is refused, per axis. That asymmetry is the rule,
+not an omission — a conservative promise costs only the promise.
+
+**What it forecloses.** The step ordinal is derived from the fold, so a journal entry addresses a
+position and not a name. A replay whose recomputation stages a different call list therefore REFUSES at
+the first ordinal whose capability disagrees, rather than serving one call's recorded answer to another.
+Making replay robust to a genuinely divergent recomputation would need steps to carry stable identities
+of their own, which is a wire question and has to be argued rather than added.

@@ -14,7 +14,13 @@ host-registered handler, and the handler runs as data behind a closed, default-d
 vocabulary. The design questions it opened are recorded in
 [`docs/server-handler-atomicity.md`](docs/server-handler-atomicity.md); four were decided ahead of the
 wire cut — where a call is recognised (D7), the host-effect atomicity mode (D8), result-target
-ownership (D9), and what a query's reader declares (D10).
+ownership (D9), and what a query's reader declares (D10). The fifth — **idempotency on replay** — is
+answered by a **second interpreter at that same placement** (D12): the same handler, through the same
+stage fold, under deterministic replay over an effect journal. So the status line above is now
+narrower than it reads: three placements, one *algebra*, and two interpreters of it at the server
+placement. The second one is where the delivery/idempotency/restart facets are derived, and its
+exactly-once claim carries its boundary with it — a crash can land between an effect and the record of
+it, and that window is declared rather than closed.
 
 **The wire cut has happened, and this repo is its first conformant host.** The handler declared form,
 the two effect vocabularies, the invocation record and the outcome report now have a **specification

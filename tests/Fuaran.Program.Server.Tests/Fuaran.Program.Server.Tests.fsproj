@@ -14,6 +14,7 @@
     <Compile Include="ProgramWireConformanceTests.fs" />
     <Compile Include="ReplayTests.fs" />
     <Compile Include="HarvestTests.fs" />
+    <Compile Include="DurableInterpreterTests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
   <ItemGroup>
