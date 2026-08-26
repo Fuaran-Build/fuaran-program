@@ -112,12 +112,12 @@ if (-not $SkipTests -and -not $SkipFable) {
 }
 
 if ($Pack) {
-    # The shared workspace feed, resolved relative to this repo — the same path
-    # nuget.config declares as `local`, so a fresh pack shadows a released
+    # The shared local folder feed, resolved relative to this repo — the same
+    # path nuget.config declares as `local`, so a fresh pack shadows a released
     # package at the same version for inner-loop iteration.
     $feed = Join-Path $PSScriptRoot '../../local-nuget-feed'
     if (-not (Test-Path $feed)) {
-        throw "Local feed not found at '$feed'. Expected the shared workspace feed beside the estates."
+        throw "Local folder feed not found at '$feed'. Packing is for developing this tier alongside a consumer that restores from it; create the folder, or drop -Pack."
     }
 
     $packable =
