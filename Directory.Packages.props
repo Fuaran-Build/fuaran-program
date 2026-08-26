@@ -6,6 +6,7 @@
     <!-- Fable client tier — consumed only by samples/, never by a shipping package. -->
     <PackageVersion Include="Fable.Core" Version="5.0" />
     <PackageVersion Include="Feliz" Version="3.3.3" />
+    <!-- cohort-lag: public-restore consumer (FuaranRestorePath=public class): 0.35.0 is the newest nuget.org-published version; producer head 0.38.0 is untagged/unpublished -->
     <PackageVersion Include="Fuaran.UI.Renderer" Version="0.35.0" />
     <!-- The UI tier — the first host instantiation consumes its types by
          PackageReference off the local feed / nuget.org (DECISIONS.md D4). The
@@ -33,12 +34,19 @@
          else while building perfectly here. -->
     <!-- 0.33.0 and 0.34.0 are not published for this family; 0.35.0 is the next
          one that is. A gap in the sequence is not a gap in the pin. -->
+    <!-- cohort-lag: public-restore consumer (FuaranRestorePath=public class): 0.35.0 is the newest nuget.org-published version; producer head 0.38.0 is untagged/unpublished -->
     <PackageVersion Include="Fuaran.UI" Version="0.35.0" />
+    <!-- cohort-lag: public-restore consumer (FuaranRestorePath=public class): 0.35.0 is the newest nuget.org-published version; producer head 0.38.0 is untagged/unpublished -->
     <PackageVersion Include="Fuaran.UI.Ops" Version="0.35.0" />
+    <!-- cohort-lag: public-restore consumer (FuaranRestorePath=public class): 0.35.0 is the newest nuget.org-published version; producer head 0.38.0 is untagged/unpublished -->
     <PackageVersion Include="Fuaran.UI.Ops.Abstractions" Version="0.35.0" />
+    <!-- cohort-lag: public-restore consumer (FuaranRestorePath=public class): 0.35.0 is the newest nuget.org-published version; producer head 0.38.0 is untagged/unpublished -->
     <PackageVersion Include="Fuaran.UI.OpStream.Abstractions" Version="0.35.0" />
+    <!-- cohort-lag: public-restore consumer (FuaranRestorePath=public class): 0.35.0 is the newest nuget.org-published version; producer head 0.38.0 is untagged/unpublished -->
     <PackageVersion Include="Fuaran.UI.OpStream.Replay" Version="0.35.0" />
+    <!-- cohort-lag: public-restore consumer (FuaranRestorePath=public class): 0.35.0 is the newest nuget.org-published version; producer head 0.38.0 is untagged/unpublished -->
     <PackageVersion Include="Fuaran.UI.Renderer.Core" Version="0.35.0" />
+    <!-- cohort-lag: public-restore consumer (FuaranRestorePath=public class): 0.35.0 is the newest nuget.org-published version; producer head 0.38.0 is untagged/unpublished -->
     <PackageVersion Include="Fuaran.UI.ServerDriven" Version="0.35.0" />
   </ItemGroup>
 </Project>
