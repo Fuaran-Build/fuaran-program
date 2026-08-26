@@ -23,6 +23,14 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
 
+# Seeded deliberately. `$LASTEXITCODE` is $null in a fresh session until a NATIVE
+# command runs, and every stage below guards on `-ne 0` — so with a stage skipped
+# the first such guard compared $null, took the branch, and `exit $null` returned
+# 0. `-SkipFormat` therefore ran the pin preflight and then exited GREEN, having
+# built nothing and tested nothing. A gate that reports success for work it did
+# not do is the failure this file's other comments exist to rule out.
+$LASTEXITCODE = 0
+
 if (-not $SkipFormat) {
     dotnet tool restore
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

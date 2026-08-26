@@ -1,31 +1,27 @@
 <#
 .SYNOPSIS
-    Fuaran-Program estate — pack producer siblings into the shared root
-    local-nuget-feed.
+    Pack the Fuaran.Program.* producers into a shared local folder feed.
 .DESCRIPTION
-    The cross-repo inner-loop channel (workspace CLAUDE.md "NuGet feed model"):
-    a repo that another consumes by PackageReference is packed here so the
-    consumer restores it from the shared root ..\..\local-nuget-feed.
+    The inner-loop distribution channel for anyone developing this tier
+    alongside a consumer: a folder feed at ..\..\local-nuget-feed, declared as
+    the `local` source in nuget.config, which a consumer restores from ahead of
+    the released source. Released distribution is a tag push, not this script.
 
     Packs the Fuaran.Program.* tier — the domain package and the bounded
     interpreter (Fuaran.Program.Bounded: the bounded-Action fold, the binding
     re-resolution pass, and the server placement of the program loop).
 
-    ORDERING: this step runs AFTER Fuaran-UI. The bounded tier consumes the UI
-    tier's published packages by PackageReference (DECISIONS.md D4), and the
+    ORDERING: the UI tier packs BEFORE this one. The bounded tier consumes the
+    UI tier's published packages by PackageReference (DECISIONS.md D4), and the
     dependency runs ONE WAY — no Fuaran.UI.* package references Fuaran.Program.*
     (D5) — so the order is a genuine dependency edge, not a convention. The
     reverse would be a cycle and was refused for exactly that reason.
 
-    This script is invoked by the workspace-root pack-all.ps1, which owns the
-    cross-estate ordering and the same-version repack guard. Running it directly
-    packs correctly but BYPASSES that guard — prefer the root entry point.
+    `pwsh ./run.ps1 -Pack` packs the same set as part of the ordinary gate.
 .PARAMETER Configuration
-    Build configuration to pack. Release by default, matching the other estate
-    pack scripts.
+    Build configuration to pack. Release by default.
 .EXAMPLE
-    ..\..\pack-all.ps1 -Only Fuaran-Program
-    The preferred entry point (guarded).
+    pwsh ./pack-all.ps1
 #>
 
 #Requires -Version 7.0

@@ -4,7 +4,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <IsPackable>true</IsPackable>
     <PackageId>Fuaran.Program</PackageId>
-    <Description>Fuaran.Program — programs as data for Fuaran hosts: a bounded, total logic-tree algebra (sequencing, typed branching, named effects), its interpreters, and the program loop. Skeleton package — the substantive surfaces land with the bounded-interpreter extraction and the client program loop.</Description>
+    <Description>Fuaran.Program — programs as data for Fuaran hosts: a bounded, total logic-tree algebra (sequencing, typed branching, named effects), its interpreters, and the program loop. This package carries the domain identity; the substantive surfaces ship as Fuaran.Program.Bounded (the interpreter), Fuaran.Program.Runtime (the client placement) and Fuaran.Program.Server (the server-logic placement). Apache-2.0 licensed.</Description>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="About.fs" />

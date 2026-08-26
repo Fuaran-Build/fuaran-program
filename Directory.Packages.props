@@ -6,7 +6,7 @@
     <!-- Fable client tier — consumed only by samples/, never by a shipping package. -->
     <PackageVersion Include="Fable.Core" Version="5.0" />
     <PackageVersion Include="Feliz" Version="3.3.3" />
-    <PackageVersion Include="Fuaran.UI.Renderer" Version="0.32.0" />
+    <PackageVersion Include="Fuaran.UI.Renderer" Version="0.35.0" />
     <!-- The UI tier — the first host instantiation consumes its types by
          PackageReference off the local feed / nuget.org (DECISIONS.md D4). The
          dependency runs ONE WAY: nothing in the UI tier references back, which
@@ -24,17 +24,21 @@
          assembly-reference errors naming nothing. `tools/check-pins.ps1` runs
          before the build and now refuses both shapes.
 
-         Known deliberate pickup: the producing repository carries an unreleased
-         fix above the v0.32.0 tag (client-effect strings escaping the full C0
-         range). 0.32.0 is what is TAGGED and published, so it is what is pinned;
-         the fix arrives at that repository's next cut. This repo's own encoder
-         carries the equivalent fix independently. -->
-    <PackageVersion Include="Fuaran.UI" Version="0.32.0" />
-    <PackageVersion Include="Fuaran.UI.Ops" Version="0.32.0" />
-    <PackageVersion Include="Fuaran.UI.Ops.Abstractions" Version="0.32.0" />
-    <PackageVersion Include="Fuaran.UI.OpStream.Abstractions" Version="0.32.0" />
-    <PackageVersion Include="Fuaran.UI.OpStream.Replay" Version="0.32.0" />
-    <PackageVersion Include="Fuaran.UI.Renderer.Core" Version="0.32.0" />
-    <PackageVersion Include="Fuaran.UI.ServerDriven" Version="0.32.0" />
+         The family is pinned at 0.35.0 — the newest version every one of these
+         eight ids is served at by the PUBLIC restore path, checked against the
+         registry's own index rather than against a local feed. That distinction
+         is the point: this package set publishes, so a consumer restoring it
+         reaches nuget.org and nothing else, and a pin only a maintainer's machine
+         can resolve would make the published package unrestorable for everyone
+         else while building perfectly here. -->
+    <!-- 0.33.0 and 0.34.0 are not published for this family; 0.35.0 is the next
+         one that is. A gap in the sequence is not a gap in the pin. -->
+    <PackageVersion Include="Fuaran.UI" Version="0.35.0" />
+    <PackageVersion Include="Fuaran.UI.Ops" Version="0.35.0" />
+    <PackageVersion Include="Fuaran.UI.Ops.Abstractions" Version="0.35.0" />
+    <PackageVersion Include="Fuaran.UI.OpStream.Abstractions" Version="0.35.0" />
+    <PackageVersion Include="Fuaran.UI.OpStream.Replay" Version="0.35.0" />
+    <PackageVersion Include="Fuaran.UI.Renderer.Core" Version="0.35.0" />
+    <PackageVersion Include="Fuaran.UI.ServerDriven" Version="0.35.0" />
   </ItemGroup>
 </Project>
