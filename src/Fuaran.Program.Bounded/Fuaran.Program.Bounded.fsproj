@@ -34,6 +34,9 @@
          action. Placement-neutral by construction, exactly as the interpreter is. -->
     <Compile Include="ProgramWire.fs" />
     <Compile Include="BoundedDriver.fs" />
+    <!-- The channel glue over the driver — it binds a session to the UI tier's
+         transport seam, so it follows the driver whose steps it sequences. -->
+    <Compile Include="BoundedConnection.fs" />
   </ItemGroup>
   <!-- The UI-typed first instantiation (DECISIONS.md D4): this package consumes
        the UI tier's published packages, and the dependency runs one way only.

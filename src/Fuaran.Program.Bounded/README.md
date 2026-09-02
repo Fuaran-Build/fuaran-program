@@ -18,6 +18,33 @@ A program tree that arrived over the wire is data, not code. This package is wha
   this pass a state change produces no ops at all).
 - **`BoundedDriver`** — the server placement: validate → interpret → re-resolve → diff → lower,
   under a per-interaction resource budget.
+- **`BoundedConnection`** — the channel glue that makes that placement *servable*. One connection
+  binds one session to the UI tier's transport seam: it sequences the push frames, buffers them for
+  reconnect replay, and routes refusals. No transport type reaches it, so any backend implementing
+  the seam serves a bounded program with no bounded code of its own.
+
+## Out-of-band edits
+
+A tool outside the interaction loop — a tree inspector or editor — may want to submit a `TreeOp`
+against a live session's tree rather than an interaction. `BoundedConnection.ApplyOutOfBand` is the
+one entry point for that, and it is coherent **because** of this loop's shape: the session's
+`BaseTree` is fixed structural state, so an op applied to it re-resolves, diffs and lowers through
+the path an ordinary interaction already takes, and every later interaction resolves against the
+edited tree. On a loop where the tree is a projection of a model the same edit is reverted by the
+next step's diff — which is why no such entry point belongs there.
+
+Three properties hold by construction. It is **off** until a host installs a grant policy
+(`EnableOutOfBandApply`), and an absent policy refuses everything — the same default-closed posture
+`BoundedServices.create` takes for dispatch, for the same reason. The edit is **priced against
+`MaxNodes`** before it is kept, so an out-of-band author cannot buy work an interacting one is capped
+at. And the submitter's `Actor` is **carried, not believed**: it is a claim made over a channel the
+session did not authenticate, so it is handed to the policy and echoed back, and a host records it
+beside the principal it *did* authenticate rather than in place of it.
+
+The refusal is *returned* to the caller rather than pushed. The transport seam is push-frames
+outbound and fire-and-forget inbound, with no correlation id and no response envelope, so there is no
+honest way to deliver a correlated response from here; the caller that submitted the op is the one
+holding the correlation.
 
 ## The two invariants
 

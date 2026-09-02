@@ -8,6 +8,7 @@
   <ItemGroup>
     <Compile Include="BoundedActionsTests.fs" />
     <Compile Include="BoundedDriverTests.fs" />
+    <Compile Include="BoundedConnectionTests.fs" />
     <Compile Include="DemandedTests.fs" />
     <Compile Include="DemandedDecodeTests.fs" />
     <!-- Program.fs is the Expecto entry point and stays last. -->

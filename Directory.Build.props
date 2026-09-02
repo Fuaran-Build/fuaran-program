@@ -3,7 +3,16 @@
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
     <WarnOn>3390;$(WarnOn)</WarnOn>
-    <Version>0.1.0</Version>
+    <!-- 0.2.0 — `Fuaran.Program.Bounded` gained the channel connection and its
+         out-of-band apply entry point. Additive: nothing existing changed shape,
+         so no consumer stops compiling. The producer-side rule is that a change
+         to a package's public contract advances the version in the SAME commit,
+         because a folder feed keys on id+version and re-packing a slot in place
+         swaps the contract under every consumer whose cache still serves the old
+         bits. This line versions all four packages together, which is the
+         repository's shape — a minor bump on an untouched package costs nothing,
+         and a per-package line would have to be right four times. -->
+    <Version>0.2.0</Version>
     <!-- This repository's restore path is PUBLIC: it publishes to nuget.org, so
          a consumer of the published packages reaches the registry and nothing
          else. Undeclared would read as `local-feed`, under which a pin only this

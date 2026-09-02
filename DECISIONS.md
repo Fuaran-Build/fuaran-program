@@ -339,3 +339,53 @@ position and not a name. A replay whose recomputation stages a different call li
 the first ordinal whose capability disagrees, rather than serving one call's recorded answer to another.
 Making replay robust to a genuinely divergent recomputation would need steps to carry stable identities
 of their own, which is a wire question and has to be argued rather than added.
+
+## D13 — An out-of-band tree edit is a SEPARATE, default-closed entry point, and its refusal is a type of its own (2026-09-02)
+
+**2026-09-02.**
+
+`BoundedConnection` makes a bounded session servable, and with a servable session comes a question
+the loop had not had to answer: may a tool *outside* the interaction loop — a tree inspector or
+editor — submit a `TreeOp` against the session's tree? Four sub-decisions, each of which had an
+obvious alternative that is wrong for a stated reason.
+
+**It is a separate entry point, not a widened event.** The inbound event type is a closed
+*interaction* vocabulary whose meaning is "the user interacted with node X", which the loop resolves
+to an action and folds over the store. A tree op is categorically different: it mutates structure
+directly, bypassing that fold. Carrying it as an event would have meant either a payload that can
+encode arbitrary structure — collapsing the closure-free portable subset the whole inbound seam rests
+on — or a second meaning smuggled into one type. `ApplyOutOfBand` is a distinct member, so nothing
+about the interaction path changes shape.
+
+**It exists on THIS loop and must not be added to a model-projection loop.** The bounded session's
+`BaseTree` is fixed structural state, so an op applied to it re-resolves, diffs and lowers through
+the ordinary path, and later interactions resolve against the edited tree. Where the tree is a
+projection of a model, the next step's diff *reverts* the edit — so the same entry point there would
+apply, appear to work, and silently snap back on the user's next click. That is a property of the two
+loops rather than a gap in one, and the correct expression of an edit that must survive there is a
+model change, which a tree op cannot express.
+
+**Its refusal is its own type, not a case on `BoundedReject`.** The tempting move is to add a case,
+and it is wrong twice. `BoundedReject` documents itself as the EVENT-level refusal and nothing else,
+and an out-of-band edit is not an event; and it is a closed DU that a host matches exhaustively, so
+widening it breaks every such match — a breaking change, taken to model something the type says it
+does not model. `OutOfBandRefusal` is additive, and the two vocabularies stay legible as the
+different facts they are.
+
+**Its gate is a connection-level opt-in that fails closed, not a widened services record.** The
+existing dispatch gate is typed over the interaction action and cannot express an attributed tree op,
+so it could not have served; and adding a field to the services record would break every full-literal
+construction of a public type. Installing a grant policy is therefore a member on the connection, and
+an absent policy refuses everything — the same default `BoundedServices.create` takes for dispatch,
+and for the same reason: this loop runs trees it does not trust, on infrastructure it shares.
+
+**Attribution is carried and never believed.** The submitter's actor string is a claim made over a
+channel the session did not authenticate. It is handed to the grant policy and echoed on the refusal
+so a host can record it *beside* the principal it did authenticate, never in place of it. Anything
+stronger would be the loop asserting an identity nothing established.
+
+**What this forecloses, deliberately.** The refusal is returned to the caller rather than pushed to
+the client, because the transport seam is push-frames outbound and fire-and-forget inbound: there is
+no correlation id and no response envelope, so a refusal routed into a patch frame would be a
+response smuggled through a broadcast. Delivering one to a *remote* submitter needs a correlated
+response leg on the seam, which is the UI tier's to add and a wire change when it comes.
