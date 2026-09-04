@@ -28,7 +28,7 @@
          packages together, which is the repository's shape: a minor bump on an
          untouched package costs nothing, and a per-package line would have to be
          right four times. -->
-    <Version>0.2.0</Version>
+    <Version>0.3.0</Version>
     <!-- This repository's restore path is PUBLIC: it publishes to nuget.org, so
          a consumer of the published packages reaches the registry and nothing
          else. Undeclared would read as `local-feed`, under which a pin only this
