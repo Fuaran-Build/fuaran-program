@@ -76,17 +76,27 @@ let tests =
               Expect.isEmpty p.OpaqueHandlers "no opaque handlers"
           }
 
-          test "the three effect-bearing arms are demanded by their registry discriminator" {
+          test "the four effect-bearing arms are demanded by their registry discriminator" {
               // The names must be exactly the strings a host registry is keyed
               // on, or a demanded effect and a registered one never meet.
               Expect.equal (ofAction (Action.Navigate "/next")).Effects [ "Navigate" ] "Navigate"
 
-              Expect.equal (ofAction (Action.WriteToClipboard "x")).Effects [ "WriteToClipboard" ] "WriteToClipboard"
+              Expect.equal
+                  (ofAction (Action.WriteToClipboard(TextSource.Literal "x"))).Effects
+                  [ "WriteToClipboard" ]
+                  "WriteToClipboard"
 
               Expect.equal
                   (ofAction (Action.ReadFileBody("f", None, FileReadEncoding.Text, None))).Effects
                   [ "ReadFileBody" ]
                   "ReadFileBody"
+
+              // `Print` is payload-free, which makes it the arm most easily
+              // missed: the projection's own arm-to-discriminator map carries a
+              // wildcard, so an unnamed effect-bearing arm reports NOTHING here
+              // rather than failing to compile. A host that does not offer
+              // printing would then pass a coverage check it should fail.
+              Expect.equal (ofAction Action.Print).Effects [ "Print" ] "Print"
           }
 
           test "the walk is STATIC — an unsafe route is still a Navigate demand" {
@@ -104,7 +114,7 @@ let tests =
                   ofAction (
                       Action.Chain
                           [ Action.Navigate "/a"
-                            Action.WriteToClipboard "x"
+                            Action.WriteToClipboard(TextSource.Literal "x")
                             Action.Navigate "/b"
                             Action.SetState("cart.total", Some(jstr "1"), None) ]
                   )
@@ -221,7 +231,7 @@ let tests =
                   Fuaran.modal
                       "m"
                       { Defaults.modal<obj> with
-                          OnDismiss = Some(Action.WriteToClipboard "bye") }
+                          OnDismiss = Some(Action.WriteToClipboard(TextSource.Literal "bye")) }
 
               let p = Demanded.ofTree (dash [ form; modal ])
               Expect.equal p.Effects [ "Navigate"; "WriteToClipboard" ] "all three wire-survivable slots are read"
@@ -273,7 +283,9 @@ let tests =
               let tree =
                   dash
                       [ btn "b1" (Action.Navigate "/a")
-                        btn "b2" (Action.Chain [ Action.WriteToClipboard "x"; Action.Navigate "/a" ]) ]
+                        btn
+                            "b2"
+                            (Action.Chain [ Action.WriteToClipboard(TextSource.Literal "x"); Action.Navigate "/a" ]) ]
 
               let a = Demanded.ofTree tree
               let b = Demanded.ofTree tree
@@ -339,7 +351,8 @@ let tests =
 
           test "a fully covered tree yields no findings" {
               let tree =
-                  dash [ btn "b" (Action.Chain [ Action.Navigate "/x"; Action.WriteToClipboard "y" ]) ]
+                  dash
+                      [ btn "b" (Action.Chain [ Action.Navigate "/x"; Action.WriteToClipboard(TextSource.Literal "y") ]) ]
 
               Expect.isEmpty
                   (Demanded.check (hostWith [ "Navigate"; "WriteToClipboard" ]) tree)
@@ -348,7 +361,8 @@ let tests =
 
           test "every uncovered demand is reported, not just the first" {
               let tree =
-                  dash [ btn "b" (Action.Chain [ Action.Navigate "/x"; Action.WriteToClipboard "y" ]) ]
+                  dash
+                      [ btn "b" (Action.Chain [ Action.Navigate "/x"; Action.WriteToClipboard(TextSource.Literal "y") ]) ]
 
               let findings = Demanded.check HostCoverage.nothing tree
 
@@ -451,11 +465,14 @@ let tests =
               // pass and only this last one would catch it.
               let host = hostWith [ "WriteToClipboard" ]
 
-              let within = dash [ btn "b" (Action.WriteToClipboard "x") ]
+              let within = dash [ btn "b" (Action.WriteToClipboard(TextSource.Literal "x")) ]
               Expect.isEmpty (Demanded.check host within) "the unwidened tree passes"
 
               let widened =
-                  dash [ btn "b" (Action.Chain [ Action.WriteToClipboard "x"; Action.Navigate "/escape" ]) ]
+                  dash
+                      [ btn
+                            "b"
+                            (Action.Chain [ Action.WriteToClipboard(TextSource.Literal "x"); Action.Navigate "/escape" ]) ]
 
               let findings = Demanded.check host widened
 

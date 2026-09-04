@@ -84,6 +84,17 @@ let private grid (id: string) (slot: string) (fields: string option list) : Node
                   DefaultSort = None
                   EditStateKey = None
                   Reorderable = false
+                  // Every member the tier has added to this record since is at
+                  // its absent / off value. These fixtures exist to ask what a
+                  // grid READS FROM A QUERY SLOT, and none of the transfer,
+                  // print-break or export members answers that question — so
+                  // giving them anything else would put a second variable into
+                  // a test with one subject.
+                  TransferInKey = None
+                  TransferOutKey = None
+                  KeepRowsTogether = false
+                  RepeatHeader = false
+                  Exportable = false
                   Source = querySlot slot
                   StaticRows = None
                   OnRowClick = None } }
@@ -308,6 +319,11 @@ let private readerTests =
                                 DefaultSort = None
                                 EditStateKey = None
                                 Reorderable = false
+                                TransferInKey = None
+                                TransferOutKey = None
+                                KeepRowsTogether = false
+                                RepeatHeader = false
+                                Exportable = false
                                 Source = Binding.Static None
                                 StaticRows = None
                                 OnRowClick = None } }

@@ -472,6 +472,7 @@ module Demanded =
         | Action.Navigate _ -> Some(ClientEffect.kind (ClientEffect.Navigate ""))
         | Action.WriteToClipboard _ -> Some(ClientEffect.kind (ClientEffect.WriteToClipboard ""))
         | Action.ReadFileBody _ -> Some(ClientEffect.kind (ClientEffect.ReadFileBody("", "")))
+        | Action.Print -> Some(ClientEffect.kind ClientEffect.Print)
         | _ -> None
 
     /// The host calls a dispatch-time binding source names. A `Binding.Query`
@@ -547,12 +548,17 @@ module Demanded =
         | Action.AiTool(toolName, _) -> effects, [ { Channel = "AiTool"; Name = toolName } ], []
 
         // The remaining arms demand no host call and touch no namespace.
-        // `Navigate` / `WriteToClipboard` / `ReadFileBody` contributed their
-        // effect above; `Dispatch` has no `update` to reach on this path and
-        // `CommitLocal` flushes a per-node client-side buffer.
+        // `Navigate` / `WriteToClipboard` / `ReadFileBody` / `Print` contributed
+        // their effect above; `Dispatch` has no `update` to reach on this path
+        // and `CommitLocal` flushes a per-node client-side buffer.
+        //
+        // `Print` demands its effect and nothing else: it is payload-free, so
+        // there is no binding to read from and no landing slot to write to, and
+        // it reports nothing back that a namespace could receive.
         | Action.Navigate _
         | Action.WriteToClipboard _
         | Action.ReadFileBody _
+        | Action.Print
         | Action.Dispatch _
         | Action.CommitLocal _ -> effects, [], []
 

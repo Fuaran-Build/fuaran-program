@@ -101,12 +101,12 @@ let tests =
               let services = servicesOffering [ "WriteToClipboard" ] renders
 
               Expect.isTrue
-                  (Program.mkBoundedStrict services empty (wireOf (Action.WriteToClipboard "x"))
+                  (Program.mkBoundedStrict services empty (wireOf (Action.WriteToClipboard(TextSource.Literal "x")))
                    |> Result.isOk)
                   "within coverage: admitted"
 
               let widened =
-                  Action.Chain [ Action.WriteToClipboard "x"; Action.Navigate "/escape" ]
+                  Action.Chain [ Action.WriteToClipboard(TextSource.Literal "x"); Action.Navigate "/escape" ]
 
               Expect.isFalse
                   (Program.mkBoundedStrict services empty (wireOf widened) |> Result.isOk)

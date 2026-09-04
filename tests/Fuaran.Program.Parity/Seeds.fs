@@ -112,7 +112,7 @@ let private closureFreeEffects =
         "closure-free-effects"
         (dash
             [ button "go" (Action.Navigate "/next")
-              button "copy" (Action.WriteToClipboard "text")
+              button "copy" (Action.WriteToClipboard(TextSource.Literal "text"))
               bound "readout" "msg" "init" ])
         [ click "go"; click "copy" ]
 

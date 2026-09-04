@@ -286,9 +286,73 @@ module BoundedActions =
                    Diagnostics = [] }
              | None -> refused nodeId action "route is not a safe URL" s),
             placement
+        // The clipboard payload is a `TextSource`, not a literal: what a reader
+        // copies is a figure in front of them or a link the session holds, so it
+        // resolves at DISPATCH TIME against the store — the same moment, and
+        // through the same resolver, as the `SetState` arm's `valueFrom` above.
+        // The BoundedStore IS the BindingSources, so there is nothing extra to
+        // thread. `ClientEffect.WriteToClipboard` still carries a plain string:
+        // the client shim performs a write, it does not evaluate a tree.
+        //
+        // An unresolved payload is REFUSED, and that is a deliberate divergence
+        // from the tier's total `resolveTextSource`, which answers "" for an
+        // unresolved binding and a bracketed key for a missing catalogue entry.
+        // Those are the right answers for a text slot, where the reader SEES the
+        // gap. On a clipboard nobody sees it: the write silently succeeds with
+        // the wrong content, and the reader learns what they did not copy only
+        // when they paste it somewhere else, later. This loop already refuses an
+        // unresolved State write for exactly that reason.
+        //
+        // What that does NOT cover, stated because the boundary is easy to read
+        // as wider than it is: a `Binding.State` naming a key nothing has
+        // written yet is `Resolved` at the empty value, not `NotResolved` — the
+        // tier rules that the "no override yet" steady state, and a loop that
+        // second-guessed it here would refuse the ordinary case of a document
+        // copying a slot the reader has not filled in. The refusal catches a
+        // binding that genuinely fails to resolve (an unselected `Selection`, an
+        // unanswered `Query`), an errored one, and an i18n key this store's
+        // catalogue does not carry.
         | Action.WriteToClipboard text ->
+            let payload: Result<string, string> =
+                match text with
+                | TextSource.Literal literal -> Ok literal
+                | TextSource.Bound binding ->
+                    (match resolveScalarText s binding with
+                     // A resolved-but-NULL value is the unwritten-State steady
+                     // state reaching the end of the resolver: the tier answers
+                     // `Resolved` at the type's default, which for a string is
+                     // null. A text slot renders that as nothing and no reader
+                     // is any the wiser, but `ClientEffect` is a record a host
+                     // performs and a transport carries, so it takes the empty
+                     // string rather than a null. Not a refusal — the steady
+                     // state is a legitimate thing to copy.
+                     | Resolved value -> Ok(if isNull (box value) then "" else value)
+                     | NotResolved -> Error "the payload binding did not resolve to a value"
+                     | Errored m -> Error m
+                     | I18nUnresolved k -> Error(sprintf "unresolved i18n key '%s'" k))
+                | TextSource.I18n(key, _) ->
+                    if Map.containsKey key s.I18n then
+                        Ok(resolveTextSource s text)
+                    else
+                        Error(sprintf "unresolved i18n key '%s'" key)
+
+            (match payload with
+             | Ok value ->
+                 { Store = s
+                   Effects = [ ClientEffect.WriteToClipboard value ]
+                   Diagnostics = [] }
+             | Error reason -> refused nodeId action (sprintf "%s — nothing was written to the clipboard" reason) s),
+            placement
+
+        // Payload-free, and lowered rather than refused: printing is an act of
+        // the machine the document is READ on, so a loop answering for its own
+        // process would be answering the wrong question. Nothing round-trips
+        // back — the call reports neither whether the reader printed nor what
+        // they chose — so unlike `ReadFileBody` there is no returning event and
+        // no store consequence to thread.
+        | Action.Print ->
             { Store = s
-              Effects = [ ClientEffect.WriteToClipboard text ]
+              Effects = [ ClientEffect.Print ]
               Diagnostics = [] },
             placement
         | Action.ReadFileBody(_, _, encoding, _) ->

@@ -103,9 +103,84 @@ let tests =
 
           test "WriteToClipboard → closure-free ClientEffect" {
               let out =
-                  BoundedActions.runBoundedAction "n" (Action.WriteToClipboard "copied") store0
+                  BoundedActions.runBoundedAction "n" (Action.WriteToClipboard(TextSource.Literal "copied")) store0
 
               Expect.equal out.Effects [ ClientEffect.WriteToClipboard "copied" ] "one clipboard effect"
+          }
+
+          test "WriteToClipboard resolves a bound payload against the store at dispatch time" {
+              let s1 =
+                  { store0 with
+                      State = Map.ofList [ "share.url", o "https://example.test/x" ] }
+
+              let out =
+                  BoundedActions.runBoundedAction
+                      "n"
+                      (Action.WriteToClipboard(TextSource.Bound(Binding.State("share.url", None))))
+                      s1
+
+              Expect.equal
+                  out.Effects
+                  [ ClientEffect.WriteToClipboard "https://example.test/x" ]
+                  "the effect carries the RESOLVED text, not the declaration"
+
+              Expect.isEmpty out.Diagnostics "a payload that resolves is not a diagnostic"
+          }
+
+          test "WriteToClipboard REFUSES an unresolved payload rather than copying nothing" {
+              // The divergence from the tier's total `resolveTextSource`, pinned
+              // rather than asserted in a comment: "" is the right answer for a
+              // text slot the reader can see, and the wrong one for a clipboard
+              // they cannot. A silent empty write is discovered on paste, which
+              // is somewhere else and later.
+              //
+              // The binding is a SELECTION on a grid with no selection — the
+              // same shape the `SetState.valueFrom` refusal above uses, and for
+              // the same reason. A `Binding.State` would NOT do: the tier
+              // resolves an unwritten key to the empty value rather than to
+              // `NotResolved`, deliberately, so it is not an unresolved payload
+              // at all and this arm must not refuse it.
+              let unselected: Binding<string> =
+                  Binding.Selection("orders-grid", Binding.projectSelectionField<string> "id", None, Some "id")
+
+              let out =
+                  BoundedActions.runBoundedAction "n" (Action.WriteToClipboard(TextSource.Bound unselected)) store0
+
+              Expect.isEmpty out.Effects "nothing reaches the clipboard"
+              Expect.equal out.Store.State store0.State "store unchanged"
+
+              match out.Diagnostics with
+              | [ BoundedDiagnostic.Refused(nodeId, _, _) ] -> Expect.equal nodeId "n" "the refusal names the node"
+              | other -> failtestf "expected one Refused diagnostic, got %A" other
+          }
+
+          test "WriteToClipboard does NOT refuse a State key nothing has written yet" {
+              // The other side of that boundary, pinned so a later tightening of
+              // the refusal fails here rather than silently breaking every
+              // document that copies a slot the reader has not filled in.
+              let out =
+                  BoundedActions.runBoundedAction
+                      "n"
+                      (Action.WriteToClipboard(TextSource.Bound(Binding.State("never.written", None))))
+                      store0
+
+              Expect.equal
+                  out.Effects
+                  [ ClientEffect.WriteToClipboard "" ]
+                  "the empty steady state is copied, not refused"
+
+              Expect.isEmpty out.Diagnostics "not a refusal"
+          }
+
+          test "Print → payload-free ClientEffect; store unchanged" {
+              let out = BoundedActions.runBoundedAction "n" Action.Print store0
+              Expect.equal out.Effects [ ClientEffect.Print ] "one Print effect"
+              Expect.equal out.Store.State store0.State "store unchanged"
+
+              // Lowered, not refused and not a no-op: printing is an act of the
+              // machine the document is read on, so this loop hands it on rather
+              // than answering for its own process.
+              Expect.isEmpty out.Diagnostics "lowering is not a diagnosed no-op"
           }
 
           test "ReadFileBody → node-addressed ClientEffect; onRead never invoked" {

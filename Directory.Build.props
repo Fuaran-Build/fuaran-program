@@ -3,15 +3,31 @@
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
     <WarnOn>3390;$(WarnOn)</WarnOn>
-    <!-- 0.2.0 — `Fuaran.Program.Bounded` gained the channel connection and its
+    <!-- 0.2.0 carries two things, both of them reasons a consumer must take a
+         new slot rather than a re-pack of 0.1.0.
+
+         First, `Fuaran.Program.Bounded` gained the channel connection and its
          out-of-band apply entry point. Additive: nothing existing changed shape,
-         so no consumer stops compiling. The producer-side rule is that a change
-         to a package's public contract advances the version in the SAME commit,
-         because a folder feed keys on id+version and re-packing a slot in place
-         swaps the contract under every consumer whose cache still serves the old
-         bits. This line versions all four packages together, which is the
-         repository's shape — a minor bump on an untouched package costs nothing,
-         and a per-package line would have to be right four times. -->
+         so no consumer stops compiling.
+
+         Second, and the sharper of the two: the whole UI-tier floor moved from
+         0.46.0 to 0.70.0, so every assembly here is COMPILED against a different
+         tier. That is not a source change a consumer can read off a diff — the
+         binding is in the emitted IL, against member signatures and DU case
+         ordinals the tier reordered along the way. A consumer that took 0.1.0
+         and a 0.70.0 tier got a `MissingMethodException` at the entry points,
+         which is exactly what a version exists to prevent, so this is a new slot
+         and never a re-pack. The one source-visible edge of it is the clipboard
+         payload, which is a `TextSource` here now because the tier widened it.
+
+         The producer-side rule underneath both: a change to a package's public
+         contract — or, as here, to the contract it was BUILT against — advances
+         the version in the SAME commit, because a folder feed keys on id+version
+         and re-packing a slot in place swaps the contract under every consumer
+         whose cache still serves the old bits. This line versions all four
+         packages together, which is the repository's shape: a minor bump on an
+         untouched package costs nothing, and a per-package line would have to be
+         right four times. -->
     <Version>0.2.0</Version>
     <!-- This repository's restore path is PUBLIC: it publishes to nuget.org, so
          a consumer of the published packages reaches the registry and nothing

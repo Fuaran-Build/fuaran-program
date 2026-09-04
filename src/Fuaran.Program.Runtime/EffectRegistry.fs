@@ -334,6 +334,14 @@ module ClientEffectDestination =
         | ClientEffect.PushState route -> EgressPolicy.classify route
         | ClientEffect.Download(url, _) -> EgressPolicy.classify url
         | ClientEffect.ReadFileBody _ -> EffectDestination.Local
+        // `Print` is `Absent` for the strongest form of the reason above: it is
+        // payload-free, so there is no URL to classify, no node to read from,
+        // and nothing that travels anywhere. It reaches the reader's own machine
+        // and reports nothing back — not whether they printed, not what they
+        // chose. The discriminator gate still governs whether it runs at all, an
+        // unbidden print dialogue being host-observable, and that is exactly the
+        // decision `Absent` defers to rather than pre-empts.
+        | ClientEffect.Print
         | ClientEffect.WriteToClipboard _
         | ClientEffect.Focus _ -> EffectDestination.Absent
 

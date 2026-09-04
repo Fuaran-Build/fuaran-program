@@ -66,7 +66,7 @@ let private richTree: Node<obj> =
           btn
               "b2"
               (Action.Chain
-                  [ Action.WriteToClipboard "x"
+                  [ Action.WriteToClipboard(TextSource.Literal "x")
                     Action.ReadFileBody("upload", None, FileReadEncoding.Text, None)
                     Action.Call("/api/orders", None, None)
                     Action.Invoke("cap.print", [])
