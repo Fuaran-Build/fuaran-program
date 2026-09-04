@@ -211,6 +211,14 @@ module BoundedActions =
     /// projection's static enumeration. Neither performs, mutates or resolves
     /// anything, which is exactly the distinction D1 draws — and both being
     /// total over the DU is what makes a new arm impossible to add silently.)
+    // `Action.Dispatch` is marked in-process-only upstream, so mentioning it
+    // raises FS0044. This declaration is a TOTAL analysis of the closed DU: it
+    // must name every case that exists, and naming one is not authoring one —
+    // the arm below is precisely the statement that the case carries nothing
+    // this interpreter can act on. Scoped to the one declaration, so an
+    // authoring site elsewhere in the file would still be told.
+    #nowarn "44"
+
     let rec runBoundedActionWith
         (arm: HandlerArm<'Placement>)
         (nodeId: string)
@@ -442,6 +450,8 @@ module BoundedActions =
                   Effects = answer.Effects
                   Diagnostics = answer.Diagnostics },
                 answer.Placement
+
+    #warnon "44"
 
     /// Interpret one resolved bounded `Action<obj>` against the store at a
     /// placement that runs NO handlers — the browser client and the server

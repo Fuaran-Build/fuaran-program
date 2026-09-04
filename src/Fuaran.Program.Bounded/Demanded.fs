@@ -496,6 +496,13 @@ module Demanded =
     /// What one action arm demands: effect discriminators, host calls, and
     /// `(namespace, written)` touches. Total over the closed action DU; `Chain`
     /// recurses.
+    // `Action.Dispatch` is marked in-process-only upstream, so mentioning it
+    // raises FS0044. This is a static enumeration of the closed DU, not an
+    // authoring site: it must name every case, and the arm that names
+    // `Dispatch` is exactly the statement that it demands nothing. Scoped to
+    // the one declaration.
+    #nowarn "44"
+
     let rec private demandsOfAction (action: Action<obj>) : string list * HostCallDemand list * (string * bool) list =
         let effects = effectKindOf action |> Option.toList
 
@@ -561,6 +568,8 @@ module Demanded =
         | Action.Print
         | Action.Dispatch _
         | Action.CommitLocal _ -> effects, [], []
+
+    #warnon "44"
 
     /// The action slots the WIRE preserves. Every other handler slot is a
     /// closure the decoder replaces with an inert placeholder, so it can demand

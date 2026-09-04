@@ -100,7 +100,13 @@ let private documentedNoOps =
         "documented-no-ops"
         (dash
             [ button "notify" (Action.Notify("channel", jstr "payload"))
-              button "dispatch" (Action.Dispatch(box "msg" |> Unchecked.nonNull))
+              // `Action.dispatch` rather than the `Dispatch` case: the case is
+              // marked in-process-only upstream (FS0044), and this is an
+              // authoring site — it builds the seed tree. The helper yields
+              // the same value and carries the doc comment stating why the
+              // payload does not survive a wire boundary, which is exactly the
+              // fact this fixture goes on to pin.
+              button "dispatch" (Action.dispatch (box "msg" |> Unchecked.nonNull))
               button "call" (Action.Call("/api/thing", None, None))
               bound "readout" "msg" "init" ])
         [ click "notify"; click "dispatch"; click "call" ]

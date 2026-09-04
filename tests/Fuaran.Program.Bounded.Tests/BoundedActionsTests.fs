@@ -222,7 +222,14 @@ let tests =
               for action in
                   [ Action.Notify("ch", jv "p")
                     Action.AiTool("tool", jv "args")
-                    Action.Dispatch(o "msg")
+                    // `Action.dispatch`, not the `Dispatch` case: the case is
+                    // marked in-process-only upstream (FS0044) and the helper
+                    // constructs exactly the same value while carrying the doc
+                    // comment that states the constraint. Suppressing nothing
+                    // is the point — this suite pins the case's BEHAVIOUR, and
+                    // the warning is about authoring, which is what this line
+                    // does.
+                    Fuaran.UI.Action.dispatch (o "msg")
                     Action.CommitLocal "field" ] do
                   let out = BoundedActions.runBoundedAction "n" action s1
                   Expect.equal out.Store.State s1.State "store unchanged"
