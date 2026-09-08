@@ -227,6 +227,12 @@ let tests =
                                 LegendPosition = None
                                 DataLabels = None
                                 XScale = None
+                                // The tier gave the spec an annotation list.
+                                // `None` is the documented default and the only
+                                // honest value here: this test prices a chart by
+                                // the 200 rows it carries, and an annotation
+                                // would be a second thing being weighed.
+                                Annotations = None
                                 OnPointClick = None }
                           ) }
 
