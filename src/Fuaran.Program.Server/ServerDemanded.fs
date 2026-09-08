@@ -102,13 +102,17 @@ module ServerDemanded =
         | Fuaran.Core.Embedded _ -> []
         | Fuaran.Core.Ref name -> [ name ]
 
-    /// The by-reference source names one pipeline stage reads. Two arms of the
+    /// The by-reference source names one pipeline stage reads. Four arms of the
     /// pinned vocabulary take a second source; the rest work on the table they
-    /// are handed.
+    /// are handed. A stage whose second source went unread here would be a
+    /// by-reference demand the host is never asked for, so the arms are
+    /// enumerated and there is deliberately no wildcard.
     let private refsOfTransform (transform: Fuaran.Core.Transform) : string list =
         match transform with
         | Fuaran.Core.Join(source, _, _) -> refsOfSource source
-        | Fuaran.Core.Union source -> refsOfSource source
+        | Fuaran.Core.Union source
+        | Fuaran.Core.Intersect source
+        | Fuaran.Core.Except source -> refsOfSource source
         | Fuaran.Core.Filter _
         | Fuaran.Core.Project _
         | Fuaran.Core.Derive _

@@ -191,6 +191,36 @@ let private derivationTests =
               Expect.equal (Schema.typeOf "avg" knowledge) (Some Fuaran.Core.FloatType) "Mean is a float"
           }
 
+          test "CountDistinct stays an Int where the source column's type is not known" {
+              // `Derive` leaves its column's type data-dependent, so the
+              // aggregate here is typed by the ARM that ignores the source
+              // type — which is a fact about the aggregate rather than a
+              // fallback, and is exactly the arm this case was missing.
+              let knowledge =
+                  Schema.ofPipeline
+                      SourceSchemas.none
+                      embedded
+                      [ Fuaran.Core.Transform.Derive("tag", Fuaran.Core.ColExpr.Col "region")
+                        Fuaran.Core.Transform.GroupBy(
+                            [ "region" ],
+                            [ { Name = "tags"
+                                Fn = Fuaran.Core.CountDistinct
+                                Of = "tag" } ]
+                        ) ]
+
+              Expect.isNone
+                  (Schema.typeOf
+                      "tag"
+                      (Schema.ofPipeline
+                          SourceSchemas.none
+                          embedded
+                          [ Fuaran.Core.Transform.Derive("tag", Fuaran.Core.ColExpr.Col "region") ]))
+                  "the source column really is untyped, so the aggregate arm under test is the one that runs"
+
+              Expect.equal (closedNames knowledge) [ "region"; "tags" ] "grouped names"
+              Expect.equal (Schema.typeOf "tags" knowledge) (Some Fuaran.Core.IntType) "a distinct count is a count"
+          }
+
           test "Window appends its output column, typed by the function" {
               let knowledge =
                   Schema.ofPipeline
@@ -205,6 +235,48 @@ let private derivationTests =
 
               Expect.equal (closedNames knowledge) [ "id"; "total"; "region"; "rank" ] "windowed names"
               Expect.equal (Schema.typeOf "rank" knowledge) (Some Fuaran.Core.IntType) "RowNumber is an int"
+          }
+
+          test "CompetitionRank is an Int, and its `of` column is never required" {
+              // `of` names nothing at all here, deliberately. The evaluator's
+              // own guard exempts the whole positional/ranking family from
+              // resolving it, so a check that required it would refuse a
+              // handler that runs perfectly well — which is what a wildcard
+              // arm would have done the moment this case arrived.
+              let spec: Fuaran.Core.WindowSpec =
+                  { PartitionBy = [ "region" ]
+                    OrderBy = [ "total", Fuaran.Core.Desc ]
+                    Fn = Fuaran.Core.CompetitionRank
+                    Of = "no-such-column"
+                    As = "place" }
+
+              let knowledge =
+                  Schema.ofPipeline SourceSchemas.none embedded [ Fuaran.Core.Transform.Window spec ]
+
+              Expect.equal (closedNames knowledge) [ "id"; "total"; "region"; "place" ] "windowed names"
+
+              Expect.equal
+                  (Schema.typeOf "place" knowledge)
+                  (Some Fuaran.Core.IntType)
+                  "SQL RANK() is an int, like the ranking family it joined"
+
+              Expect.isEmpty
+                  (Schema.readsOfTransform (Fuaran.Core.Transform.Window spec))
+                  "a ranking window is computed from the ORDER key alone"
+          }
+
+          test "an Except takes the left schema through, and a finding can name it" {
+              let step = Fuaran.Core.Transform.Except(Fuaran.Core.DataSource.Embedded orders)
+
+              let knowledge = Schema.ofPipeline SourceSchemas.none embedded [ step ]
+
+              Expect.equal
+                  (closedNames knowledge)
+                  [ "id"; "total"; "region" ]
+                  "a multiset set-op drops ROWS; it touches no column"
+
+              Expect.isEmpty (Schema.readsOfTransform step) "it keys on the whole row, not on a named column"
+              Expect.equal (Schema.verbOf step) "Except" "and the verb has a name, so a finding can locate the step"
           }
 
           test "Unpivot closes to the id columns plus the melted pair" {

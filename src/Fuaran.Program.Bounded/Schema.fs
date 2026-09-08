@@ -224,6 +224,8 @@ module Schema =
         | Transform.Distinct -> "Distinct"
         | Transform.Limit _ -> "Limit"
         | Transform.Union _ -> "Union"
+        | Transform.Intersect _ -> "Intersect"
+        | Transform.Except _ -> "Except"
 
     /// The columns a step requires its INPUT to carry — the ones whose absence
     /// the evaluator reports as `UnknownColumn`.
@@ -244,30 +246,61 @@ module Schema =
         | Transform.GroupBy(keys, aggs) -> keys @ (aggs |> List.map _.Of)
         | Transform.Join(_, on, _) -> on |> List.map fst
         | Transform.Window spec ->
+            // Enumerated rather than defaulted, and pinned to the evaluator's
+            // own `windowReadsOf` guard: the positional / ranking family is
+            // computed entirely from the ORDER key, so its `of` is never read
+            // and an unresolvable name there is not a finding. A wildcard here
+            // would have silently classified every function added upstream as
+            // reading `of`, which is how `CompetitionRank` would have refused a
+            // handler the evaluator runs perfectly well.
             match spec.Fn with
             | WindowFn.RowNumber
-            | WindowFn.Rank -> []
-            | _ -> [ spec.Of ]
+            | WindowFn.Rank
+            | WindowFn.DenseRank
+            | WindowFn.CompetitionRank
+            | WindowFn.NTile _ -> []
+            | WindowFn.Lag
+            | WindowFn.Lead
+            | WindowFn.CumulSum
+            | WindowFn.CumulMax
+            | WindowFn.CumulMin
+            | WindowFn.RollingMean
+            | WindowFn.RollingSum -> [ spec.Of ]
         | Transform.Pivot spec -> spec.Index @ [ spec.On; spec.Values ]
         | Transform.Unpivot(idVars, valueVars) -> idVars @ valueVars
         | Transform.Sort _
         | Transform.Distinct
         | Transform.Limit _
-        | Transform.Union _ -> []
+        // The three multiset set-ops key on the WHOLE ROW rather than on any
+        // named column, so they require nothing of the input's names here.
+        // What they do require — that both sides carry the same column names —
+        // is a claim about two schemas rather than one, and is checked
+        // separately (`Union`'s statically, the other two by the evaluator).
+        | Transform.Union _
+        | Transform.Intersect _
+        | Transform.Except _ -> []
 
     /// The type a window function's output column carries. Pinned to the
-    /// evaluator's own rule rather than restated loosely: the counting functions
-    /// are integers, the accumulating ones are floats, and the shifting pair
-    /// keeps the source column's type — which is unknown exactly when the source
-    /// column's type is.
+    /// evaluator's own rule rather than restated loosely: the positional and
+    /// ranking family is integer, the accumulating family is float, and the
+    /// shifting pair plus the running extremes keep the source column's type —
+    /// which is unknown exactly when the source column's type is.
     let private windowType (input: SchemaKnowledge) (spec: WindowSpec) : ColumnType option =
         match spec.Fn with
         | WindowFn.RowNumber
-        | WindowFn.Rank -> Some ColumnType.IntType
+        | WindowFn.Rank
+        | WindowFn.DenseRank
+        | WindowFn.CompetitionRank
+        | WindowFn.NTile _ -> Some ColumnType.IntType
         | WindowFn.CumulSum
-        | WindowFn.RollingMean -> Some ColumnType.FloatType
+        | WindowFn.RollingMean
+        | WindowFn.RollingSum -> Some ColumnType.FloatType
         | WindowFn.Lag
-        | WindowFn.Lead -> typeOf spec.Of input
+        | WindowFn.Lead
+        // The running extremes keep the source column's type, exactly as
+        // `AggFn.Min` / `AggFn.Max` do.
+        | WindowFn.CumulMax
+        | WindowFn.CumulMin -> typeOf spec.Of input
 
     /// The type an aggregate produces over a source column of `sourceType`.
     /// Where the source type is unknown, only the aggregates that IGNORE it can
@@ -277,7 +310,10 @@ module Schema =
         | Some ty -> Some(Column.aggType fn ty)
         | None ->
             match fn with
-            | AggFn.Count -> Some ColumnType.IntType
+            | AggFn.Count
+            // A distinct count is a count: it ignores the source type entirely,
+            // so it stays typed where the source is not.
+            | AggFn.CountDistinct -> Some ColumnType.IntType
             | AggFn.Mean
             | AggFn.Median
             | AggFn.StdDev -> Some ColumnType.FloatType
@@ -298,10 +334,12 @@ module Schema =
         | Transform.Distinct
         | Transform.Limit _ -> input
 
-        // A union's output is the LEFT schema — the evaluator requires the two
-        // to agree before it gets here, and disagreement is a finding rather
-        // than a schema.
-        | Transform.Union _ -> input
+        // The three multiset set-ops take the LEFT schema through unchanged —
+        // the evaluator requires the two column-name lists to agree before it
+        // gets here, and disagreement is a finding rather than a schema.
+        | Transform.Union _
+        | Transform.Intersect _
+        | Transform.Except _ -> input
 
         // Project CLOSES the set however open the input was: the output is
         // exactly the listed columns, in the listed order, whatever else the

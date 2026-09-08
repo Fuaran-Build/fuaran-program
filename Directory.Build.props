@@ -3,6 +3,27 @@
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
     <WarnOn>3390;$(WarnOn)</WarnOn>
+    <!-- FS0025 — an incomplete pattern match — is an ERROR here, repository
+         wide, and that is a deliberate escalation rather than a strictness
+         preference.
+
+         This repository's whole vocabulary is other people's: `Transform`,
+         `WindowFn`, `AggFn`, the action union, the effect sets. Every one of
+         them is a closed DU owned by a producer that ships on its own rhythm,
+         so the way a case arrives here is a package raise, not an edit anyone
+         makes in this tree. As a warning, FS0025 is exactly the signal that
+         gets scrolled past on a green build — and the cost of scrolling past it
+         is a `MatchFailureException` on the first document that reaches the
+         unhandled case, in a match whose own comment declares it total.
+         Six such warnings stood for three tier raises before anyone read them.
+
+         Scoped to the whole repository rather than to the files that drifted,
+         because the next case will arrive in a different file and a guard that
+         only covers the places already caught out is a record of the last
+         failure rather than a check. Deliberately NOT `TreatWarningsAsErrors`:
+         that would make an unrelated upstream deprecation a build break here,
+         which is a different trade and one nobody has argued for. -->
+    <WarningsAsErrors>FS0025;$(WarningsAsErrors)</WarningsAsErrors>
     <!-- 0.2.0 carries two things, both of them reasons a consumer must take a
          new slot rather than a re-pack of 0.1.0.
 

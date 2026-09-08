@@ -170,6 +170,29 @@ let tests =
                   "and the slot the table lands in is NOT a demand: it is this placement's own query store, not something asked of anyone"
           }
 
+          test "an Except stage demands the source it subtracts" {
+              // The set-ops carry a second source exactly as `Join` and `Union`
+              // do. Before this arm existed the walk did not merely under-report
+              // that source — the match declared itself total and threw on the
+              // first handler that used the verb.
+              let projection =
+                  ServerDemanded.ofHandler (
+                      handlerOf
+                          [ Effect(
+                                ServerEffect.RunQuery(
+                                    "rows",
+                                    Fuaran.Core.Ref "orders",
+                                    [ Fuaran.Core.Except(Fuaran.Core.Ref "cancelled") ]
+                                )
+                            ) ]
+                  )
+
+              Expect.equal
+                  ((tierOf projection).Channels |> List.map _.Name)
+                  [ "cancelled"; "orders" ]
+                  "the right-hand side of a set-op reaches the host's resolver, exactly as a Union's does"
+          }
+
           test "a Compute stage demands what the same action demands anywhere else" {
               // One algebra, read at the projection rather than at the
               // interpreter: a stage's action is run by the shared fold, so its
