@@ -330,7 +330,14 @@ module ClientEffectDestination =
     /// bound on what the host does with the body once it has it.
     let destinationOf (effect: ClientEffect) : EffectDestination =
         match effect with
-        | ClientEffect.Navigate route
+        // The route is what a destination policy judges; the browsing-context
+        // target the tier added beside it is not a destination and changes none
+        // of this. `Blank` opens the SAME URL in another context, so a policy
+        // that permits the origin permits it and one that refuses the origin
+        // refuses it — reading the target here would make an allowlist mean two
+        // different things depending on where the page opens, which is not a
+        // property any origin rule can express.
+        | ClientEffect.Navigate(route, _)
         | ClientEffect.PushState route -> EgressPolicy.classify route
         | ClientEffect.Download(url, _) -> EgressPolicy.classify url
         | ClientEffect.ReadFileBody _ -> EffectDestination.Local
@@ -341,8 +348,19 @@ module ClientEffectDestination =
         // chose. The discriminator gate still governs whether it runs at all, an
         // unbidden print dialogue being host-observable, and that is exactly the
         // decision `Absent` defers to rather than pre-empts.
+        //
+        // `Confirm` joins them, and it is the arm most likely to be misread as
+        // something else. It carries a prompt the author wrote and an opaque
+        // token, asks the reader a question, and sends nothing anywhere: the
+        // answer returns through the ordinary event channel, and the
+        // continuation it may unlock is dispatched separately and meets its OWN
+        // destination check when it does. So the egress question has no subject
+        // here — classifying the confirmation by where its continuation might
+        // later go would judge one act by another act's destination, and would
+        // have to guess at a continuation this arm does not carry.
         | ClientEffect.Print
         | ClientEffect.WriteToClipboard _
+        | ClientEffect.Confirm _
         | ClientEffect.Focus _ -> EffectDestination.Absent
 
 /// Why an effect did not run. Every arm is recorded through `OnDenied`; the

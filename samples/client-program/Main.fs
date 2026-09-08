@@ -69,6 +69,15 @@ let private writeClipboard (text: string) : unit = jsNative
 [<Emit("window.location.href = $0")>]
 let private navigateTo (route: string) : unit = jsNative
 
+/// The `Blank` browsing context. `noopener,noreferrer` is not decoration and is
+/// not this sample's invention: the opened document would otherwise hold a live
+/// `window.opener` handle back to this one and could navigate it away, and the
+/// tier discharges that on every host rather than delegating it. A sample that
+/// mirrored the arm without the window features would be demonstrating the one
+/// thing about it that must not be copied.
+[<Emit("window.open($0, '_blank', 'noopener,noreferrer')")>]
+let private openBlank (route: string) : unit = jsNative
+
 [<Emit("history.pushState({ fuaranRoute: $0 }, '', $0)")>]
 let private pushState (route: string) : unit = jsNative
 
@@ -161,7 +170,8 @@ let private start () =
                 | _ -> ())
             |> EffectRegistry.register "Navigate" (fun fx ->
                 match fx with
-                | ClientEffect.Navigate route -> navigateTo route
+                | ClientEffect.Navigate(route, NavigateTarget.Self) -> navigateTo route
+                | ClientEffect.Navigate(route, NavigateTarget.Blank) -> openBlank route
                 | _ -> ())
             |> EffectRegistry.register "PushState" (fun fx ->
                 match fx with

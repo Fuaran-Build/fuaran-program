@@ -16,6 +16,11 @@ module Fuaran.Program.Runtime.Tests.EgressPolicy
 // ============================================================================
 
 open Expecto
+// `NavigateTarget` — the browsing context the effect's route now carries. The
+// destinations under test are unchanged by it, which is the point: every case
+// here names `Self`, and the one that would not is a target question rather
+// than a destination one.
+open Fuaran.UI.Types
 open Fuaran.UI.ServerDriven
 open Fuaran.Program.Runtime
 
@@ -51,7 +56,9 @@ let tests =
               "classification by arm"
               [ test "Navigate and PushState classify their route" {
                     Expect.equal
-                        (ClientEffectDestination.destinationOf (ClientEffect.Navigate "https://a.example/x"))
+                        (ClientEffectDestination.destinationOf (
+                            ClientEffect.Navigate("https://a.example/x", NavigateTarget.Self)
+                        ))
                         (EffectDestination.Remote "a.example")
                         "navigate"
 
@@ -98,7 +105,7 @@ let tests =
                     // `evil.example`, and a first-`@` split reads the other one.
                     Expect.equal
                         (ClientEffectDestination.destinationOf (
-                            ClientEffect.Navigate "https://cdn.assets.test@evil.example/x"
+                            ClientEffect.Navigate("https://cdn.assets.test@evil.example/x", NavigateTarget.Self)
                         ))
                         (EffectDestination.Remote "evil.example")
                         "last @ wins"
@@ -108,7 +115,10 @@ let tests =
               "the default refuses what the discriminator gate could not"
               [ test "a gate-permitted Navigate to an undeclared origin is refused" {
                     let registry, performed, denied = probe id
-                    EffectRegistry.perform registry (ClientEffect.Navigate "https://collector.example/?s=secret")
+
+                    EffectRegistry.perform
+                        registry
+                        (ClientEffect.Navigate("https://collector.example/?s=secret", NavigateTarget.Self))
 
                     Expect.isEmpty performed "not performed"
                     Expect.equal (deniedOrigin denied) (Some "collector.example") "origin recorded"
@@ -119,7 +129,7 @@ let tests =
 
                     EffectRegistry.perform
                         registry
-                        (ClientEffect.Navigate "https://collector.example/beacon?s=the-secret")
+                        (ClientEffect.Navigate("https://collector.example/beacon?s=the-secret", NavigateTarget.Self))
 
                     let described = EffectDenial.describe (Seq.exactlyOne denied)
                     Expect.stringContains described "collector.example" "origin present"
@@ -129,9 +139,13 @@ let tests =
 
                 test "a same-origin route is still performed" {
                     let registry, performed, denied = probe id
-                    EffectRegistry.perform registry (ClientEffect.Navigate "/next")
+                    EffectRegistry.perform registry (ClientEffect.Navigate("/next", NavigateTarget.Self))
 
-                    Expect.equal (List.ofSeq performed) [ ClientEffect.Navigate "/next" ] "performed"
+                    Expect.equal
+                        (List.ofSeq performed)
+                        [ ClientEffect.Navigate("/next", NavigateTarget.Self) ]
+                        "performed"
+
                     Expect.isEmpty denied "no denial"
                 }
 
@@ -147,7 +161,7 @@ let tests =
                     // The floor runs inside the classification, so the effect
                     // seam does not depend on the driver having sanitised first.
                     let registry, performed, denied = probe id
-                    EffectRegistry.perform registry (ClientEffect.Navigate "javascript:alert(1)")
+                    EffectRegistry.perform registry (ClientEffect.Navigate("javascript:alert(1)", NavigateTarget.Self))
 
                     Expect.isEmpty performed "not performed"
                     Expect.equal (deniedOrigin denied) (Some "unparseable") "refused"
@@ -173,7 +187,9 @@ let tests =
                     let registry, performed, denied =
                         probe (EffectRegistry.allowOrigin (ExactHost "cdn.assets.test") [ "Download" ])
 
-                    EffectRegistry.perform registry (ClientEffect.Navigate "https://cdn.assets.test/x")
+                    EffectRegistry.perform
+                        registry
+                        (ClientEffect.Navigate("https://cdn.assets.test/x", NavigateTarget.Self))
 
                     Expect.isEmpty performed "not performed"
                     Expect.equal (deniedOrigin denied) (Some "cdn.assets.test") "effect-scoped"
@@ -193,8 +209,13 @@ let tests =
                     let registry, performed, _ =
                         probe (EffectRegistry.allowOrigin (HostSuffix "example.com") [ "Navigate" ])
 
-                    EffectRegistry.perform registry (ClientEffect.Navigate "https://example.com/a")
-                    EffectRegistry.perform registry (ClientEffect.Navigate "https://x.y.example.com/b")
+                    EffectRegistry.perform
+                        registry
+                        (ClientEffect.Navigate("https://example.com/a", NavigateTarget.Self))
+
+                    EffectRegistry.perform
+                        registry
+                        (ClientEffect.Navigate("https://x.y.example.com/b", NavigateTarget.Self))
 
                     Expect.equal (List.length (List.ofSeq performed)) 2 "both performed"
                 }
@@ -204,7 +225,9 @@ let tests =
                     let registry, performed, denied =
                         probe (EffectRegistry.allowOrigin (HostSuffix "example.com") [ "Navigate" ])
 
-                    EffectRegistry.perform registry (ClientEffect.Navigate "https://notexample.com/x")
+                    EffectRegistry.perform
+                        registry
+                        (ClientEffect.Navigate("https://notexample.com/x", NavigateTarget.Self))
 
                     Expect.isEmpty performed "not performed"
                     Expect.equal (deniedOrigin denied) (Some "notexample.com") "substring is not a suffix match"
@@ -214,7 +237,10 @@ let tests =
                     let registry, performed, _ =
                         probe (EffectRegistry.allowOrigin (ExactHost "example.com") [ "Navigate" ])
 
-                    EffectRegistry.perform registry (ClientEffect.Navigate "https://Example.COM./x")
+                    EffectRegistry.perform
+                        registry
+                        (ClientEffect.Navigate("https://Example.COM./x", NavigateTarget.Self))
+
                     Expect.equal (List.length (List.ofSeq performed)) 1 "normalised match"
                 }
 
@@ -222,7 +248,10 @@ let tests =
                     let registry, performed, _ =
                         probe (EffectRegistry.allowOrigin (ExactHost "example.com") [])
 
-                    EffectRegistry.perform registry (ClientEffect.Navigate "https://example.com/a")
+                    EffectRegistry.perform
+                        registry
+                        (ClientEffect.Navigate("https://example.com/a", NavigateTarget.Self))
+
                     EffectRegistry.perform registry (ClientEffect.Download("https://example.com/f", "f"))
 
                     Expect.equal (List.length (List.ofSeq performed)) 2 "both performed"
@@ -238,7 +267,9 @@ let tests =
                                             Effects = [] } ] }
                         )
 
-                    EffectRegistry.perform registry (ClientEffect.Navigate "https://example.com/a")
+                    EffectRegistry.perform
+                        registry
+                        (ClientEffect.Navigate("https://example.com/a", NavigateTarget.Self))
 
                     Expect.isEmpty performed "not performed"
                     Expect.equal (deniedOrigin denied) (Some "example.com") "an empty effect list is not a wildcard"
@@ -254,7 +285,10 @@ let tests =
                         |> EffectRegistry.register "Navigate" performed.Add
                         |> EffectRegistry.permissive
 
-                    EffectRegistry.perform registry (ClientEffect.Navigate "https://anywhere.example/x")
+                    EffectRegistry.perform
+                        registry
+                        (ClientEffect.Navigate("https://anywhere.example/x", NavigateTarget.Self))
+
                     Expect.equal (List.length (List.ofSeq performed)) 1 "performed"
                 }
 
@@ -266,7 +300,9 @@ let tests =
                         |> EffectRegistry.permissive
                         |> EffectRegistry.onDenied denied.Add
 
-                    EffectRegistry.perform registry (ClientEffect.Navigate "https://anywhere.example/x")
+                    EffectRegistry.perform
+                        registry
+                        (ClientEffect.Navigate("https://anywhere.example/x", NavigateTarget.Self))
 
                     match List.ofSeq denied with
                     | [ EffectDenial.Unregistered "Navigate" ] -> ()
@@ -281,7 +317,7 @@ let tests =
                                     AllowLocal = false }
                         )
 
-                    EffectRegistry.perform registry (ClientEffect.Navigate "/next")
+                    EffectRegistry.perform registry (ClientEffect.Navigate("/next", NavigateTarget.Self))
                     EffectRegistry.perform registry (ClientEffect.ReadFileBody("node", "Text"))
 
                     Expect.isEmpty performed "neither performed"
@@ -316,7 +352,9 @@ let tests =
                         |> EffectRegistry.withGate (fun _ -> false)
                         |> EffectRegistry.onDenied denied.Add
 
-                    EffectRegistry.perform registry (ClientEffect.Navigate "https://collector.example/x")
+                    EffectRegistry.perform
+                        registry
+                        (ClientEffect.Navigate("https://collector.example/x", NavigateTarget.Self))
 
                     match List.ofSeq denied with
                     | [ EffectDenial.GateRefused "Navigate" ] -> ()
@@ -325,7 +363,11 @@ let tests =
 
                 test "exactly one denial is recorded per dispatch" {
                     let registry, _, denied = probe id
-                    EffectRegistry.perform registry (ClientEffect.Navigate "https://collector.example/x")
+
+                    EffectRegistry.perform
+                        registry
+                        (ClientEffect.Navigate("https://collector.example/x", NavigateTarget.Self))
+
                     Expect.equal (List.length (List.ofSeq denied)) 1 "one denial"
                 }
 
@@ -340,7 +382,9 @@ let tests =
                         |> EffectRegistry.withGate (fun _ -> true)
                         |> EffectRegistry.onDenied denied.Add
 
-                    EffectRegistry.perform registry (ClientEffect.Navigate "https://collector.example/x")
+                    EffectRegistry.perform
+                        registry
+                        (ClientEffect.Navigate("https://collector.example/x", NavigateTarget.Self))
 
                     Expect.equal ran 0 "the performer never ran"
                     Expect.equal (List.length (List.ofSeq denied)) 1 "and the refusal was recorded"

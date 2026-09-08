@@ -79,7 +79,10 @@ let tests =
           test "the four effect-bearing arms are demanded by their registry discriminator" {
               // The names must be exactly the strings a host registry is keyed
               // on, or a demanded effect and a registered one never meet.
-              Expect.equal (ofAction (Action.Navigate "/next")).Effects [ "Navigate" ] "Navigate"
+              Expect.equal
+                  (ofAction (Action.Navigate(TextSource.Literal "/next", NavigateTarget.Self))).Effects
+                  [ "Navigate" ]
+                  "Navigate"
 
               Expect.equal
                   (ofAction (Action.WriteToClipboard(TextSource.Literal "x"))).Effects
@@ -105,7 +108,9 @@ let tests =
               // asking what the program can ask for, and the answer is the same
               // either way. A walk that quietly dropped it would under-report
               // exactly the capability a host most wants to know about.
-              let p = ofAction (Action.Navigate "javascript:alert(1)")
+              let p =
+                  ofAction (Action.Navigate(TextSource.Literal "javascript:alert(1)", NavigateTarget.Self))
+
               Expect.equal p.Effects [ "Navigate" ] "Navigate is demanded regardless of the route's safety"
           }
 
@@ -113,9 +118,9 @@ let tests =
               let p =
                   ofAction (
                       Action.Chain
-                          [ Action.Navigate "/a"
+                          [ Action.Navigate(TextSource.Literal "/a", NavigateTarget.Self)
                             Action.WriteToClipboard(TextSource.Literal "x")
-                            Action.Navigate "/b"
+                            Action.Navigate(TextSource.Literal "/b", NavigateTarget.Self)
                             Action.SetState("cart.total", Some(jstr "1"), None) ]
                   )
 
@@ -225,7 +230,7 @@ let tests =
                   Fuaran.form
                       "f"
                       { Defaults.form<obj> with
-                          OnSubmit = Action.Navigate "/thanks" }
+                          OnSubmit = Action.Navigate(TextSource.Literal "/thanks", NavigateTarget.Self) }
 
               let modal =
                   Fuaran.modal
@@ -247,7 +252,12 @@ let tests =
                   { host with
                       State =
                           Some
-                              { OnEmpty = Some(btn "empty-cta" (Action.Navigate "/browse"))
+                              { OnEmpty =
+                                  Some(
+                                      btn
+                                          "empty-cta"
+                                          (Action.Navigate(TextSource.Literal "/browse", NavigateTarget.Self))
+                                  )
                                 OnError = None
                                 OnLoading = None } }
 
@@ -267,13 +277,19 @@ let tests =
                       { Defaults.select<obj> with
                           Label = TextSource.Literal "Region" }
 
-              let p = Demanded.ofTree (dash [ select; btn "b" (Action.Navigate "/x") ])
+              let p =
+                  Demanded.ofTree (
+                      dash
+                          [ select
+                            btn "b" (Action.Navigate(TextSource.Literal "/x", NavigateTarget.Self)) ]
+                  )
+
               Expect.equal p.OpaqueHandlers [ "region" ] "the Select is named"
               Expect.equal p.Effects [ "Navigate" ] "the button's demand is still exact"
           }
 
           test "a Button is NOT opaque — its action is the wire-survivable slot" {
-              let p = ofAction (Action.Navigate "/x")
+              let p = ofAction (Action.Navigate(TextSource.Literal "/x", NavigateTarget.Self))
               Expect.isEmpty p.OpaqueHandlers "a button resolves through the wire, not a closure"
           }
 
@@ -282,10 +298,12 @@ let tests =
           test "the projection is deterministic and self-describing" {
               let tree =
                   dash
-                      [ btn "b1" (Action.Navigate "/a")
+                      [ btn "b1" (Action.Navigate(TextSource.Literal "/a", NavigateTarget.Self))
                         btn
                             "b2"
-                            (Action.Chain [ Action.WriteToClipboard(TextSource.Literal "x"); Action.Navigate "/a" ]) ]
+                            (Action.Chain
+                                [ Action.WriteToClipboard(TextSource.Literal "x")
+                                  Action.Navigate(TextSource.Literal "/a", NavigateTarget.Self) ]) ]
 
               let a = Demanded.ofTree tree
               let b = Demanded.ofTree tree
@@ -315,7 +333,9 @@ let tests =
 
           test "a tree demanding an unregistered effect is refused BY NAME" {
               let findings =
-                  Demanded.check HostCoverage.nothing (dash [ btn "b" (Action.Navigate "/x") ])
+                  Demanded.check
+                      HostCoverage.nothing
+                      (dash [ btn "b" (Action.Navigate(TextSource.Literal "/x", NavigateTarget.Self)) ])
 
               Expect.equal findings [ CoverageFinding.UnregisteredEffect "Navigate" ] "one finding, naming the effect"
 
@@ -335,7 +355,11 @@ let tests =
                   |> HostCoverage.withEffects [ "Navigate" ]
                   |> HostCoverage.withGate (fun _ -> false)
 
-              let findings = Demanded.check gated (dash [ btn "b" (Action.Navigate "/x") ])
+              let findings =
+                  Demanded.check
+                      gated
+                      (dash [ btn "b" (Action.Navigate(TextSource.Literal "/x", NavigateTarget.Self)) ])
+
               Expect.equal findings [ CoverageFinding.GateRefusesEffect "Navigate" ] "gate refusal, not absence"
           }
 
@@ -344,7 +368,9 @@ let tests =
               // the most permissive gate in the world still cannot cover an
               // effect nothing performs.
               let findings =
-                  Demanded.check (hostWith [ "WriteToClipboard" ]) (dash [ btn "b" (Action.Navigate "/x") ])
+                  Demanded.check
+                      (hostWith [ "WriteToClipboard" ])
+                      (dash [ btn "b" (Action.Navigate(TextSource.Literal "/x", NavigateTarget.Self)) ])
 
               Expect.equal findings [ CoverageFinding.UnregisteredEffect "Navigate" ] "still absent"
           }
@@ -352,7 +378,11 @@ let tests =
           test "a fully covered tree yields no findings" {
               let tree =
                   dash
-                      [ btn "b" (Action.Chain [ Action.Navigate "/x"; Action.WriteToClipboard(TextSource.Literal "y") ]) ]
+                      [ btn
+                            "b"
+                            (Action.Chain
+                                [ Action.Navigate(TextSource.Literal "/x", NavigateTarget.Self)
+                                  Action.WriteToClipboard(TextSource.Literal "y") ]) ]
 
               Expect.isEmpty
                   (Demanded.check (hostWith [ "Navigate"; "WriteToClipboard" ]) tree)
@@ -362,7 +392,11 @@ let tests =
           test "every uncovered demand is reported, not just the first" {
               let tree =
                   dash
-                      [ btn "b" (Action.Chain [ Action.Navigate "/x"; Action.WriteToClipboard(TextSource.Literal "y") ]) ]
+                      [ btn
+                            "b"
+                            (Action.Chain
+                                [ Action.Navigate(TextSource.Literal "/x", NavigateTarget.Self)
+                                  Action.WriteToClipboard(TextSource.Literal "y") ]) ]
 
               let findings = Demanded.check HostCoverage.nothing tree
 
@@ -415,7 +449,8 @@ let tests =
           test "checkProjection validates a document the host never held a tree for" {
               // The split that makes the projection portable: a document
               // emitted elsewhere is checkable here with no tree in sight.
-              let projection = Demanded.ofTree (dash [ btn "b" (Action.Navigate "/x") ])
+              let projection =
+                  Demanded.ofTree (dash [ btn "b" (Action.Navigate(TextSource.Literal "/x", NavigateTarget.Self)) ])
 
               Expect.equal
                   (Demanded.checkProjection HostCoverage.nothing projection)
@@ -426,7 +461,9 @@ let tests =
           // ── the server placement's strict construction path ───────
 
           test "initStrict refuses a session the host cannot cover; init still builds one" {
-              let wire = WireTree.ofDecoded (dash [ btn "b" (Action.Navigate "/x") ])
+              let wire =
+                  WireTree.ofDecoded (dash [ btn "b" (Action.Navigate(TextSource.Literal "/x", NavigateTarget.Self)) ])
+
               let services = BoundedServices.createPermissive stubRender
 
               match BoundedDriver.initStrict HostCoverage.nothing services empty wire with
@@ -442,7 +479,8 @@ let tests =
           }
 
           test "initStrict admits a session the host CAN cover" {
-              let wire = WireTree.ofDecoded (dash [ btn "b" (Action.Navigate "/x") ])
+              let wire =
+                  WireTree.ofDecoded (dash [ btn "b" (Action.Navigate(TextSource.Literal "/x", NavigateTarget.Self)) ])
 
               match
                   BoundedDriver.initStrict
@@ -472,7 +510,9 @@ let tests =
                   dash
                       [ btn
                             "b"
-                            (Action.Chain [ Action.WriteToClipboard(TextSource.Literal "x"); Action.Navigate "/escape" ]) ]
+                            (Action.Chain
+                                [ Action.WriteToClipboard(TextSource.Literal "x")
+                                  Action.Navigate(TextSource.Literal "/escape", NavigateTarget.Self) ]) ]
 
               let findings = Demanded.check host widened
 

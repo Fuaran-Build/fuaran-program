@@ -63,7 +63,12 @@ let tests =
               let renders = ref 0
               let services = servicesOffering [] renders
 
-              match Program.mkBoundedStrict services empty (wireOf (Action.Navigate "/x")) with
+              match
+                  Program.mkBoundedStrict
+                      services
+                      empty
+                      (wireOf (Action.Navigate(TextSource.Literal "/x", NavigateTarget.Self)))
+              with
               | Ok _ -> failtest "expected a refusal"
               | Error findings ->
                   Expect.equal findings [ CoverageFinding.UnregisteredEffect "Navigate" ] "named the absent effect"
@@ -75,7 +80,12 @@ let tests =
               let renders = ref 0
               let services = servicesOffering [ "Navigate" ] renders
 
-              match Program.mkBoundedStrict services empty (wireOf (Action.Navigate "/x")) with
+              match
+                  Program.mkBoundedStrict
+                      services
+                      empty
+                      (wireOf (Action.Navigate(TextSource.Literal "/x", NavigateTarget.Self)))
+              with
               | Ok program ->
                   Expect.equal program.BaseTree.Id "root" "the ordinary program"
                   Expect.equal renders.Value 1 "rendered once, exactly as mkBounded would"
@@ -88,7 +98,13 @@ let tests =
               // the denial recorded. Strict mode is an opt-in on top.
               let renders = ref 0
               let services = servicesOffering [] renders
-              let program = Program.mkBounded services empty (wireOf (Action.Navigate "/x"))
+
+              let program =
+                  Program.mkBounded
+                      services
+                      empty
+                      (wireOf (Action.Navigate(TextSource.Literal "/x", NavigateTarget.Self)))
+
               Expect.equal program.BaseTree.Id "root" "built anyway"
               Expect.equal renders.Value 1 "and rendered"
           }
@@ -106,7 +122,9 @@ let tests =
                   "within coverage: admitted"
 
               let widened =
-                  Action.Chain [ Action.WriteToClipboard(TextSource.Literal "x"); Action.Navigate "/escape" ]
+                  Action.Chain
+                      [ Action.WriteToClipboard(TextSource.Literal "x")
+                        Action.Navigate(TextSource.Literal "/escape", NavigateTarget.Self) ]
 
               Expect.isFalse
                   (Program.mkBoundedStrict services empty (wireOf widened) |> Result.isOk)

@@ -633,7 +633,24 @@ module ProgramWire =
                 |> Result.map ctor
 
             match kind with
-            | "Navigate" -> one "route" ClientEffect.Navigate
+            // The tier's effect arm now carries a browsing-context target
+            // alongside the route, and this decoder deliberately does NOT read
+            // one: the program wire specification declares exactly `kind` +
+            // `route` for this arm, so admitting a `target` member here would
+            // put the codec ahead of the document that defines it — and a codec
+            // that accepts more than its specification says is how two hosts
+            // come to disagree about what a conformant document is. `Self` is
+            // the specification's one declared meaning, and the tier omits the
+            // member at `Self`, so every byte sequence either side has ever
+            // exchanged round-trips unchanged.
+            //
+            // An undeclared `target` is therefore REFUSED by `declaredOnly`, as
+            // any undeclared member is, and that refusal is the gap reporting
+            // itself rather than a silent divergence. Closing it is a
+            // specification act — normative text, schema, fixture, manifest and
+            // then this arm, in one change-set across both repositories — which
+            // is the forward coupling this family always carried.
+            | "Navigate" -> one "route" (fun route -> ClientEffect.Navigate(route, NavigateTarget.Self))
             | "PushState" -> one "route" ClientEffect.PushState
             | "WriteToClipboard" -> one "text" ClientEffect.WriteToClipboard
             | "Focus" -> one "nodeId" ClientEffect.Focus

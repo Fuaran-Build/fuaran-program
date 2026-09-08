@@ -201,12 +201,20 @@ let tests =
               let r = Recorder()
 
               let program =
-                  Program.mkBounded (permissive r) empty (mkTree (Action.Navigate "/next"))
+                  Program.mkBounded
+                      (permissive r)
+                      empty
+                      (mkTree (Action.Navigate(TextSource.Literal "/next", NavigateTarget.Self)))
 
               let program2, out = Program.handleEvent program (clickEv "set")
 
-              Expect.equal out.Effects [ ClientEffect.Navigate "/next" ] "effect reported"
-              Expect.equal r.Effects [ ClientEffect.Navigate "/next" ] "effect performed through the seam"
+              Expect.equal out.Effects [ ClientEffect.Navigate("/next", NavigateTarget.Self) ] "effect reported"
+
+              Expect.equal
+                  r.Effects
+                  [ ClientEffect.Navigate("/next", NavigateTarget.Self) ]
+                  "effect performed through the seam"
+
               Expect.equal program2.Store.State empty.State "store unchanged"
           }
 
@@ -223,10 +231,19 @@ let tests =
                           |> EffectRegistry.permissive
                           |> EffectRegistry.onDenied r.OnDenied }
 
-              let program = Program.mkBounded services empty (mkTree (Action.Navigate "/next"))
+              let program =
+                  Program.mkBounded
+                      services
+                      empty
+                      (mkTree (Action.Navigate(TextSource.Literal "/next", NavigateTarget.Self)))
+
               let _, out = Program.handleEvent program (clickEv "set")
 
-              Expect.equal out.Effects [ ClientEffect.Navigate "/next" ] "the loop still EMITTED the effect"
+              Expect.equal
+                  out.Effects
+                  [ ClientEffect.Navigate("/next", NavigateTarget.Self) ]
+                  "the loop still EMITTED the effect"
+
               Expect.isEmpty r.Effects "but nothing was performed"
               Expect.equal r.Denials [ EffectDenial.Unregistered "Navigate" ] "the denial was recorded, not dropped"
           }
@@ -242,7 +259,12 @@ let tests =
                           |> EffectRegistry.withGate (fun name -> name <> "Navigate")
                           |> EffectRegistry.onDenied r.OnDenied }
 
-              let program = Program.mkBounded services empty (mkTree (Action.Navigate "/next"))
+              let program =
+                  Program.mkBounded
+                      services
+                      empty
+                      (mkTree (Action.Navigate(TextSource.Literal "/next", NavigateTarget.Self)))
+
               let _, _ = Program.handleEvent program (clickEv "set")
 
               Expect.isEmpty r.Effects "the performer did not run"
@@ -260,7 +282,12 @@ let tests =
                   { ProgramServices.createPermissive r.Render with
                       Effects = EffectRegistry.denyAll |> EffectRegistry.onDenied r.OnDenied }
 
-              let program = Program.mkBounded services empty (mkTree (Action.Navigate "/next"))
+              let program =
+                  Program.mkBounded
+                      services
+                      empty
+                      (mkTree (Action.Navigate(TextSource.Literal "/next", NavigateTarget.Self)))
+
               let _, _ = Program.handleEvent program (clickEv "set")
 
               Expect.isEmpty r.Effects "a host that wires nothing performs nothing"
@@ -272,7 +299,10 @@ let tests =
               let r = Recorder()
 
               let program =
-                  Program.mkBounded (permissive r) empty (mkTree (Action.Navigate "javascript:alert(1)"))
+                  Program.mkBounded
+                      (permissive r)
+                      empty
+                      (mkTree (Action.Navigate(TextSource.Literal "javascript:alert(1)", NavigateTarget.Self)))
 
               let _, out = Program.handleEvent program (clickEv "set")
 

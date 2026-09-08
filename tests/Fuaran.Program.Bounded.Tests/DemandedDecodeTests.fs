@@ -62,7 +62,7 @@ let private richTree: Node<obj> =
 
     dash
         [ select
-          btn "b1" (Action.Navigate "/a")
+          btn "b1" (Action.Navigate(TextSource.Literal "/a", NavigateTarget.Self))
           btn
               "b2"
               (Action.Chain

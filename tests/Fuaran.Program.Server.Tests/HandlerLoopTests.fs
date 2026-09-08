@@ -106,8 +106,8 @@ let tests =
                       Action.Chain
                           [ Action.SetState("status", Some(jstr "first"), None)
                             Action.SetState("status", Some(jstr "second"), None) ]
-                      "Navigate", Action.Navigate "/next"
-                      "refused Navigate", Action.Navigate "javascript:alert(1)"
+                      "Navigate", Action.Navigate(TextSource.Literal "/next", NavigateTarget.Self)
+                      "refused Navigate", Action.Navigate(TextSource.Literal "javascript:alert(1)", NavigateTarget.Self)
                       "documented no-op", Action.Notify("channel", jstr "payload")
                       "host-reserved write",
                       Action.SetState(Fuaran.UI.Renderer.StateKeys.HostReservedPrefix + "x", Some(jstr "no"), None) ] ->

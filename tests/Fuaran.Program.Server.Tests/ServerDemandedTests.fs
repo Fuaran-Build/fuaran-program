@@ -175,7 +175,9 @@ let tests =
               // interpreter: a stage's action is run by the shared fold, so its
               // client-tier demands are the fold's, not a server variant.
               let action =
-                  Action.Chain [ Action.Navigate "/next"; Action.SetState("cart.total", Some(jstr "1"), None) ]
+                  Action.Chain
+                      [ Action.Navigate(TextSource.Literal "/next", NavigateTarget.Self)
+                        Action.SetState("cart.total", Some(jstr "1"), None) ]
 
               let viaStage = ServerDemanded.ofHandler (handlerOf [ Compute action ])
               let viaFold = Demanded.ofAction action

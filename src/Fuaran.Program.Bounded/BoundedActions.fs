@@ -286,13 +286,61 @@ module BoundedActions =
         // action, because a loop emits no markup for that floor's own rejection
         // rule to govern. `sanitizeUrl` is that floor and nothing stricter; a
         // host adding strictness must declare the divergence.
-        | Action.Navigate route ->
-            (match Fuaran.UI.Renderer.Sanitize.sanitizeUrl route with
-             | Some safe ->
-                 { Store = s
-                   Effects = [ ClientEffect.Navigate safe ]
-                   Diagnostics = [] }
-             | None -> refused nodeId action "route is not a safe URL" s),
+        //
+        // The ROUTE is a `TextSource`, not a literal, and the TARGET names the
+        // browsing context — both since the tier widened this case. So the route
+        // resolves at DISPATCH TIME against the store, exactly as the clipboard
+        // arm below and the `SetState` arm above do, and the floor judges the
+        // RESOLVED string: that is the tier's own rule for a bound route, not a
+        // choice taken here, and it is the only ordering under which a floor
+        // means anything — sanitising the unresolved spelling would admit
+        // whatever the binding later produced.
+        //
+        // AN UNRESOLVED ROUTE IS REFUSED, and this is the one place this arm
+        // diverges from the clipboard arm rather than copying it. There, a
+        // resolved-but-null value is the unwritten-`State` steady state and is
+        // legitimately copied as `""`. Here `sanitizeUrl ""` answers `Some ""`,
+        // and a `ClientEffect.Navigate("", …)` is not "nowhere" — it is a real
+        // navigation to the current document, which reloads the page and
+        // discards whatever the reader had entered. The tier states the rule
+        // directly: a route that does not resolve navigates NOWHERE rather than
+        // degrading to `""`. So every non-value the resolver can answer with —
+        // unresolved, errored, a missing i18n key, and a resolved null — is a
+        // refusal with a reason, and nothing is emitted.
+        //
+        // `target` passes through untouched. It is a closed two-member enum the
+        // tier chose over a second effect arm, the shim opens `Blank` with
+        // `noopener,noreferrer`, and there is nothing for this loop to decide
+        // about it: it is not a destination, so the floor has no opinion on it.
+        | Action.Navigate(route, target) ->
+            let resolved: Result<string, string> =
+                match route with
+                | TextSource.Literal literal -> Ok literal
+                | TextSource.Bound binding ->
+                    (match resolveScalarText s binding with
+                     | Resolved value ->
+                         if isNull (box value) then
+                             Error "the route binding resolved to no value"
+                         else
+                             Ok value
+                     | NotResolved -> Error "the route binding did not resolve to a value"
+                     | Errored m -> Error m
+                     | I18nUnresolved k -> Error(sprintf "unresolved i18n key '%s'" k))
+                | TextSource.I18n(key, _) ->
+                    if Map.containsKey key s.I18n then
+                        Ok(resolveTextSource s route)
+                    else
+                        Error(sprintf "unresolved i18n key '%s'" key)
+
+            (match resolved with
+             | Error reason -> refused nodeId action (sprintf "%s — nothing was navigated to" reason) s
+             | Ok route ->
+                 match Fuaran.UI.Renderer.Sanitize.sanitizeUrl route with
+                 | Some safe ->
+                     { Store = s
+                       Effects = [ ClientEffect.Navigate(safe, target) ]
+                       Diagnostics = [] }
+                 | None -> refused nodeId action "route is not a safe URL" s),
             placement
         // The clipboard payload is a `TextSource`, not a literal: what a reader
         // copies is a figure in front of them or a link the session holds, so it
@@ -363,6 +411,22 @@ module BoundedActions =
               Effects = [ ClientEffect.Print ]
               Diagnostics = [] },
             placement
+
+        // Lowered, not refused, and the shortest arm in the file for a reason:
+        // the effect vocabulary has carried `ClientEffect.Focus` since the
+        // instruction channel was cut, and nothing on the wire could reach it
+        // until the tier gave the action union its counterpart. So this arm adds
+        // no capability to the loop — it connects one that was already declared,
+        // already registered, and already classified `Absent` by the egress
+        // seam. The node id is a bare string the AUTHOR wrote, addressing a node
+        // in this document, so there is nothing to resolve and no floor to
+        // apply: moving focus reaches no origin and carries no payload
+        // anywhere.
+        | Action.Focus nodeIdToFocus ->
+            { Store = s
+              Effects = [ ClientEffect.Focus nodeIdToFocus ]
+              Diagnostics = [] },
+            placement
         | Action.ReadFileBody(_, _, encoding, _) ->
             // The `onRead` closure (3rd field) is the inert decode sentinel — NOT
             // invoked here. The host reads the browser-held blob and round-trips
@@ -405,6 +469,25 @@ module BoundedActions =
         // documented no-ops (a generated app's loop does not fan out to host
         // channels / AI tools). Each emits a readable diagnostic so "this action
         // is inert on the generated-app path" is observable.
+        // A confirmation is a ROUND TRIP, and this loop has no return leg for
+        // it: the tier's design asks the shim, gets an answer back as the
+        // originating event re-delivered carrying the reader's decision, and
+        // only then dispatches the continuation — which meets its own gate on
+        // the way through. Every step of that but the first is a channel the
+        // bounded placement does not have, so the honest answer today is a
+        // documented no-op with a diagnostic, in exactly the shape `Notify` and
+        // `AiTool` take below.
+        //
+        // The CONSEQUENCE is stated rather than left to be discovered: NEITHER
+        // continuation runs — not `onConfirm`, and not `onCancel`. That is the
+        // fail-closed direction, and it is the only one available. Performing
+        // `onConfirm` without asking would run the act the author guarded
+        // precisely because they wanted it guarded; performing `onCancel` would
+        // report a refusal the reader never made. Doing nothing, visibly, is
+        // what leaves the author able to tell that their document asked for
+        // something this placement cannot do — which is the whole reason this
+        // interpreter diagnoses its no-ops instead of returning silence.
+        | Action.Confirm _
         | Action.Notify _
         | Action.AiTool _
         // Capability dispatch is a host channel; no store/DOM effect on the

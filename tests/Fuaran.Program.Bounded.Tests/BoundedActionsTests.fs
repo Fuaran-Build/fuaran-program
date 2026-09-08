@@ -96,8 +96,13 @@ let tests =
           }
 
           test "Navigate → closure-free ClientEffect; store unchanged" {
-              let out = BoundedActions.runBoundedAction "n" (Action.Navigate "/next") store0
-              Expect.equal out.Effects [ ClientEffect.Navigate "/next" ] "one Navigate effect"
+              let out =
+                  BoundedActions.runBoundedAction
+                      "n"
+                      (Action.Navigate(TextSource.Literal "/next", NavigateTarget.Self))
+                      store0
+
+              Expect.equal out.Effects [ ClientEffect.Navigate("/next", NavigateTarget.Self) ] "one Navigate effect"
               Expect.equal out.Store.State store0.State "store unchanged"
           }
 
@@ -201,7 +206,7 @@ let tests =
               let action =
                   Action.Chain
                       [ Action.SetState("a", Some(jv 1), None)
-                        Action.Navigate "/go"
+                        Action.Navigate(TextSource.Literal "/go", NavigateTarget.Self)
                         Action.SetState("b", Some(jv 2), None) ]
 
               let out = BoundedActions.runBoundedAction "n" action store0
@@ -211,7 +216,10 @@ let tests =
                   (Map.ofList [ "a", o 1.0; "b", o 2.0 ])
                   "both SetStateS applied (JSON numbers lower to float)"
 
-              Expect.equal out.Effects [ ClientEffect.Navigate "/go" ] "Navigate effect preserved in order"
+              Expect.equal
+                  out.Effects
+                  [ ClientEffect.Navigate("/go", NavigateTarget.Self) ]
+                  "Navigate effect preserved in order"
           }
 
           test "Notify / AiTool / Dispatch / CommitLocal are no-ops with a readable diagnostic" {
@@ -249,7 +257,13 @@ let tests =
                   BoundedActions.runBoundedAction "n" (Action.SetState("k", Some(jv 1), None)) store0
 
               Expect.isEmpty setOut.Diagnostics "SetState is a real mutation — no diagnostic"
-              let navOut = BoundedActions.runBoundedAction "n" (Action.Navigate "/x") store0
+
+              let navOut =
+                  BoundedActions.runBoundedAction
+                      "n"
+                      (Action.Navigate(TextSource.Literal "/x", NavigateTarget.Self))
+                      store0
+
               Expect.isEmpty navOut.Diagnostics "Navigate has a client effect — no diagnostic"
           }
 
@@ -402,7 +416,11 @@ let tests =
                     "//evil.example/x" ]
 
               for route in unsafeRoutes do
-                  let out = BoundedActions.runBoundedAction "n" (Action.Navigate route) store0
+                  let out =
+                      BoundedActions.runBoundedAction
+                          "n"
+                          (Action.Navigate(TextSource.Literal route, NavigateTarget.Self))
+                          store0
 
                   Expect.isEmpty out.Effects (sprintf "'%s' emits NO client effect" route)
 
@@ -415,8 +433,17 @@ let tests =
                   | other -> failtestf "expected a Refused diagnostic, got %A" other
 
               // A legitimate route still ships, sanitised.
-              let ok = BoundedActions.runBoundedAction "n" (Action.Navigate "  /next  ") store0
-              Expect.equal ok.Effects [ ClientEffect.Navigate "/next" ] "a safe route ships trimmed"
+              let ok =
+                  BoundedActions.runBoundedAction
+                      "n"
+                      (Action.Navigate(TextSource.Literal "  /next  ", NavigateTarget.Self))
+                      store0
+
+              Expect.equal
+                  ok.Effects
+                  [ ClientEffect.Navigate("/next", NavigateTarget.Self) ]
+                  "a safe route ships trimmed"
+
               Expect.isEmpty ok.Diagnostics "no diagnostic for a safe route"
           }
 

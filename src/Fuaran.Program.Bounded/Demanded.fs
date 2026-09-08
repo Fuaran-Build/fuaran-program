@@ -464,12 +464,16 @@ module Demanded =
     /// hand-written spellings of one string is precisely how a coverage check
     /// silently starts reporting nothing.
     ///
-    /// The other three effect arms (`PushState` / `Focus` / `Download`) are
-    /// absent deliberately: no `Action` produces them. They reach a host from
-    /// the navigation layer, which is not a program tree's to demand.
+    /// The other two effect arms (`PushState` / `Download`) are absent
+    /// deliberately: no `Action` produces them. They reach a host from the
+    /// navigation layer, which is not a program tree's to demand. `Focus` was
+    /// in that list until the tier gave the action union its counterpart, and
+    /// it moved out of it in the same change: an arm is absent here because
+    /// nothing can demand it, never because it is inconvenient to name.
     let private effectKindOf (action: Action<obj>) : string option =
         match action with
-        | Action.Navigate _ -> Some(ClientEffect.kind (ClientEffect.Navigate ""))
+        | Action.Navigate _ -> Some(ClientEffect.kind (ClientEffect.Navigate("", NavigateTarget.Self)))
+        | Action.Focus _ -> Some(ClientEffect.kind (ClientEffect.Focus ""))
         | Action.WriteToClipboard _ -> Some(ClientEffect.kind (ClientEffect.WriteToClipboard ""))
         | Action.ReadFileBody _ -> Some(ClientEffect.kind (ClientEffect.ReadFileBody("", "")))
         | Action.Print -> Some(ClientEffect.kind ClientEffect.Print)
@@ -555,17 +559,34 @@ module Demanded =
         | Action.AiTool(toolName, _) -> effects, [ { Channel = "AiTool"; Name = toolName } ], []
 
         // The remaining arms demand no host call and touch no namespace.
-        // `Navigate` / `WriteToClipboard` / `ReadFileBody` / `Print` contributed
-        // their effect above; `Dispatch` has no `update` to reach on this path
-        // and `CommitLocal` flushes a per-node client-side buffer.
+        // `Navigate` / `WriteToClipboard` / `ReadFileBody` / `Print` / `Focus`
+        // contributed their effect above; `Dispatch` has no `update` to reach on
+        // this path and `CommitLocal` flushes a per-node client-side buffer.
         //
         // `Print` demands its effect and nothing else: it is payload-free, so
         // there is no binding to read from and no landing slot to write to, and
-        // it reports nothing back that a namespace could receive.
+        // it reports nothing back that a namespace could receive. `Focus` is the
+        // same shape over an author-written node id.
+        //
+        // `Confirm` demands NOTHING, INCLUDING FROM ITS CONTINUATIONS, and that
+        // is the arm to read before changing either file. The invariant that
+        // makes this projection worth having is that it reports exactly what the
+        // interpreter beside it will ASK A HOST FOR — over-reporting costs the
+        // check its stated exactness on a decoded tree just as under-reporting
+        // does, and a coverage failure nobody can act on is how a check learns
+        // to be ignored. The bounded interpreter answers `Confirm` with a
+        // documented no-op, so neither continuation is reachable on this path
+        // and nothing inside them is ever demanded of a host. THE TWO ARMS MOVE
+        // TOGETHER: when the placement grows the confirmation round trip, this
+        // one recurses into `onConfirm` and `onCancel` in the same change, and
+        // `Confirm` gains its own effect here at the same moment. Neither edit
+        // is correct alone.
+        | Action.Confirm _
         | Action.Navigate _
         | Action.WriteToClipboard _
         | Action.ReadFileBody _
         | Action.Print
+        | Action.Focus _
         | Action.Dispatch _
         | Action.CommitLocal _ -> effects, [], []
 

@@ -138,10 +138,10 @@ let tests =
                   BoundedDriver.init
                       (BoundedServices.createPermissive stubRender)
                       empty
-                      (mkTree (Action.Navigate "/next"))
+                      (mkTree (Action.Navigate(TextSource.Literal "/next", NavigateTarget.Self)))
 
               let session2, out = BoundedDriver.step session (clickEv "set")
-              Expect.equal out.Effects [ ClientEffect.Navigate "/next" ] "navigate effect shipped"
+              Expect.equal out.Effects [ ClientEffect.Navigate("/next", NavigateTarget.Self) ] "navigate effect shipped"
               Expect.isEmpty out.Patches "no DOM patch for a pure client effect"
               Expect.equal session2.Store.State empty.State "store unchanged"
           }
