@@ -633,24 +633,39 @@ module ProgramWire =
                 |> Result.map ctor
 
             match kind with
-            // The tier's effect arm now carries a browsing-context target
-            // alongside the route, and this decoder deliberately does NOT read
-            // one: the program wire specification declares exactly `kind` +
-            // `route` for this arm, so admitting a `target` member here would
-            // put the codec ahead of the document that defines it — and a codec
-            // that accepts more than its specification says is how two hosts
-            // come to disagree about what a conformant document is. `Self` is
-            // the specification's one declared meaning, and the tier omits the
-            // member at `Self`, so every byte sequence either side has ever
-            // exchanged round-trips unchanged.
+            // Phase 1601 — the specification declares `target`, so this arm
+            // reads it. Until it did, the tier could emit a `Blank` document
+            // that this decoder refused: `declaredOnly` correctly rejected a
+            // member the specification did not name, and the host was therefore
+            // producing bytes its own conformance codec would not take back.
+            // Closing that was a specification act performed in one change-set
+            // across both repositories — normative text (§5.2), schema, the two
+            // fixtures, the manifest, and then this arm — which is the forward
+            // coupling this family always carried.
             //
-            // An undeclared `target` is therefore REFUSED by `declaredOnly`, as
-            // any undeclared member is, and that refusal is the gap reporting
-            // itself rather than a silent divergence. Closing it is a
-            // specification act — normative text, schema, fixture, manifest and
-            // then this arm, in one change-set across both repositories — which
-            // is the forward coupling this family always carried.
-            | "Navigate" -> one "route" (fun route -> ClientEffect.Navigate(route, NavigateTarget.Self))
+            // `Self` is the identity and §5.2 says it is NOT written, so
+            // absence restores it. The explicit spelling is still ACCEPTED — it
+            // is a declared member holding a declared value — but nothing emits
+            // it, which is why it is not a round-trip vector: it would not
+            // re-encode to its own bytes. A third value is refused as
+            // `undeclared-member`, on the same footing as `ReadFileBody`'s
+            // `encoding` below: the member is declared, the value it carries is
+            // not, and passing one through would hand a rendering surface a
+            // browsing context it has no rule for.
+            | "Navigate" ->
+                declaredOnly [ "kind"; "route"; "target" ] value
+                |> Result.bind (fun () -> requireString "route" value)
+                |> Result.bind (fun route ->
+                    // `tryMember`, not `tryString`: the latter reads a present
+                    // non-string member as absence, which would silently
+                    // decode `{"target":7}` to `Self` rather than refusing it.
+                    match tryMember "target" value with
+                    | None
+                    | Some(JStr "Self") -> Ok(ClientEffect.Navigate(route, NavigateTarget.Self))
+                    | Some(JStr "Blank") -> Ok(ClientEffect.Navigate(route, NavigateTarget.Blank))
+                    | Some(JStr other) ->
+                        refuse RefusalClass.UndeclaredMember ("target '" + other + "' is neither 'Self' nor 'Blank'")
+                    | Some _ -> refuse RefusalClass.UndeclaredMember "member 'target' is not a string")
             | "PushState" -> one "route" ClientEffect.PushState
             | "WriteToClipboard" -> one "text" ClientEffect.WriteToClipboard
             | "Focus" -> one "nodeId" ClientEffect.Focus

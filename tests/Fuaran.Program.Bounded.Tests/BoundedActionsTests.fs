@@ -467,4 +467,89 @@ let tests =
 
               Expect.equal ok.Store.State (Map.ofList [ "theme", o "dark" ]) "an ordinary key writes normally"
               Expect.isEmpty ok.Diagnostics "no diagnostic for an ordinary key"
+          }
+
+          // Phase 1601 — the loop's own bytes, taken back by the loop's own
+          // codec. Until the program wire specification declared `target`, this
+          // pair could not both hold: the interpreter lowered a `Blank` target
+          // into the effect and the emitter wrote it out, while the conformance
+          // decoder refused the member as undeclared. A host emitting documents
+          // its own reader rejects is not a codec defect that shows up as a
+          // failing test somewhere — nothing here read these bytes at all, so
+          // it showed up as nothing, which is why it is pinned here now.
+          test "a Blank Navigate the loop emits is decoded back by the loop's own codec" {
+              let out =
+                  BoundedActions.runBoundedAction
+                      "n"
+                      (Action.Navigate(TextSource.Literal "/docs/orders", NavigateTarget.Blank))
+                      store0
+
+              let effect =
+                  match out.Effects with
+                  | [ e ] -> e
+                  | other -> failtestf "expected exactly one client effect, got %A" other
+
+              Expect.equal
+                  effect
+                  (ClientEffect.Navigate("/docs/orders", NavigateTarget.Blank))
+                  "the target survives the lowering"
+
+              let bytes = ProgramWire.encodeClientEffect effect
+
+              Expect.equal
+                  bytes
+                  """{"kind":"Navigate","route":"/docs/orders","target":"Blank"}"""
+                  "the emitted bytes are the specification's own §5.2 example"
+
+              match ProgramWire.parseDocument bytes |> Result.bind ProgramWire.decodeClientEffect with
+              | Ok decoded -> Expect.equal decoded effect "the codec takes back what the loop emitted"
+              | Error refusal -> failtestf "the loop's own bytes were refused (%s: %s)" refusal.Class refusal.Detail
+          }
+
+          // §5.2's identity rule, held from both ends. The corpus pins the pair
+          // of canonical spellings; these are the three things bytes alone
+          // cannot pin, because nothing conformant ever emits them.
+          test "Navigate.target — absence restores Self, the explicit Self is accepted, a third value is refused" {
+              let decode (bytes: string) =
+                  ProgramWire.parseDocument bytes |> Result.bind ProgramWire.decodeClientEffect
+
+              let self = ClientEffect.Navigate("/orders", NavigateTarget.Self)
+
+              Expect.equal
+                  (decode """{"kind":"Navigate","route":"/orders"}""")
+                  (Ok self)
+                  "absence is Self, so every document a shim has ever been handed means what it meant"
+
+              // Accepted but NOT canonical: a declared member holding a declared
+              // value, which nothing emits — so it is deliberately not a
+              // round-trip vector, and re-encoding it drops back to the short
+              // form rather than preserving what arrived.
+              Expect.equal
+                  (decode """{"kind":"Navigate","route":"/orders","target":"Self"}""")
+                  (Ok self)
+                  "the explicit identity is accepted"
+
+              Expect.equal
+                  (ProgramWire.encodeClientEffect self)
+                  """{"kind":"Navigate","route":"/orders"}"""
+                  "…and re-encodes to the canonical short form"
+
+              match decode """{"kind":"Navigate","route":"/orders","target":"Popup"}""" with
+              | Ok accepted -> failtestf "a third browsing context was accepted as %A" accepted
+              | Error refusal ->
+                  Expect.equal
+                      refusal.Class
+                      "undeclared-member"
+                      "a value outside the closed set is refused for the declared class"
+
+              // `tryString` would have read a present non-string member as
+              // absence and decoded this to `Self`. The refusal is what says
+              // the member was read rather than skipped.
+              match decode """{"kind":"Navigate","route":"/orders","target":7}""" with
+              | Ok accepted -> failtestf "a non-string target was accepted as %A" accepted
+              | Error refusal ->
+                  Expect.equal
+                      refusal.Class
+                      "undeclared-member"
+                      "a non-string target is refused, never silently read as Self"
           } ]
