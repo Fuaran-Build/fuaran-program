@@ -28,7 +28,41 @@
          packages together, which is the repository's shape: a minor bump on an
          untouched package costs nothing, and a per-package line would have to be
          right four times. -->
-    <Version>0.3.0</Version>
+    <!-- 0.4.0 is a NEW SLOT rather than a re-pack of 0.3.0 for the plainest of
+         the reasons this comment block has recorded: v0.3.0 is TAGGED. A
+         released slot is some consumer's contract, and this change costs them
+         source edits, so it cannot be published over the top of one.
+
+         What a consumer pays. The UI tier's action union widened
+         `Navigate` — its route is a text SOURCE now rather than a literal, and
+         it carries a browsing-context target — and gained two cases. So every
+         positional match over the union in a consumer's own code stops
+         compiling, and the client-effect vocabulary widened in step. The floor
+         moves with it: the tier pins here are 0.78.1, so nothing built against
+         an earlier tier links against these assemblies. That second half is the
+         one a consumer cannot read off a source diff, and it is why the 0.2.0
+         entry below argued the same case at length — the binding is in the
+         emitted IL, against member signatures and case ordinals the tier moved.
+
+         What it BUYS, stated because a version that only costs is one people
+         defer. A bound route is now expressible: `Navigate` reads a binding at
+         dispatch time, so "open the order the reader selected" is a document
+         rather than a host closure. A route that fails to resolve navigates
+         nowhere and says so, which is the tier's own rule and not this
+         placement's invention. `Focus` reaches an effect arm the vocabulary has
+         carried since it was cut and nothing on the wire could name.
+
+         One thing deliberately did NOT move, and it is the reason this is a
+         minor rather than something larger: a `Confirm` action is a documented
+         no-op on the bounded path, diagnosed like every other. The round trip
+         it needs — ask, answer, re-validate, then dispatch the continuation
+         through its own gate — is a placement capability, not a raise, and
+         claiming it here would put a version number on work nobody has done.
+
+         This line versions all four packages together, which is the
+         repository's shape: a minor bump on an untouched package costs nothing,
+         and a per-package line would have to be right four times. -->
+    <Version>0.4.0</Version>
     <!-- This repository's restore path is PUBLIC: it publishes to nuget.org, so
          a consumer of the published packages reaches the registry and nothing
          else. Undeclared would read as `local-feed`, under which a pin only this
