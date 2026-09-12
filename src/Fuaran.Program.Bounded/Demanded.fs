@@ -470,6 +470,20 @@ module Demanded =
     /// in that list until the tier gave the action union its counterpart, and
     /// it moved out of it in the same change: an arm is absent here because
     /// nothing can demand it, never because it is inconvenient to name.
+    /// TOTAL over the closed action union, with every absence stated as an arm
+    /// rather than swept into a wildcard. It was a wildcard until Phase 1678,
+    /// and that is exactly how `Action.Print` became effect-bearing upstream
+    /// while this projection reported NOTHING for it and the compiler said
+    /// nothing either: a host offering no printing passed a coverage check it
+    /// should have failed. The arms below are the statement that each of those
+    /// actions demands no client effect — a claim the next vocabulary growth
+    /// has to re-make deliberately, because the compiler will now refuse the
+    /// file until it does.
+    // `Action.Dispatch` is marked in-process-only upstream, so naming it raises
+    // FS0044. As below, this is a static enumeration of the closed DU rather
+    // than an authoring site; scoped to this one declaration.
+    #nowarn "44"
+
     let private effectKindOf (action: Action<obj>) : string option =
         match action with
         | Action.Navigate _ -> Some(ClientEffect.kind (ClientEffect.Navigate("", NavigateTarget.Self)))
@@ -477,7 +491,43 @@ module Demanded =
         | Action.WriteToClipboard _ -> Some(ClientEffect.kind (ClientEffect.WriteToClipboard ""))
         | Action.ReadFileBody _ -> Some(ClientEffect.kind (ClientEffect.ReadFileBody("", "")))
         | Action.Print -> Some(ClientEffect.kind ClientEffect.Print)
-        | _ -> None
+
+        // `Chain` carries no effect of its own: `demandsOfAction` folds over its
+        // members and unions what THEY demand, so answering `Some` here would
+        // double-count and answering for the members would duplicate that fold.
+        | Action.Chain _ -> None
+
+        // `Confirm` demands nothing, including from its continuations — the
+        // bounded interpreter answers it with a documented no-op, so neither
+        // branch is reachable on this path. This arm and the `Confirm` arm of
+        // `demandsOfAction` MOVE TOGETHER: when the placement grows the
+        // confirmation round trip, `Confirm` gains its effect here in the same
+        // change that makes the continuations reachable there.
+        | Action.Confirm _ -> None
+
+        // Store writes, not client effects. `SetState` writes a namespace and
+        // `CommitLocal` flushes a per-node client-side buffer; both are reported
+        // as namespace touches by `demandsOfAction`, which is where a host reads
+        // them.
+        | Action.SetState _
+        | Action.CommitLocal _ -> None
+
+        // Host CALLS, reported on their own channels by `demandsOfAction`. An
+        // endpoint, a capability, a notification channel and a tool name are
+        // each a demand the host answers by name; none of them is a
+        // `ClientEffect`, and reporting one as both would make the effect
+        // coverage check disagree with the call coverage check about the same
+        // action.
+        | Action.Call _
+        | Action.Invoke _
+        | Action.Notify _
+        | Action.AiTool _ -> None
+
+        // In-process only: `Dispatch` has no `update` to reach on this path, so
+        // it reaches no host at all and can demand nothing of one.
+        | Action.Dispatch _ -> None
+
+    #warnon "44"
 
     /// The host calls a dispatch-time binding source names. A `Binding.Query`
     /// read asks the host's query channel for a named slot; the other binding

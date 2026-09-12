@@ -1,0 +1,213 @@
+name: CI
+
+# Phase 1678 — the repo-wide build-and-verify lane. THE gate this repo defines
+# for itself (`run.ps1`), reached from a push.
+#
+# Until this landed there was no CI here at all: `.github/workflows/` held only
+# `publish-packages.yml`, so a push to `main` was verified by nothing but a
+# contributor's local run, and the standing "tag on a green CI run" authorisation
+# had no run to point at — which is why `v0.3.0` had to be cut on a local gate by
+# operator instruction on 2026-09-04.
+#
+# ── What it runs ─────────────────────────────────────────────────────────────
+# The repo's own gate verbatim — `pwsh ./run.ps1` = tool restore -> fantomas ->
+# pin preflight -> build -> every Expecto test project -> the Fable parity leg.
+# Nothing is curated out. A CI-only subset drifts from what a maintainer runs and
+# the divergence is invisible from both sides.
+#
+# ── Layout mirrors a workspace checkout, and that is load-bearing ────────────
+# Two paths in this repository are resolved RELATIVE TO THE REPO ROOT and cannot
+# be satisfied by a bare single-repo checkout:
+#
+#   * `nuget.config` declares a `local` folder source at `../../local-nuget-feed`.
+#     NuGet hard-errors on a MISSING folder source (NU1301) rather than treating
+#     it as empty, so the directory must exist even though it will hold nothing;
+#     the published `Fuaran.UI.*` pins then resolve anonymously from nuget.org.
+#   * The conformance and parity suites resolve the wire corpus from the source
+#     tree as `../../../Fuaran-UI/fuaran-program-spec` (`FUARAN_PROGRAM_SPEC`
+#     overrides it).
+#
+# So the runner is assembled as the workspace those paths expect:
+#
+#     $GITHUB_WORKSPACE/
+#     ├── Fuaran/
+#     │   ├── Fuaran-Program/                 <- this repo
+#     │   └── Fuaran-UI/fuaran-program-spec/  <- the wire corpus
+#     └── local-nuget-feed/                   <- empty, for NU1301
+#
+# ── The corpus is a BUILD INPUT, and it is not public ────────────────────────
+# The suites FAIL rather than skip when the corpus is absent — a conformance
+# check that goes green without its oracle is worse than no check. The corpus
+# repository is private today, so this workflow can only fetch it with a
+# credential, supplied as the `PROGRAM_SPEC_TOKEN` repository secret (a
+# read-only, contents-scoped token for that repository).
+#
+# When that secret is absent — which is the case on every pull request from a
+# FORK, by GitHub's design, and on any checkout before an operator sets it — the
+# corpus cannot be fetched. The lane then runs the part of the gate that does not
+# read the corpus, and the conformance legs are reported as a NAMED, VISIBLY
+# SKIPPED step saying exactly what is not being checked and why. That is the one
+# thing this file must never do quietly: a skipped oracle that reads as a pass is
+# the failure mode the corpus exists to rule out.
+#
+# `Assert the gate partition is exhaustive` is what keeps that honest over time.
+# The reduced lane names its test projects explicitly, and a second hand-kept
+# list drifts — so the step recomputes the set of Expecto runners exactly as
+# `run.ps1` does and fails if any is in neither lane. A new test project
+# therefore reddens CI until it is classified, instead of silently running in
+# neither.
+#
+# ── No deploy ────────────────────────────────────────────────────────────────
+# Build-and-verify only. No deploy job, no artifact, no package push, no
+# `workflow_run` chain; `permissions` is read-only. Publication stays where it
+# was: `publish-packages.yml` on a `v*` TAG push, which a branch push never
+# creates.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: run.ps1
+    runs-on: ubuntu-latest
+    # The whole gate: five Expecto runners plus the Fable parity compile and run.
+    # Generous, and an upper bound rather than a target — a run that reaches it
+    # has hung, which is worth failing on.
+    timeout-minutes: 60
+
+    env:
+      SPEC: Fuaran/Fuaran-UI/fuaran-program-spec
+
+    steps:
+      - name: Checkout fuaran-program
+        uses: actions/checkout@v4
+        with:
+          path: Fuaran/Fuaran-Program
+
+      # A secrets expression is not valid in a step-level `if:`, so the presence
+      # probe goes through an env-var step output — the idiom the estate's other
+      # public lanes use for the same reason.
+      - name: Check whether the corpus credential is granted here
+        id: cred
+        env:
+          HAS_TOKEN: ${{ secrets.PROGRAM_SPEC_TOKEN != '' }}
+        run: echo "granted=$HAS_TOKEN" >> "$GITHUB_OUTPUT"
+
+      # UNPINNED on purpose: the corpus is the normative oracle this tier
+      # certifies against, and one current specification for every host is the
+      # point of giving it a single home.
+      #
+      # `continue-on-error` so a credential that is present but no longer valid
+      # lands in the same reported-skip branch as an absent one, rather than
+      # failing the lane at a step whose message is about authentication.
+      - name: Checkout the program wire corpus
+        if: steps.cred.outputs.granted == 'true'
+        continue-on-error: true
+        uses: actions/checkout@v4
+        with:
+          repository: Fuaran-Build/fuaran-program-spec
+          token: ${{ secrets.PROGRAM_SPEC_TOKEN }}
+          path: Fuaran/Fuaran-UI/fuaran-program-spec
+
+      - name: Corpus status
+        id: status
+        run: |
+          if [ -f "$SPEC/wire-fixtures/manifest.json" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Conformance corpus present::The FULL gate runs, conformance and parity included."
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Conformance corpus ABSENT - conformance and parity are NOT checked in this run::The program wire corpus could not be fetched, so Fuaran.Program.Parity.Tests, Fuaran.Program.Server.Tests and the Fable parity leg DID NOT RUN. Every other gate leg did. Cause: the PROGRAM_SPEC_TOKEN repository secret is unset or invalid, or this is a pull request from a fork (fork PRs receive no secrets, by design). This run asserts NOTHING about wire conformance."
+          fi
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: Fuaran/Fuaran-Program/global.json
+
+      # The Fable parity leg is a `node` run, not merely a compile: "it compiles
+      # under Fable" and "it behaves the same under Fable" are different claims
+      # and only the second one matters.
+      - name: Setup Node
+        if: ${{ steps.status.outputs.present == 'true' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Create the empty local NuGet feed dir (NU1301 workaround)
+        run: mkdir -p local-nuget-feed
+
+      - name: Assert the gate partition is exhaustive
+        working-directory: Fuaran/Fuaran-Program
+        shell: pwsh
+        run: |
+          # Recomputed exactly as run.ps1 selects its runners, so this cannot
+          # drift from the gate it describes.
+          $runners =
+              Get-ChildItem -Path tests -Directory |
+                  Where-Object { Get-ChildItem -Path $_.FullName -Filter *.fsproj -File } |
+                  Where-Object { (Get-Content (Get-ChildItem -Path $_.FullName -Filter *.fsproj -File)[0].FullName -Raw) -match '<OutputType>Exe</OutputType>' } |
+                  ForEach-Object { $_.Name } | Sort-Object
+          $corpusFree = @('Fuaran.Program.Bounded.Tests', 'Fuaran.Program.Runtime.Tests', 'Fuaran.Program.Tests')
+          $corpusBound = @('Fuaran.Program.Parity.Tests', 'Fuaran.Program.Server.Tests')
+          $unclassified = $runners | Where-Object { $_ -notin ($corpusFree + $corpusBound) }
+          if ($unclassified) {
+              Write-Error ("Expecto runner(s) in neither CI lane: $($unclassified -join ', '). " +
+                  "Add each to the corpus-free or corpus-bound list in .github/workflows/ci.yml - an " +
+                  "unclassified runner does not run at all when the corpus is absent.")
+              exit 1
+          }
+          $missing = ($corpusFree + $corpusBound) | Where-Object { $_ -notin $runners }
+          if ($missing) {
+              Write-Error ("ci.yml names runner(s) that no longer exist: $($missing -join ', ').")
+              exit 1
+          }
+          Write-Host "partition OK: $($runners.Count) runner(s), all classified."
+
+      # ── The full gate, when the corpus is available ─────────────────────────
+      - name: The repo gate (pwsh ./run.ps1)
+        if: ${{ steps.status.outputs.present == 'true' }}
+        working-directory: Fuaran/Fuaran-Program
+        shell: pwsh
+        run: ./run.ps1
+
+      # ── The reduced gate, when it is not ────────────────────────────────────
+      # `run.ps1` runs every Expecto runner in one loop and has no switch for
+      # excluding the corpus-bound ones — deliberately, because a local gate that
+      # can be talked out of its oracle is not a gate. So the reduced lane drives
+      # the shared legs through run.ps1 and then names the corpus-free runners
+      # itself, under the exhaustiveness guard above.
+      - name: Reduced gate — format, pins, build (pwsh ./run.ps1 -SkipTests)
+        if: ${{ steps.status.outputs.present != 'true' }}
+        working-directory: Fuaran/Fuaran-Program
+        shell: pwsh
+        run: ./run.ps1 -SkipTests
+
+      - name: Reduced gate — the corpus-free Expecto runners
+        if: ${{ steps.status.outputs.present != 'true' }}
+        working-directory: Fuaran/Fuaran-Program
+        shell: pwsh
+        run: |
+          foreach ($p in 'Fuaran.Program.Bounded.Tests', 'Fuaran.Program.Runtime.Tests', 'Fuaran.Program.Tests') {
+              Write-Host "-- tests: $p --"
+              dotnet run --project (Join-Path 'tests' $p)
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+      - name: SKIPPED — wire conformance and Fable parity (corpus unavailable)
+        if: ${{ steps.status.outputs.present != 'true' }}
+        run: |
+          echo "NOT RUN in this job: Fuaran.Program.Parity.Tests, Fuaran.Program.Server.Tests,"
+          echo "and the Fable parity leg. All three certify against the program wire corpus,"
+          echo "which this runner could not fetch. See the warning annotation on this run."
+          echo "This is a visible skip, not a pass: the run makes no conformance claim."

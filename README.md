@@ -55,6 +55,21 @@ author. The suite resolves the corpus as a sibling clone and honours `FUARAN_PRO
 override; its absence **fails** the suite rather than skipping it, because a conformance check that
 goes green without its oracle is worse than no check at all. See [tests/README.md](tests/README.md).
 
+### Continuous integration
+
+`.github/workflows/ci.yml` runs the same `run.ps1` on every push to `main`, on every pull request,
+and on demand. It assembles the runner into the layout the two repo-root-relative paths need — the
+empty local folder feed `nuget.config` declares, and the corpus beside the repository — and then runs
+the gate verbatim. Nothing is curated out: a CI-only subset drifts from what a maintainer runs, and
+the divergence is invisible from both sides.
+
+The corpus is not public today, so the lane fetches it with a repository credential. Where that
+credential is not available — a pull request from a fork receives no secrets, by GitHub's design —
+the run **says so, loudly, and makes no conformance claim**: it carries a warning annotation naming
+the three legs that did not run, and a step whose title is the skip. The rest of the gate still runs,
+so such a contribution is still verified for everything the corpus does not decide. A silent skip
+would be the same defect the paragraph above rules out for a local run.
+
 ## License
 
 Apache-2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
