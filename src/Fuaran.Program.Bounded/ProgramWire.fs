@@ -687,4 +687,34 @@ module ProgramWire =
                                 RefusalClass.UndeclaredMember
                                 ("encoding '" + encoding + "' is not one of the three")))
                 |> Result.map ClientEffect.ReadFileBody
+            // Phase 1689 — arms seven and eight, at specification format
+            // version 2. The vocabulary was closed at six while a conformant
+            // emitter already shipped these two, so a rendering surface was
+            // receiving documents the text declared ill-formed; §11.1's rule
+            // makes widening a closed vocabulary breaking, which is why they
+            // arrive together with a version rather than one at a time.
+            //
+            // `Print` carries NO members, and `declaredOnly [ "kind" ]` is
+            // therefore the WHOLE decoder — there is nothing to read, and a
+            // member that is present is refused rather than ignored. That
+            // refusal is the arm's only real rule: every parameter of a
+            // printing belongs to the reader's own dialogue, so a document
+            // constraining one would leave its emitter believing it had
+            // constrained something it had not.
+            | "Print" -> declaredOnly [ "kind" ] value |> Result.map (fun () -> ClientEffect.Print)
+            // `Confirm` carries both members required. What a yes will DO is
+            // deliberately absent: the continuations stay with whoever holds
+            // the tree, the gate and the egress policy, and a surface handed
+            // them is a surface that can perform them without ever asking.
+            //
+            // `token` says WHICH confirmation in the originating gesture is
+            // being answered, so a chain raising two of them is unambiguous —
+            // and it is untrusted payload like every other value here. It
+            // addresses a question; it never authorises an answer, which is
+            // the reader's own continuation meeting the gate on its own.
+            | "Confirm" ->
+                declaredOnly [ "kind"; "prompt"; "token" ] value
+                |> Result.bind (fun () -> requireString "prompt" value)
+                |> Result.bind (fun prompt -> requireString "token" value |> Result.map (fun token -> prompt, token))
+                |> Result.map ClientEffect.Confirm
             | other -> refuse RefusalClass.UnknownEffectArm ("'" + other + "' is not an arm of the closed vocabulary"))

@@ -552,4 +552,99 @@ let tests =
                       refusal.Class
                       "undeclared-member"
                       "a non-string target is refused, never silently read as Self"
+          }
+
+          // Phase 1689 — §5.2's arms seven and eight, at format version 2. The
+          // corpus pins their canonical bytes; what it cannot pin is the shape
+          // of the refusals, because a refusal vector states its class and not
+          // the several near-misses that must all reach it.
+          test "Print — the payload-free arm round-trips, and a member is refused rather than ignored" {
+              let decode (bytes: string) =
+                  ProgramWire.parseDocument bytes |> Result.bind ProgramWire.decodeClientEffect
+
+              Expect.equal
+                  (decode """{"kind":"Print"}""")
+                  (Ok ClientEffect.Print)
+                  "the discriminator alone is the whole document"
+
+              Expect.equal
+                  (ProgramWire.encodeClientEffect ClientEffect.Print)
+                  """{"kind":"Print"}"""
+                  "…and re-encodes to exactly those bytes"
+
+              // The arm's one real rule. Every parameter of a printing belongs
+              // to the reader's own dialogue, so a document that constrains one
+              // must not be quietly accepted: an emitter would be left
+              // believing it had constrained a printing it had not.
+              for constrained in
+                  [ """{"kind":"Print","copies":2}"""
+                    """{"kind":"Print","pageRange":"1-3"}"""
+                    """{"kind":"Print","nodeId":"invoice"}""" ] do
+                  match decode constrained with
+                  | Ok accepted -> failtestf "a constrained printing was accepted as %A" accepted
+                  | Error refusal ->
+                      Expect.equal refusal.Class "undeclared-member" $"{constrained} is refused for the declared class"
+          }
+
+          test "Confirm — both members required, and neither absence is silent" {
+              let decode (bytes: string) =
+                  ProgramWire.parseDocument bytes |> Result.bind ProgramWire.decodeClientEffect
+
+              let asked = ClientEffect.Confirm("Settle ORD-4417 for GBP 1250?", "btn-settle#0")
+
+              Expect.equal
+                  (decode """{"kind":"Confirm","prompt":"Settle ORD-4417 for GBP 1250?","token":"btn-settle#0"}""")
+                  (Ok asked)
+                  "the corpus vector's bytes decode to the arm"
+
+              Expect.equal
+                  (ProgramWire.encodeClientEffect asked)
+                  """{"kind":"Confirm","prompt":"Settle ORD-4417 for GBP 1250?","token":"btn-settle#0"}"""
+                  "…and re-encode byte-identically, prompt before token"
+
+              // A prompt with no token is the dangerous half: it still renders a
+              // dialogue, and the answer then addresses nothing.
+              match decode """{"kind":"Confirm","prompt":"Settle ORD-4417 for GBP 1250?"}""" with
+              | Ok accepted -> failtestf "a tokenless confirmation was accepted as %A" accepted
+              | Error refusal -> Expect.equal refusal.Class "missing-member" "an absent token is refused"
+
+              match decode """{"kind":"Confirm","token":"btn-settle#0"}""" with
+              | Ok accepted -> failtestf "a promptless confirmation was accepted as %A" accepted
+              | Error refusal -> Expect.equal refusal.Class "missing-member" "an absent prompt is refused"
+
+              // The continuations are NOT on this wire, and a host that let one
+              // through would be handing a rendering surface the branch it is
+              // supposed to be asking about.
+              match decode """{"kind":"Confirm","prompt":"p","token":"t","onConfirm":{"$type":"Dispatch"}}""" with
+              | Ok accepted -> failtestf "a wire-carried continuation was accepted as %A" accepted
+              | Error refusal -> Expect.equal refusal.Class "undeclared-member" "a continuation member is refused"
+          }
+
+          // §11.1 at format version 2: the widening is breaking in ONE direction
+          // only. A version-2 reader takes every version-1 document unchanged,
+          // which is what says nothing a rendering surface has ever been handed
+          // stopped decoding when the vocabulary grew. Asserted here as a
+          // property of the READER rather than left to the corpus, because the
+          // corpus is now a version-2 corpus and so cannot state it.
+          test "a version-1 document still decodes under the version-2 reader" {
+              let decode (bytes: string) =
+                  ProgramWire.parseDocument bytes |> Result.bind ProgramWire.decodeClientEffect
+
+              let versionOne =
+                  [ """{"kind":"Navigate","route":"/orders"}""", ClientEffect.Navigate("/orders", NavigateTarget.Self)
+                    """{"kind":"Navigate","route":"/docs/orders","target":"Blank"}""",
+                    ClientEffect.Navigate("/docs/orders", NavigateTarget.Blank)
+                    """{"kind":"PushState","route":"/orders?page=2"}""", ClientEffect.PushState "/orders?page=2"
+                    """{"kind":"WriteToClipboard","text":"ORD-4417"}""", ClientEffect.WriteToClipboard "ORD-4417"
+                    """{"kind":"Focus","nodeId":"orders-search"}""", ClientEffect.Focus "orders-search"
+                    """{"kind":"Download","url":"https://example.invalid/report.csv","name":"report.csv"}""",
+                    ClientEffect.Download("https://example.invalid/report.csv", "report.csv")
+                    """{"kind":"ReadFileBody","nodeId":"upload-1","encoding":"Text"}""",
+                    ClientEffect.ReadFileBody("upload-1", "Text") ]
+
+              for bytes, expected in versionOne do
+                  Expect.equal (decode bytes) (Ok expected) $"{bytes} still decodes"
+                  Expect.equal (ProgramWire.encodeClientEffect expected) bytes $"{bytes} still re-encodes to itself"
+
+              Expect.equal versionOne.Length 7 "all six version-1 arms, with Navigate's two canonical spellings"
           } ]

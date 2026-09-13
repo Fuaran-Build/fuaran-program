@@ -83,7 +83,41 @@
          This line versions all four packages together, which is the
          repository's shape: a minor bump on an untouched package costs nothing,
          and a per-package line would have to be right four times. -->
-    <Version>0.4.0</Version>
+    <!-- 0.5.0 — Phase 1689. A NEW SLOT for the same plainest reason: v0.4.0 is
+         TAGGED, and this change moves the specification's FORMAT VERSION, which
+         is the least re-packable kind of change there is.
+
+         The program wire specification is at format version 2. §5.2's
+         client-effect vocabulary was closed at six arms while a conformant
+         emitter already shipped two more, so a rendering surface was receiving
+         documents the text declared ill-formed; §11.1 rules that widening a
+         closed vocabulary is BREAKING and that the fifth artefact of such a
+         change-set is the codec of every host certifying against the corpus.
+         `decodeClientEffect` is one of those codecs, and it now covers eight
+         arms: `Print`, which carries no members and refuses any (an accepted
+         member would leave an emitter believing it had constrained a printing
+         it had not), and `Confirm`, whose `prompt` and `token` are both
+         required and whose continuations are deliberately absent from the wire.
+
+         What a consumer pays, and it is less than 0.4.0 cost. Nothing in this
+         repository's own surface changed shape: the arms come from the UI tier's
+         `ClientEffect`, which has carried all eight since 0.78.0, so the pins
+         are untouched and no positional match over anything here breaks. What
+         moved is which DOCUMENTS this codec accepts, and it moved in one
+         direction only — a version-1 document decodes exactly as it did, pinned
+         by a test that walks all six original arms and both of `Navigate`'s
+         canonical spellings, and only a version-2 document is newly admitted. A
+         consumer whose own reader is still at version 1 will refuse what this
+         one now takes, which is what the version number is for.
+
+         And the thing that deliberately did NOT move, exactly as the 0.4.0 entry
+         above said of it: a `Confirm` action is still a documented no-op on the
+         bounded path. Its round trip — ask, answer, re-validate, dispatch the
+         continuation through its own gate — is a placement capability, and
+         declaring the arm on the wire does not perform it. What changed is that
+         the instruction is now expressible; what performs it is still nobody
+         here. -->
+    <Version>0.5.0</Version>
     <!-- This repository's restore path is PUBLIC: it publishes to nuget.org, so
          a consumer of the published packages reaches the registry and nothing
          else. Undeclared would read as `local-feed`, under which a pin only this
