@@ -389,3 +389,41 @@ the client, because the transport seam is push-frames outbound and fire-and-forg
 no correlation id and no response envelope, so a refusal routed into a patch frame would be a
 response smuggled through a broadcast. Delivering one to a *remote* submitter needs a correlated
 response leg on the seam, which is the UI tier's to add and a wire change when it comes.
+
+## D14 — When the witness-generic tier is cut, the model is written first; the evaluator is hand-written against it, and nothing extracted ships (2026-09-14)
+
+**2026-09-14.**
+
+D4 defers the witness-generic tier until a second domain instantiates the algebra. Phase 1715
+brings this repository a `proofs/` kernel on the precedent the Core repository established — a
+pinned F\* release, a model captioned clause for clause against the F#, the model extracted to F# and
+run as a differential oracle beside production, and a README whose claims ladder is the only place
+"formally verified" appears. That kernel is model-after-code, because the bounded fold it models
+already exists. The generic tier is the one kernel in this domain that does not exist yet, so the
+order of authorship is genuinely open, and it is decided here, before anyone writes a line of either.
+
+**The model is written first.** When the generic tier is cut, its F\* model is authored from the
+program wire specification's execution semantics and schemas before any evaluator code, and its
+totality, its no-closure-invocation law and the `Chain` homomorphism are proved before the evaluator
+is started. An algebra that is not total is cheapest to discover at that moment: the Core repository
+found a validator hole with a machine-checked counterexample only after the code had shipped, and
+had to file the fix as a separate phase. Here the theorem is the specification the evaluator is
+written to meet.
+
+**Nothing extracted ships, and the reason is performance, not purity.** The extracted model is the
+oracle and only the oracle, exactly as the Core repository holds it. A model is shaped for the
+prover: sets are lists walked by membership, recursion is fuelled by a list so termination is
+manifest, there is no early exit and no tuned structure anywhere. That is right for a differential
+host and wrong for this domain's evaluator, which is the inner loop of every server handler and every
+client interaction, and which must also Fable-compile and run in the browser. Shipping it would also
+delete the differential — with production equal to the extraction there is nothing left to compare,
+and the F\* code generator, a second-class backend upstream, would join the product's trusted base
+rather than the proof leg's. So the evaluator is hand-written against the model, the model is
+extracted as the oracle, and the differential is what holds the two together.
+
+**What this forecloses, deliberately.** No file under `proofs/oracle/` reaches a packed assembly; a
+change that adds a reference from any `src/` package to the oracle project is refused on that ground
+alone, whatever else it does. And the proof programme adds no cost on a production path: a theorem
+whose closing would require restructuring the evaluator halts with the obstruction recorded in the
+claims ladder, rather than reshaping the code it is about. The proofs exist to show the algebra is
+robust, not to make the interpreter a chore to implement or slower to run.
