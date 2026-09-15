@@ -105,6 +105,17 @@ asked" as "asked, and the answer was nothing". And a host that declared no serve
 told it failed to serve one: the tier is checked only where both a demand and a declaration exist,
 because most hosts have no server placement at all.
 
+**The document can be signed, and the signed pair verified by recomputation.** `SignedEnvelope.sign`
+signs the pair (canonical tree hash, demanded document bytes) through a host-supplied attestation
+sink consumed by shape; `SignedEnvelope.verify` re-derives the envelope from the tree, compares, and
+only then checks the signature over the recomputed pair under a public key the host supplies. The
+envelope is never trusted from the signature — the verifier can produce it, so it is proof-carrying
+data — and what the signature attests is the *pairing*, not effect-safety. Drift (with the excess
+enumerated), a bad signature and a foreign key are three named refusals; no key is a fourth, and a
+refusal rather than a skip. The demanded wire is unchanged: the signed record carries the document's
+bytes verbatim beside the signature, and no cryptography enters this package — the tree hash is the
+UI tier's Fable-clean SHA-256 over its canonical encoding, and the key and the crypto are the host's.
+
 ## Asking before running, the other half: the query-schema walk
 
 A handler declares a query as a source plus an ordered `Transform` pipeline, and lands the result in a

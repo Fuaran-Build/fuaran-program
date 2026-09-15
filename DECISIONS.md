@@ -427,3 +427,64 @@ alone, whatever else it does. And the proof programme adds no cost on a producti
 whose closing would require restructuring the evaluator halts with the obstruction recorded in the
 claims ladder, rather than reshaping the code it is about. The proofs exist to show the algebra is
 robust, not to make the interpreter a chore to implement or slower to run.
+
+## D15 — The signed effect envelope is verified by RECOMPUTATION; the signature attests the pairing, never the effects; the signer is the host's, by shape (2026-09-15)
+
+**2026-09-15, Phase 1744.**
+
+`Demanded.ofTree` and the server placement's `ofTreeAndHandlers` already answer "what can this
+program ever ask for" as a document that can be stored where the tree never travels. Nothing signed
+it, so a deployer handed a tree and an envelope held a claim, not evidence. `SignedEnvelope.sign`
+signs the pair (canonical tree hash, demanded document bytes); `SignedEnvelope.verify` checks it.
+Three choices in how, each made against the obvious alternative.
+
+**The envelope is recomputed, never trusted from the signature.** A verifier decodes the tree,
+re-derives the envelope through the same total walk, compares, and only then checks the signature —
+over the preimage it just recomputed, never over the bytes it was handed. The alternative — check
+the signature over the carried bytes and, if it holds, believe them — is what a signature usually
+buys, and it is refused here because it would make the envelope's contents a matter of trust in the
+signer's reading of the tree. They need not be: the walk is total and the vocabulary closed, so a
+verifier can produce the envelope itself, and a document the verifier can produce is proof-carrying
+data rather than testimony. The consequence is stated in the type: `verify` returns the RECOMPUTED
+projection, and a consumer checking coverage afterwards does so against that, not against the
+carried bytes.
+
+**The signature attests pairing, not effect-safety.** What recomputation cannot give is that a named
+key vouched for THIS tree paired with THIS envelope, and that is all the signature adds. It says
+nothing about whether the demanded effects are acceptable; that remains `Demanded.check`'s question,
+asked of a host's coverage, afterwards. A signed envelope naming a dangerous effect verifies
+perfectly — the point is that the effect is NAMED, in a document the host can refuse on, rather than
+discovered at dispatch. The three failures are therefore three facts: `EnvelopeDrift` (the document
+does not describe this tree; a tree whose effects exceed its envelope is this, with the excess
+enumerated), `BadSignature` (the document is exact, but the pair is not the one the signer made —
+both tree hashes are carried so "the tree moved without moving a demand" reads differently from
+"the bytes are forged"), and `ForeignKey` (the record names a key the verifier was not offered). A
+verify with NO key is a fourth refusal, `NoKey`, and not a skip: a check that quietly degrades to
+"the envelope matches" when no key is supplied is the check an operator believes they ran and did
+not.
+
+**The signer is the host's, consumed by shape, and no cryptography enters this repository.** Signing
+goes through `Fuaran.Core.IAttestationSink`, the synchronous attestation seam the substrate already
+carries — it signs an opaque string and answers with a key id and a signature, and the key never
+crosses it. Verification takes the public key as the UI tier's `KeyDirectoryEntry` and the crypto
+as its `IClaimSignatureVerifier`, whose ECDSA P-256 instance already exists there for .NET hosts.
+The tree hash is the tier's Fable-clean SHA-256 over the tier's canonical encoding, so the preimage
+is the same bytes on every runtime the interpreter runs on and `Fuaran.Program.Bounded` stays
+Fable-clean with no gate. A new sink interface, a hash function of this repository's own, or a
+`System.Security.Cryptography` reference were each the nearer thing to write and each a second
+spelling of a seam that exists.
+
+**Two smaller choices, recorded because each will be re-proposed.** The signed record carries the
+demanded document's bytes VERBATIM as a string beside the signature, rather than splicing it in as a
+nested object: the wire is unchanged, a consumer that ignores the signature hands `Envelope` to
+`Demanded.decode` and reads what it read before, and the bytes the signature covers are the bytes in
+the record with nothing re-rendered between. And drift is decided on DOCUMENTS rather than bytes: a
+re-serialised copy that still says the same thing is the same document, and the signature — which is
+over the recomputed bytes regardless — decides whether the pair was signed.
+
+**What this forecloses, deliberately.** No trust decision about the KEY is made here. Whether the
+offered key is one to believe — its lifecycle, its revocation, whose it is — is the host's key
+directory's question, answered before the key is handed to `verify`; this repository checks a
+signature under a key it was given, and nothing more. And the operator command that runs the check
+lives with the tooling that has a tree and a key directory in hand, not here: this repository
+delivers the two library functions it calls.

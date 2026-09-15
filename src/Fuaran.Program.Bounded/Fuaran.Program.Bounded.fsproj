@@ -33,6 +33,10 @@
          vocabulary, the referenced positions and the replay classification of an
          action. Placement-neutral by construction, exactly as the interpreter is. -->
     <Compile Include="ProgramWire.fs" />
+    <!-- The signed effect envelope follows ProgramWire: it renders its tree hash
+         in the content-address form ProgramWire pins, and reads it back through
+         the same well-formedness rule rather than a second spelling of it. -->
+    <Compile Include="SignedEnvelope.fs" />
     <Compile Include="BoundedDriver.fs" />
     <!-- The channel glue over the driver — it binds a session to the UI tier's
          transport seam, so it follows the driver whose steps it sequences. -->

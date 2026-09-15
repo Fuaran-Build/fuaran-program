@@ -248,3 +248,34 @@ module ServerDemanded =
         ServerCoverage.nothing
         |> ServerCoverage.withFunctions (ServerEffectRegistry.registered registry)
         |> ServerCoverage.withGate registry.Gate
+
+    // ─── the signed envelope, at this placement ──────────────────────────────
+
+    /// Sign a tree paired with the two-tier document — the tree's own demands
+    /// and those of every handler it can name — through a host-supplied sink.
+    /// `SignedEnvelope.sign` with THIS placement's walk, so the signed envelope
+    /// carries a server tier and a verifier using the same walk recomputes it.
+    let sign
+        (sink: Fuaran.Core.IAttestationSink)
+        (handlers: Map<string, Handler>)
+        (root: Node<obj>)
+        : Result<SignedEnvelope, SignRefusal> =
+        SignedEnvelope.sign sink (ofTreeAndHandlers handlers) root
+
+    /// Verify a signed two-tier pair by recomputation against THIS registration.
+    ///
+    /// The handler map is part of what is recomputed: a registration that has
+    /// gained a stage since the envelope was signed presents as drift with the
+    /// excess in the server tier, exactly as a tree that gained an effect
+    /// presents in the client tier. And a tree that names no handler still walks
+    /// an EMPTY tier here, so a record signed at this placement and verified
+    /// through the client-tier walk alone reports that tier as shortfall — the
+    /// `None`-versus-empty distinction survives, rather than collapsing.
+    let verify
+        (crypto: Fuaran.UI.OpStream.Abstractions.IClaimSignatureVerifier)
+        (key: Fuaran.UI.OpStream.Abstractions.KeyDirectoryEntry option)
+        (handlers: Map<string, Handler>)
+        (root: Node<obj>)
+        (signed: SignedEnvelope)
+        : Async<Result<VerifiedEnvelope, VerifyRefusal>> =
+        SignedEnvelope.verify crypto key (ofTreeAndHandlers handlers) root signed

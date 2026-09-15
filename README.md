@@ -38,6 +38,29 @@ One algebra, several placements — and one *interpreter* shared between them, w
 placement carries a second interpreter of that same algebra, for durable execution; its
 exactly-once claim ships with its boundary attached rather than in general.
 
+## Verifying before load: the signed effect envelope
+
+`Demanded.ofTree` answers what a program can ever ask for as a document. Since Phase 1744 that
+document can be **signed**, and the signed pair verified **cold** — no host, no performer, no model:
+
+- `SignedEnvelope.sign sink project tree` signs the pair (canonical tree hash, demanded document
+  bytes) through a **host-supplied sink** consumed by shape (`Fuaran.Core.IAttestationSink`); the key
+  never crosses it. The server placement's `ServerDemanded.sign` is the same call with the two-tier
+  walk.
+- `SignedEnvelope.verify crypto key project tree signed` verifies by **recomputation**: it re-derives
+  the envelope from the tree, compares, and only then checks the signature over the pair it just
+  recomputed, under a public key the host supplies. The envelope is never trusted from the
+  signature — it is proof-carrying data the verifier can produce itself.
+
+Three failures are named distinctly, never as a boolean: **drift** (the document does not describe
+this tree — a tree whose effects exceed its envelope is this, with the excess enumerated), a **bad
+signature** (the document is exact, but this is not the pair the signer made), and a **foreign key**.
+A verify with no key **refuses** rather than skipping the signature check. What the signature attests
+is the *pairing* — that a named key vouched for this tree with this envelope — and not that the
+effects are safe; that remains `Demanded.check`'s question, asked of a host's coverage afterwards.
+The demanded wire is unchanged: a consumer that ignores the signature reads what it read before. See
+[DECISIONS.md](DECISIONS.md) D15.
+
 ## Build
 
 ```powershell

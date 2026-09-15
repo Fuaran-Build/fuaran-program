@@ -862,7 +862,7 @@ module Demanded =
     /// and handler ids — so this moves no byte of any existing document. It
     /// closes the case where a host registers one, which nothing structurally
     /// prevents.
-    let private esc (s: string) : string =
+    let internal esc (s: string) : string =
         let sb = System.Text.StringBuilder(s.Length)
 
         for ch in s do
@@ -877,7 +877,7 @@ module Demanded =
 
         sb.ToString()
 
-    let private q (s: string) : string = "\"" + esc s + "\""
+    let internal q (s: string) : string = "\"" + esc s + "\""
 
     let private arr (items: string list) : string =
         "[" + (items |> String.concat ",") + "]"
@@ -1007,7 +1007,7 @@ module Demanded =
     /// suite can enumerate rather than restate.
     let decodableVersions: int list = [ Version ]
 
-    let private failWith
+    let internal failWith
         (defect: DemandedDefect)
         (version: int option)
         (field: string)
@@ -1151,7 +1151,7 @@ module Demanded =
     /// component is the keys so erased, so the one member whose absence is a
     /// FACT rather than a defect can be told from a member that is simply
     /// missing.
-    let private parseDocument (json: string) : Result<Fuaran.Core.JVal * string list, DemandedDecodeFailure> =
+    let internal parseDocument (json: string) : Result<Fuaran.Core.JVal * string list, DemandedDecodeFailure> =
         let notJson (err: Fuaran.Core.JsonError) =
             failWith DemandedDefect.NotJson None "" (err.Message + " at position " + string err.Position)
 
@@ -1187,7 +1187,7 @@ module Demanded =
         | Some v -> Ok v
         | None -> failWith DemandedDefect.MissingMember version path ("required member '" + path + "' is absent")
 
-    let private requireString version path name value : Result<string, DemandedDecodeFailure> =
+    let internal requireString version path name value : Result<string, DemandedDecodeFailure> =
         requireMember version path name value
         |> Result.bind (fun v ->
             match v with
@@ -1201,7 +1201,7 @@ module Demanded =
             | Fuaran.Core.JBool b -> Ok b
             | _ -> failWith DemandedDefect.WrongType version path ("member '" + path + "' is not a boolean"))
 
-    let private requireInt version path name value : Result<int, DemandedDecodeFailure> =
+    let internal requireInt version path name value : Result<int, DemandedDecodeFailure> =
         requireMember version path name value
         |> Result.bind (fun v ->
             match v with
@@ -1222,7 +1222,7 @@ module Demanded =
     /// and the reader disagree about what this version IS. Ignoring it is
     /// precisely reading the document through the wrong lens with the version
     /// number agreeing all the way.
-    let private declaredOnly
+    let internal declaredOnly
         (version: int option)
         (path: string)
         (allowed: string list)

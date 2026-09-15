@@ -117,6 +117,13 @@
          declaring the arm on the wire does not perform it. What changed is that
          the instruction is now expressible; what performs it is still nobody
          here. -->
+    <!-- Phase 1744 RIDES 0.5.0 rather than advancing it. 0.5.0 is untagged (the
+         newest tag is v0.4.0) and pinned by no public-path consumer, so it is a
+         draft slot, and the signed effect envelope is additive: a new
+         `SignedEnvelope` module beside `Demanded`, two functions on
+         `ServerDemanded`, and no change to any existing shape or wire. A draft
+         slot takes an additive change without moving; only a change of a higher
+         class than the slot already carries advances it. -->
     <Version>0.5.0</Version>
     <!-- This repository's restore path is PUBLIC: it publishes to nuget.org, so
          a consumer of the published packages reaches the registry and nothing
