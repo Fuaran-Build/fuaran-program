@@ -20,7 +20,7 @@
   ],
   "kind": "proofs",
   "version": 1,
-  "subject": "the proved models under proofs/: the shared bounded fold — BoundedActions.runBoundedActionWith, the one interpreter every placement runs, over the closed Action union, its State store, its closure-free client effects and its diagnostics (Phase 1715)",
+  "subject": "the proved models under proofs/: the shared bounded fold — BoundedActions.runBoundedActionWith, the one interpreter every placement runs, over the closed Action union, its State store, its closure-free client effects and its diagnostics (Phase 1715); and the interaction budget — Budget.satAdd/satMul, Budget.actionCascadeCost, Budget.treeCost and the G2 stage of BoundedDriver.step that refuses on them (Phase 1716). Bounded code and bounded cost, the two halves of running an untrusted generated tree on shared infrastructure.",
   "provers": {
     "fstar-pinned": {
       "tool": "fstar",
@@ -161,8 +161,149 @@
     {
       "id": "resource-bounds",
       "level": "policy",
-      "statement": "The per-interaction resource budget is OUT of the theorem.",
-      "reason": "bounded CODE and bounded COST are the two halves of running an untrusted tree on shared infrastructure, and only the first is proved here. The budget is the driver's (Budget.fs); a proof of it would be a separate model with a separate claim, and reading this one as covering it would be the more dangerous of the two mistakes."
+      "statement": "The per-interaction resource budget is OUT of the bounded-fold theorem (Phase 1715).",
+      "reason": "bounded CODE and bounded COST are the two halves of running an untrusted tree on shared infrastructure, and only the first is proved by proofs/BoundedFold.fst. The budget is the driver's (Budget.fs). It is now proved SEPARATELY — the Phase 1716 claims below, from proofs/Budget.fst — and the two models are joined by nothing but the directory they sit in: no law of either follows from the other, and reading one as covering the other would be the more dangerous of the two mistakes."
+    },
+    {
+      "id": "budget-saturating-arithmetic",
+      "level": "proved",
+      "statement": "The saturating add and multiply are monotone in both arguments, never answer below zero, never answer above the saturation bound, and agree with ordinary arithmetic everywhere below it. A cost is a budget comparand, so an overflow that wrapped negative would read as cheap and admit the very tree the budget exists to refuse; monotonicity is the other half of the same requirement, since a bigger tree must not price smaller.",
+      "evidence": {
+        "prover": "fstar-pinned",
+        "module": "proofs/Budget.fst",
+        "lemmas": [
+          "sat_monotone"
+        ],
+        "definitions": [
+          "sat_add",
+          "sat_mul"
+        ],
+        "note": "the saturation bound is a PARAMETER of the model rather than Int32.MaxValue baked in, so the lemma holds for every bound and nothing proved here is an artefact of the width production happens to have; see int32-bound-assumed for what that leaves open"
+      }
+    },
+    {
+      "id": "treecost-exact-below-ceiling",
+      "level": "proved",
+      "statement": "When treeCost's answer is at or below the ceiling it is the EXACT cost — equal to what the same walk with no ceiling at all would have returned. The early stop that keeps the pricing function from itself becoming unbounded work costs nothing in the case where the number is used as a number, which matters because the session records it as NodeCount and prices later events against it.",
+      "evidence": {
+        "prover": "fstar-pinned",
+        "module": "proofs/Budget.fst",
+        "lemmas": [
+          "treecost_exact_below_ceiling",
+          "walk_agrees_below",
+          "walk_free_bounds"
+        ],
+        "definitions": [
+          "walk",
+          "tree_cost",
+          "walk_free",
+          "exact_cost"
+        ]
+      }
+    },
+    {
+      "id": "treecost-strict-above-ceiling",
+      "level": "proved",
+      "statement": "When the exact cost of a tree is above the ceiling, treeCost's answer is above the ceiling too. The early stop never turns a refusal into an admission — the only direction that matters, and the one an optimisation to a budget function could silently break.",
+      "evidence": {
+        "prover": "fstar-pinned",
+        "module": "proofs/Budget.fst",
+        "lemmas": [
+          "treecost_strict_above_ceiling",
+          "walk_strict_above"
+        ],
+        "note": "the asymmetry with treecost-exact-below-ceiling is deliberate: above the ceiling the answer is only ever 'more than this', which is all a refusal needs"
+      }
+    },
+    {
+      "id": "treecost-terminates",
+      "level": "proved",
+      "statement": "The tree walk terminates on every finite tree, and visits at most as many nodes as the tree has AND at most ceiling+1 of them. Termination is carried by the decreases clause on the walk itself — a measure over the pending stack, not a depth counter — and the second bound is the ceiling acting as fuel: a tree ten thousand times over budget costs the same as one marginally over.",
+      "evidence": {
+        "prover": "fstar-pinned",
+        "module": "proofs/Budget.fst",
+        "lemmas": [
+          "treecost_terminates",
+          "walk_steps_bounded",
+          "walk_steps_le_size",
+          "node_cost_bounds"
+        ],
+        "definitions": [
+          "walk_steps",
+          "forest_size",
+          "node_size",
+          "push_all"
+        ],
+        "note": "the ceiling bound carries a side condition — the ceiling is below the saturation bound — and it is not a technicality: at InteractionBudget.unlimited the two coincide, the accumulator saturates at a value the guard still admits, and walking the whole tree is the intended behaviour rather than a bound anyone wanted"
+      }
+    },
+    {
+      "id": "budget-breach-pure",
+      "level": "proved",
+      "statement": "A step the budget refuses returns the session it was given — not an equal one, the same one — with no patches, no effects, and a named refusal carrying its reason. Never an exception: the model has no exceptions, so the Tot effect on the modelled step is what makes production's total signature a thing the prover checks rather than a convention a reader must notice.",
+      "evidence": {
+        "prover": "fstar-pinned",
+        "module": "proofs/Budget.fst",
+        "lemmas": [
+          "breach_pure"
+        ],
+        "definitions": [
+          "step",
+          "breached",
+          "budget_message",
+          "action_cascade_cost"
+        ],
+        "note": "quantified over EVERY admitted branch, which is what makes it a statement about the gate rather than about one driver: whatever the driver would have done to the session had the budget admitted the event, a breach does none of it"
+      }
+    },
+    {
+      "id": "budget-model-agrees-with-shipped-code",
+      "level": "tested",
+      "statement": "The extracted budget model and the shipped pricing functions return the SAME INTEGER for the trees the bounded driver's own suite drives and for generated trees — fans, chains, every data-bearing kind, a payload at the counting cap, a payload past it, and a chart whose multiply saturates — each priced at every ceiling around its own exact cost; the same for the action cascade cost; and the model's gate agrees with BoundedDriver.step's G2 stage on the verdict, on the refusal's reason verbatim, and on the session coming back by reference.",
+      "evidence": {
+        "host": "tests/Fuaran.Program.Parity.Tests/ProofOracleTests.fs",
+        "list": "Phase 1716 - the proved budget as oracle",
+        "cases": [
+          "the generated corpus straddles the ceiling in both directions",
+          "the oracle agrees with production on the bounded driver's own trees",
+          "the oracle agrees with production over generated trees at every ceiling around their exact cost",
+          "the oracle agrees with production on the action cascade cost",
+          "the oracle agrees with the driver's G2 gate, and a breach mutates nothing",
+          "GO RED: an accumulator that wraps loses the ceiling comparison"
+        ],
+        "runner": "proofs/check.ps1 step 6, which asserts a CASE COUNT because a filter matching nothing reports success",
+        "note": "the comparison is of the INTEGER and not the verdict, which is what says the model kept production's explicit stack in production's push order — above the ceiling the answer depends on which nodes were visited first. The go-red case commits a walk that accumulates with .NET's wrapping add and asserts BOTH that the harness reports it and that its ceiling comparison comes out the wrong way, the tree being admitted rather than refused; a divergence that was merely a different number would not demonstrate the defect the law excludes"
+      }
+    },
+    {
+      "id": "lazy-payload-cap-assumed",
+      "level": "assumed",
+      "statement": "The counted rows of a data-bearing node's Binding.Static payload are modelled as a LIST with a counting cap. Production's payload is a seq, which may be lazy and may be unbounded, and Seq.truncate is what bounds the reading of it. So what is proved is that the cap is applied and that the cost it produces is bounded by it — never that a seq is finite, and never that reading one terminates.",
+      "mitigation": "the differential host's corpus includes a payload AT the cap and one PAST it, and reads the cap out of the extraction rather than restating production's private literal, so a divergence between the two is reported rather than papered over"
+    },
+    {
+      "id": "int32-bound-assumed",
+      "level": "assumed",
+      "statement": "The model is over unbounded integers; production is over Int32, with the ceiling's upper limit at Int32.MaxValue. The two coincide on every input production can be handed — an int64 sum and an int64 product of two Int32s both fit with room to spare, which is exactly what production computes before narrowing — so the model is over a WIDER domain than production rather than a different one. Budget.actionCascadeCost is the one function with no saturation at all, in the model or in production: what bounds it there is the Int32 range, and that is this rung rather than the proved one.",
+      "mitigation": "the saturation bound is a parameter, so every proved law is quantified over it and holds at Int32.MaxValue as a special case; the differential supplies Int32.MaxValue and includes a tree whose cost saturates and one whose node cost saturates inside the multiply"
+    },
+    {
+      "id": "node-classification-sampled",
+      "level": "assumed",
+      "statement": "Which NodeKind is data-bearing, and which of its fields carries the rows and the weights, is supplied to the model by the differential host as a cost shape. NodeKind has scores of arms and Budget.nodeCost reads four of them; a model that carried the union would be modelling the tree vocabulary rather than the budget. The consequence, stated plainly: a production change that began weighting a fifth kind would be invisible to the differential until the host's projection gained the kind too.",
+      "mitigation": "the line is drawn where a defect is silent rather than loud — a mis-weighted kind prices visibly wrong on the first tree that contains one, where a wrapping add prices wrong only on the trees nobody tries; and the differential's corpus exercises all four kinds the projection names, so a projection that stopped matching one is caught"
+    },
+    {
+      "id": "budget-ceilings-are-policy",
+      "level": "policy",
+      "statement": "That MaxActions and MaxNodes are the RIGHT numbers is OUT of the theorem.",
+      "reason": "they are policy, set by the host per placement. Everything proved here says a tree is priced correctly against whatever number is set and refused when it exceeds it; nothing says a number is well chosen, and a proof could not."
+    },
+    {
+      "id": "budget-wall-clock",
+      "level": "policy",
+      "statement": "Wall-clock cost is OUT of the theorem.",
+      "reason": "the budget is step- and size-based on purpose — no Stopwatch, no Date.now — so that the same tree and event sequence bound identically at every placement and are unit-testable headlessly. It bounds WORK, not time. A tree within budget can still be slow on a slow machine, and reading these laws as a latency guarantee would be reading them as something they were deliberately not built to be."
     }
   ]
 }

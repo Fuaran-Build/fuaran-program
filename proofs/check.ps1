@@ -107,6 +107,14 @@ $modules = @(
         HostMinCases = 5
         HostSubject  = "the driver-semantics family and an arm-complete action corpus"
     }
+    @{
+        Name         = "Budget"
+        Source       = "Budget.fst"
+        Oracle       = "oracle/Budget.fs"
+        HostList     = "Phase 1716 - the proved budget as oracle"
+        HostMinCases = 6
+        HostSubject  = "the bounded driver's own trees, generated trees straddling the ceiling, and the G2 gate"
+    }
 )
 
 function Write-Step {

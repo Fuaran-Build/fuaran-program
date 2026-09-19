@@ -38,6 +38,8 @@ module Fuaran.Program.Parity.Tests.ProofOracleTests
 //  that silently agreed with everything would report the same green.
 // ============================================================================
 
+module ProvedBudget = Budget
+
 open Expecto
 open Fuaran.Core
 open Fuaran.UI
@@ -588,4 +590,630 @@ let tests =
               Expect.isNonEmpty
                   defective
                   "a fold that invokes the closure a Call carries MUST diverge from the proved model — a comparison that cannot lose is not evidence"
+          } ]
+
+// ============================================================================
+//  Phase 1716 — the differential host for the proved interaction budget.
+//
+//  `proofs/Budget.fst` is a model of `Budget.actionCascadeCost`,
+//  `Budget.treeCost` and the G2 stage of `BoundedDriver.step`, and five
+//  theorems about them. Everything the header of the 1715 host above says
+//  about what a differential is for applies here unchanged; what differs is
+//  what is compared and what the corpora are.
+//
+//  What is compared is an INTEGER, and that is a stronger comparison than it
+//  looks. Above the ceiling `treeCost` stops walking, so what it returns
+//  depends on which nodes it happened to visit first — which means the model
+//  has to keep production's explicit stack, in production's push order, or the
+//  two agree only on the verdict and not on the number. Comparing the number
+//  is what says the model kept it.
+//
+//  The three corpora answer different questions.
+//
+//    * The trees the bounded driver's own suite drives (`BoundedDriverTests`)
+//      are the shapes the loop is known to be exercised on. They answer "does
+//      the model agree on the documents that already exist".
+//    * The generated trees are run at every ceiling AROUND their own exact
+//      cost — below it, at it, one either side — because the interesting
+//      behaviour of this function is entirely at that boundary and no authored
+//      tree lands there by accident.
+//    * The G2 corpus runs the gate itself: `BoundedDriver.step` against the
+//      model's `step`, comparing the refusal's reason VERBATIM and requiring
+//      the session the driver hands back to be the one it was given.
+//
+//  And the go-red case is what says the comparison can lose. It commits a walk
+//  that accumulates with .NET's ordinary wrapping `+` instead of the
+//  saturating add — the one defect `Budget.fs`'s own comment names, where a
+//  sum that wrapped negative "would read as cheap and admit the very tree the
+//  budget exists to refuse" — and requires the ceiling comparison to come out
+//  the wrong way. Without it, a comparison that silently agreed with
+//  everything would report the same green.
+// ============================================================================
+
+// ─── Translation: production ⇄ the model ────────────────────────────────────
+//
+// The model takes the saturation bound as a parameter and owns the counting
+// cap; production hardwires the first and keeps the second private. So the
+// bound is supplied here from `Int32.MaxValue` — the value production's
+// `satAdd` / `satMul` compare against — and the cap is read back OUT of the
+// extraction, which is what makes a divergence from production's own private
+// literal something this host reports rather than something it papers over.
+
+let private satBound: bigint = bigint System.Int32.MaxValue
+
+let private countedCap: bigint = ProvedBudget.max_counted_rows
+
+let private rowCap: int = int countedCap
+
+/// F#: `Budget.staticSeqCount`'s projection of a `Binding`. The payload
+/// reaches the model as a list of units: only its LENGTH is ever read, and
+/// truncating at the model's own cap is what makes a lazy — or endless —
+/// production payload expressible as the finite list the assumed rung says it
+/// is modelled by.
+let private seqPayload (binding: Binding<'t seq>) : ProvedBudget.payload =
+    match binding with
+    | Binding.Static(Some items) -> ProvedBudget.PRows(items |> Seq.truncate rowCap |> Seq.map ignore |> List.ofSeq)
+    | _ -> ProvedBudget.PAbsent
+
+/// F#: `Budget.staticListCount`'s projection of the same.
+let private listPayload (binding: Binding<'t list>) : ProvedBudget.payload =
+    match binding with
+    | Binding.Static(Some items) -> ProvedBudget.PRows(items |> List.truncate rowCap |> List.map ignore)
+    | _ -> ProvedBudget.PAbsent
+
+/// Which of `nodeCost`'s four data-bearing arms a kind is, and the two numbers
+/// that arm reads. This is the one place the translation DECIDES anything, and
+/// it decides it because the model cannot: `NodeKind` has scores of arms and a
+/// model that carried them would be modelling the tree vocabulary. The
+/// consequence is worth stating plainly — a production change that started
+/// weighting a fifth kind would be invisible to this host until this match
+/// gained the kind too, whereas a change to the ARITHMETIC or to the WALK is
+/// caught, and those are what the theorems are about.
+let private modelShape (kind: NodeKind<obj>) : ProvedBudget.cost_shape =
+    match kind with
+    | NodeKind.Chart spec -> ProvedBudget.SWeighted(seqPayload spec.Source, bigint (List.length spec.YFields))
+    | NodeKind.DataGrid spec -> ProvedBudget.SWeighted(seqPayload spec.Source, bigint (List.length spec.Columns))
+    | NodeKind.Map spec -> ProvedBudget.SRows(listPayload spec.Source)
+    | NodeKind.Sparkline spec -> ProvedBudget.SRows(listPayload spec.Source)
+    | _ -> ProvedBudget.SPlain
+
+/// The children are production's own — `Introspect.getChildren`, the same
+/// function `treeCost` walks with — so the model and production never disagree
+/// about the SHAPE of the tree, only ever about what the walk does with it.
+let rec private modelNode (node: Node<obj>) : ProvedBudget.nd =
+    ProvedBudget.Nd(
+        modelShape node.Kind,
+        (match Introspect.getChildren node.Kind with
+         | Some kids -> kids |> List.map modelNode
+         | None -> [])
+    )
+
+/// F#: `Action<'Msg>`, projected onto the one distinction
+/// `actionCascadeCost` makes. The wildcard here is production's wildcard: the
+/// fourteen arms `BoundedFold.fst` carries one for one are not this model's
+/// subject, because the function being modelled cannot tell them apart.
+let rec private modelCascade (a: Action<obj>) : ProvedBudget.act =
+    match a with
+    | Action.Chain ops -> ProvedBudget.AChain(ops |> List.map modelCascade)
+    | _ -> ProvedBudget.ALeaf
+
+// ─── The comparison ─────────────────────────────────────────────────────────
+
+/// The cost function under comparison. Production is one; the go-red case
+/// below is another, and it is deliberately wrong.
+type private TreeCost = int -> Node<obj> -> int
+
+let private productionCost: TreeCost = Budget.treeCost
+
+let private oracleTreeCost (ceiling: int) (node: Node<obj>) : int =
+    int (ProvedBudget.tree_cost satBound countedCap (bigint ceiling) (modelNode node))
+
+let private oracleCascadeCost (action: Action<obj>) : int =
+    int (ProvedBudget.action_cascade_cost (modelCascade action))
+
+let private costDivergence (cost: TreeCost) (where: string) (ceiling: int) (node: Node<obj>) : string option =
+    let prod = cost ceiling node
+    let oracle = oracleTreeCost ceiling node
+
+    if prod <> oracle then
+        Some(sprintf "%s at ceiling %d\n  production: %d\n  oracle:     %d" where ceiling prod oracle)
+    else
+        None
+
+/// The exact cost, which is what a ceiling is chosen AROUND below. Priced at
+/// the saturation bound, where the walk cannot stop early — so this is the
+/// number `treecost_exact_below_ceiling` says a within-budget answer equals.
+let private exactCost (node: Node<obj>) : int =
+    Budget.treeCost System.Int32.MaxValue node
+
+// ─── Corpus A: the trees the bounded driver's own suite drives ──────────────
+
+let private stubRender (n: Node<obj>) : string = "<f id='" + n.Id + "'/>"
+
+let private boundMarkdown (id: string) (key: string) : Node<obj> =
+    let n = Fuaran.markdown id "placeholder"
+
+    { n with
+        Kind = NodeKind.Markdown({ Text = TextSource.Bound(Binding.State(key, Some "init")) }) }
+
+let private container (id: string) (children: Node<obj> list) : Node<obj> =
+    Fuaran.dashboard
+        id
+        { Defaults.dashboard<obj> with
+            Children = children }
+
+/// `BoundedDriverTests`' own fixture: a dashboard carrying a button and a
+/// state-bound Markdown. Rebuilt here rather than imported because that suite
+/// keeps its builders private — which is also why the SHAPE is what is copied
+/// and not the code.
+let private driverFixture (onClick: Action<obj>) : Node<obj> =
+    container
+        "root"
+        [ Fuaran.button
+              "set"
+              { Defaults.button<obj> with
+                  OnClick = onClick }
+          boundMarkdown "count" "msg" ]
+
+// ─── Corpus B: generated trees, and the data-bearing kinds ──────────────────
+
+let private chartNode (id: string) (rows: int) (fields: int) : Node<obj> =
+    let n = Fuaran.markdown id "x"
+
+    { n with
+        Kind =
+            NodeKind.Chart(
+                { Defaults.chart<obj> with
+                    Source = Binding.Static(Some(Seq.replicate rows (Map.empty: Row)))
+                    YFields = List.replicate fields "y" }
+            ) }
+
+/// A grid with rows and NO declared columns — the `max 1 (List.length ...)`
+/// clause, which is the only place the weighted arms can be asked to multiply
+/// by nothing.
+let private gridNode (id: string) (rows: int) : Node<obj> =
+    let n =
+        Fuaran.table
+            id
+            { Defaults.table<obj> with
+                Headers = []
+                Rows = [] }
+
+    match n.Kind with
+    | NodeKind.DataGrid spec ->
+        { n with
+            Kind =
+                NodeKind.DataGrid(
+                    { spec with
+                        Source = Binding.Static(Some(Seq.replicate rows (Map.empty: Row))) }
+                ) }
+    | other -> failwithf "Fuaran.table no longer builds a DataGrid; it builds %A" other
+
+let private sparklineNode (id: string) (points: int) : Node<obj> =
+    Fuaran.sparkline
+        id
+        { Defaults.sparkline with
+            Source = Binding.Static(Some(List.replicate points 1.0)) }
+
+let private mapNode (id: string) (markers: int) : Node<obj> =
+    Fuaran.map
+        id
+        { Defaults.map<obj> with
+            Source =
+                Binding.Static(
+                    Some(
+                        List.replicate
+                            markers
+                            { Label = "m"
+                              Latitude = 0.0
+                              Longitude = 0.0 }
+                    )
+                ) }
+
+/// A chain of single-child containers, `depth` deep. The stack walk visits it
+/// one node at a time, so it is the shape that distinguishes an iterative
+/// walk's order from a recursive one's.
+let rec private deepChain (depth: int) : Node<obj> =
+    if depth <= 1 then
+        Fuaran.markdown "leaf" "x"
+    else
+        container ("d" + string depth) [ deepChain (depth - 1) ]
+
+let private generatedTrees: (string * Node<obj>) list =
+    [ "a bare leaf", Fuaran.markdown "m" "x"
+      "an empty container", container "root" []
+      "a fan of seven leaves", container "root" (List.init 7 (fun i -> Fuaran.markdown ("m" + string i) "x"))
+      "a chain twelve deep", deepChain 12
+      "a fan of fans",
+      container
+          "root"
+          (List.init 3 (fun i ->
+              container ("c" + string i) (List.init 4 (fun j -> Fuaran.markdown ("m" + string i + "-" + string j) "x"))))
+      "an unbound chart (no static payload)", container "root" [ chartNode "ch" 0 3 ]
+      "a chart, five rows by three fields", container "root" [ chartNode "ch" 5 3 ]
+      "a chart with no declared fields", container "root" [ chartNode "ch" 5 0 ]
+      "a grid with rows and no columns", container "root" [ gridNode "g" 9 ]
+      "a sparkline of forty points", container "root" [ sparklineNode "s" 40 ]
+      "a map of six markers", container "root" [ mapNode "mp" 6 ]
+      "every data-bearing kind at once",
+      container
+          "root"
+          [ chartNode "ch" 11 2
+            gridNode "g" 7
+            sparklineNode "s" 13
+            mapNode "mp" 3
+            Fuaran.markdown "m" "x" ]
+      "a payload AT the counting cap", container "root" [ sparklineNode "s" rowCap ]
+      "a payload PAST the counting cap", container "root" [ sparklineNode "s" (rowCap + 1) ]
+      "a chart whose multiply saturates", container "root" [ chartNode "ch" rowCap 30000 ] ]
+
+/// Every ceiling worth asking about for one tree: the degenerate ones, the
+/// exact cost, and one either side of it. The boundary is where the early stop
+/// lives, so a corpus that never lands on it is a corpus that never tests it.
+let private ceilingsAround (exact: int) : int list =
+    [ 0
+      1
+      2
+      exact - 2
+      exact - 1
+      exact
+      exact + 1
+      exact + 2
+      System.Int32.MaxValue ]
+    |> List.filter (fun c -> c >= 0)
+    |> List.distinct
+
+// ─── Corpus C: the cascade cost ─────────────────────────────────────────────
+
+let private cascadeCases: (string * Action<obj>) list =
+    let leaf = Action.Print
+
+    let rec nest depth =
+        if depth <= 0 then
+            leaf
+        else
+            Action.Chain [ nest (depth - 1); leaf ]
+
+    [ "a leaf", leaf
+      "an empty chain", Action.Chain []
+      "a flat chain of three",
+      Action.Chain [ Action.Print; Action.Focus "n"; Action.SetState("k", Some(JStr "v"), None) ]
+      "a chain of empty chains", Action.Chain [ Action.Chain []; Action.Chain [] ]
+      "a chain nesting a chain", Action.Chain [ Action.Chain [ Action.Print; Action.Print ]; Action.Print ]
+      "a chain nested twenty deep", nest 20
+      "a wide flat chain", Action.Chain(List.replicate 70 leaf) ]
+
+// ─── The G2 gate ────────────────────────────────────────────────────────────
+
+let private clickEvent: LiveEvent =
+    { ConnId = "proof-budget"
+      NodeId = "set"
+      Event = "click"
+      Payload = Map.empty
+      LastSeq = 0 }
+
+/// The model's admitted branch. It is never expected to run on a breached step
+/// — that is half of what `breach_pure` says — so it returns a sentinel the
+/// comparison reads as "the gate let this through", which is the only thing
+/// about the admitted case this host compares. What the driver DOES with an
+/// admitted event is Phase 1715's subject and the renderer's.
+let private admittedBranch: ProvedBudget.admitted_branch<obj> =
+    { run =
+        fun sess _ _ ->
+            sess,
+            ({ so_patches = bigint 0
+               so_effects = bigint 0
+               so_rejected = ProvedBudget.ONone }
+            : ProvedBudget.step_output) }
+
+/// One event through the driver and through the model's gate, comparing the
+/// verdict, the refusal's reason VERBATIM, and — on a breach — that the
+/// session came back untouched.
+let private gateDivergence (where: string) (budget: InteractionBudget) (onClick: Action<obj>) : string option =
+    let services =
+        { BoundedDriver.BoundedServices.createPermissive stubRender with
+            Budget = budget }
+
+    let session =
+        BoundedDriver.init services empty (WireTree.ofDecoded (driverFixture onClick))
+
+    let resolved =
+        match Validation.validate (fun _ -> true) session.Resolved clickEvent with
+        | Ok validated -> validated.Action
+        | Error reason -> failwithf "%s: the fixture's click did not validate: %A" where reason
+
+    match resolved with
+    | None -> Some(sprintf "%s: the fixture's click resolved to no action, so the gate was never asked" where)
+    | Some action ->
+        let after, output = BoundedDriver.step session clickEvent
+
+        let modelSession: ProvedBudget.session<obj> =
+            { se_store = o ()
+              se_node_count = bigint session.NodeCount }
+
+        let modelBudget: ProvedBudget.budget =
+            { b_max_actions = bigint budget.MaxActions
+              b_max_nodes = bigint budget.MaxNodes }
+
+        let modelAfter, modelOutput =
+            ProvedBudget.step modelBudget admittedBranch modelSession clickEvent.NodeId (modelCascade action)
+
+        let prodRefusal =
+            match output.Rejected with
+            | Some(BoundedDriver.BudgetExceeded reason) -> Some reason
+            | Some other -> Some(sprintf "<not a budget refusal: %A>" other)
+            | None -> None
+
+        let modelRefusal =
+            match modelOutput.so_rejected with
+            | ProvedBudget.OSome reason -> Some reason
+            | ProvedBudget.ONone -> None
+
+        if prodRefusal <> modelRefusal then
+            Some(sprintf "%s: REFUSAL\n  production: %A\n  oracle:     %A" where prodRefusal modelRefusal)
+        elif
+            prodRefusal.IsSome
+            && not (List.isEmpty output.Patches && List.isEmpty output.Effects)
+        then
+            Some(
+                sprintf
+                    "%s: a breached step emitted %d patch(es) and %d effect(s); breach_pure says neither"
+                    where
+                    (List.length output.Patches)
+                    (List.length output.Effects)
+            )
+        elif prodRefusal.IsSome && not (obj.ReferenceEquals(after, session)) then
+            // REFERENCE equality, which is `breach_pure`'s `sess' == sess`
+            // literally: the theorem does not say the driver hands back an
+            // equal session, it says it hands back THE session. A structural
+            // comparison would also be unavailable here — `BoundedStore`
+            // carries `obj` payloads and so supports no equality constraint —
+            // but that is a second reason and not the first one.
+            Some(sprintf "%s: a breached step changed the session; breach_pure says it is handed back untouched" where)
+        elif prodRefusal.IsSome && modelAfter.se_node_count <> modelSession.se_node_count then
+            Some(sprintf "%s: the MODEL's breached step changed its session, which breach_pure forbids" where)
+        else
+            None
+
+// ─── The go-red case ────────────────────────────────────────────────────────
+
+/// The proved walk with ONE line changed: the accumulator adds with .NET's
+/// ordinary `int`, which wraps, instead of with the saturating add. Everything
+/// else — the node cost, the push order, the guards — is the oracle's own,
+/// called by name, so the only difference between this walk and the proved one
+/// is the defect.
+///
+/// It is committed on purpose. `Budget.fs` says an overflow that wrapped
+/// negative "would read as cheap and admit the very tree the budget exists to
+/// refuse"; a differential that cannot be made to say so is not evidence of
+/// anything.
+let rec private wrappingWalk (ceiling: int) (pending: ProvedBudget.nd list) (running: int) : int =
+    if running > ceiling then
+        running
+    else
+        match pending with
+        | [] -> running
+        | cur :: rest ->
+            wrappingWalk
+                ceiling
+                (ProvedBudget.push_all (ProvedBudget.kids cur) rest)
+                (running + int (ProvedBudget.node_cost satBound countedCap cur))
+
+let private wrappingTreeCost (ceiling: int) (node: Node<obj>) : int =
+    wrappingWalk ceiling [ modelNode node ] 0
+
+/// Two charts whose costs sum past `Int32.MaxValue` while each sits inside it,
+/// under a ceiling both of them individually clear. The saturating add answers
+/// the bound and the tree is refused; a wrapping add answers a negative number
+/// and the tree is admitted.
+let private overflowingTree: Node<obj> =
+    let fields = List.replicate 400_000 "y"
+
+    let chart (id: string) : Node<obj> =
+        let n = Fuaran.markdown id "x"
+
+        { n with
+            Kind =
+                NodeKind.Chart(
+                    { Defaults.chart<obj> with
+                        Source = Binding.Static(Some(Seq.replicate 4_000 (Map.empty: Row)))
+                        YFields = fields }
+                ) }
+
+    container "root" [ chart "a"; chart "b" ]
+
+let private overflowCeiling = 2_000_000_000
+
+// ─── The tests ──────────────────────────────────────────────────────────────
+
+[<Tests>]
+let budgetTests =
+    testList
+        "Phase 1716 - the proved budget as oracle"
+        [ test "the generated corpus straddles the ceiling in both directions" {
+              // A corpus every ceiling admitted — or every ceiling refused —
+              // would report the same green while testing none of the
+              // behaviour that lives at the boundary. The floor is that both
+              // answers occur, and that the corpus prices something at all.
+              let verdicts =
+                  generatedTrees
+                  |> List.collect (fun (_, tree) ->
+                      let exact = exactCost tree
+
+                      ceilingsAround exact
+                      |> List.map (fun ceiling -> productionCost ceiling tree > ceiling))
+
+              Expect.isNonEmpty generatedTrees "the generated corpus is empty"
+
+              Expect.isTrue
+                  (List.contains true verdicts)
+                  "no generated tree is over its ceiling at any of the ceilings tried, so the refusal path is never priced"
+
+              Expect.isTrue
+                  (List.contains false verdicts)
+                  "no generated tree is within its ceiling at any of the ceilings tried, so the exact path is never priced"
+
+              // `treecost_exact_below_ceiling` is a statement about a number,
+              // not a verdict, so the corpus must contain a tree whose cost is
+              // bigger than one. A corpus of leaves would satisfy every
+              // comparison below while exercising no arithmetic at all.
+              Expect.isTrue
+                  (generatedTrees |> List.exists (fun (_, tree) -> exactCost tree > 1))
+                  "every generated tree costs one, so nothing here prices a subtree or a payload"
+          }
+
+          test "the oracle agrees with production on the bounded driver's own trees" {
+              let trees =
+                  [ "the driver fixture", driverFixture (Action.SetState("msg", Some(JStr "x"), None))
+                    "the driver fixture with a chained click",
+                    driverFixture (Action.Chain [ Action.Print; Action.SetState("msg", Some(JStr "x"), None) ])
+                    "the driver fixture with no click", driverFixture (Action.Chain []) ]
+
+              let divergences =
+                  trees
+                  |> List.collect (fun (name, tree) ->
+                      ceilingsAround (exactCost tree)
+                      |> List.choose (fun ceiling -> costDivergence productionCost name ceiling tree))
+
+              match divergences with
+              | [] -> ()
+              | first :: rest ->
+                  failtestf
+                      "the extracted model and production disagree on %d priced tree(s). First divergence:\n%s"
+                      (List.length rest + 1)
+                      first
+          }
+
+          test "the oracle agrees with production over generated trees at every ceiling around their exact cost" {
+              let priced =
+                  generatedTrees
+                  |> List.collect (fun (name, tree) ->
+                      ceilingsAround (exactCost tree) |> List.map (fun ceiling -> name, ceiling, tree))
+
+              let divergences =
+                  priced
+                  |> List.choose (fun (name, ceiling, tree) -> costDivergence productionCost name ceiling tree)
+
+              match divergences with
+              | [] -> ()
+              | first :: rest ->
+                  failtestf
+                      "the extracted model and production disagree on %d of %d (tree, ceiling) pair(s). First divergence:\n%s"
+                      (List.length rest + 1)
+                      priced.Length
+                      first
+          }
+
+          test "the oracle agrees with production on the action cascade cost" {
+              let divergences =
+                  cascadeCases
+                  |> List.choose (fun (name, action) ->
+                      let prod = Budget.actionCascadeCost action
+                      let oracle = oracleCascadeCost action
+
+                      if prod <> oracle then
+                          Some(sprintf "%s\n  production: %d\n  oracle:     %d" name prod oracle)
+                      else
+                          None)
+
+              match divergences with
+              | [] -> ()
+              | first :: _ -> failtestf "the extracted model and production disagree on a cascade cost:\n%s" first
+          }
+
+          test "the oracle agrees with the driver's G2 gate, and a breach mutates nothing" {
+              let overActions =
+                  Action.Chain(List.replicate (InteractionBudget.defaults.MaxActions + 1) Action.Print)
+
+              let withinActions = Action.SetState("msg", Some(JStr "x"), None)
+
+              let cases =
+                  [ "a cascade over MaxActions", InteractionBudget.defaults, overActions
+                    "a cascade at MaxActions",
+                    InteractionBudget.defaults,
+                    Action.Chain(List.replicate InteractionBudget.defaults.MaxActions Action.Print)
+                    "a tree over MaxNodes",
+                    { InteractionBudget.defaults with
+                        MaxNodes = 1 },
+                    withinActions
+                    "a tree at MaxNodes",
+                    { InteractionBudget.defaults with
+                        MaxNodes = 3 },
+                    withinActions
+                    "both caps breached at once",
+                    { InteractionBudget.defaults with
+                        MaxNodes = 1 },
+                    overActions
+                    "nothing breached", InteractionBudget.defaults, withinActions ]
+
+              // The gate is only being compared if it actually refused
+              // something: a run in which every case was admitted would agree
+              // with the model for a reason that has nothing to do with the
+              // budget.
+              let refusedSomething =
+                  let services =
+                      { BoundedDriver.BoundedServices.createPermissive stubRender with
+                          Budget = InteractionBudget.defaults }
+
+                  let session =
+                      BoundedDriver.init services empty (WireTree.ofDecoded (driverFixture overActions))
+
+                  (snd (BoundedDriver.step session clickEvent)).Rejected
+
+              Expect.isSome refusedSomething "the G2 corpus refused nothing, so the gate was never compared on a breach"
+
+              let divergences =
+                  cases
+                  |> List.choose (fun (name, budget, onClick) -> gateDivergence name budget onClick)
+
+              match divergences with
+              | [] -> ()
+              | first :: rest ->
+                  failtestf
+                      "the extracted model and production disagree on %d gate case(s). First divergence:\n%s"
+                      (List.length rest + 1)
+                      first
+          }
+
+          test "GO RED: an accumulator that wraps loses the ceiling comparison" {
+              // The honest run first: the defect is committed against a tree
+              // production and the oracle agree on, so what the wrapping walk
+              // loses is the defect and not the fixture.
+              Expect.isNone
+                  (costDivergence productionCost "the overflowing tree" overflowCeiling overflowingTree)
+                  "production disagrees with the oracle on the very tree the defect is committed against"
+
+              // Then the defect, through the SAME comparison the cases above
+              // run on. Comparing the two integers directly would show that
+              // they differ; putting the defective walk where production sits
+              // shows that the harness REPORTS it, which is the thing every
+              // green above rests on.
+              Expect.isSome
+                  (costDivergence wrappingTreeCost "the overflowing tree" overflowCeiling overflowingTree)
+                  "the comparison harness did not report a walk whose accumulator wraps — a harness that cannot lose is not evidence"
+
+              let proved = oracleTreeCost overflowCeiling overflowingTree
+              let wrapped = wrappingTreeCost overflowCeiling overflowingTree
+
+              Expect.notEqual
+                  wrapped
+                  proved
+                  "a walk whose accumulator wraps MUST diverge from the proved model — a comparison that cannot lose is not evidence"
+
+              // And the divergence is the one that matters. Not "a different
+              // number" — the ceiling comparison coming out the other way,
+              // which is the tree being ADMITTED rather than refused.
+              Expect.isTrue
+                  (proved > overflowCeiling)
+                  (sprintf
+                      "the proved cost %d should be over the ceiling %d; the fixture no longer overflows"
+                      proved
+                      overflowCeiling)
+
+              Expect.isTrue
+                  (wrapped <= overflowCeiling)
+                  (sprintf
+                      "the wrapping cost %d should read as WITHIN the ceiling %d — that is the whole defect"
+                      wrapped
+                      overflowCeiling)
           } ]

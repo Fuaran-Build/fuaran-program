@@ -52,5 +52,10 @@
         <!-- GENERATED from ../BoundedFold.fst — do not edit. A later proof
              phase APPENDS its extraction below. -->
         <Compile Include="BoundedFold.fs" />
+        <!-- GENERATED from ../Budget.fst — do not edit. Phase 1716, the
+             interaction budget: the saturating arithmetic, the tree walk and
+             the driver's budget gate. Independent of BoundedFold above; the
+             order here is the order the modules landed in. -->
+        <Compile Include="Budget.fs" />
     </ItemGroup>
 </Project>
