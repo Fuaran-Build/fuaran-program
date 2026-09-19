@@ -17,6 +17,7 @@
     <Compile Include="ReplayTests.fs" />
     <Compile Include="HarvestTests.fs" />
     <Compile Include="DurableInterpreterTests.fs" />
+    <Compile Include="OperatorControlTests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
   <ItemGroup>

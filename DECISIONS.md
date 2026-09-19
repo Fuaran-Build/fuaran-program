@@ -489,6 +489,69 @@ signature under a key it was given, and nothing more. And the operator command t
 lives with the tooling that has a tree and a key directory in hand, not here: this repository
 delivers the two library functions it calls.
 
+---
+
+## D16 — The operator's controls are RECORDED OPS on a session stream, not imperative calls; a machine raiser and a person raise the same op (2026-09-19)
+
+Suspend, throttle, revoke and resume are the three acts an operator reaches for first and the fourth
+that undoes one of them. `InteractionBudget` refuses one costly interaction and D12's journal records
+the one arm that reaches outside; neither can halt a session that is already running, slow one effect
+kind, or withdraw a performer while a handler is live. This decision is how those four acts are
+carried, and four things about it are decisions rather than implementation detail.
+
+**The act is a record, and the state is a FOLD of it.** `Controls.fold` is a total function of the
+entry list and of nothing else, so the state a resume reaches is the state any reader of the same
+prefix reaches. The alternative — a flag on a session object, set by a method — was refused for the
+reason D1 refuses a richer evaluator, read one level up: an imperative control cannot be replayed, so
+a resumed session does not know it was ever stopped; it cannot be audited, so "what did the AI do"
+omits the part where somebody stopped it; and it cannot be shown monotone, because there is no record
+to be monotone over. Recording the act buys all three from one mechanism, and the cost is one port
+and one fold. The consequence is that a control takes effect at the NEXT consultation and never
+mid-effect: there is no way to express "stop this call", only "perform no more", which is what a
+bounded, staged handler can actually honour.
+
+**A machine-raised suspend and an operator-raised one are the SAME OP.** The raiser is a
+`ControlActor` on the entry — `operator` or `machine` — and no rule below the record reads it. Two
+op families would have meant two fold rules, two audit vocabularies, and two places for a fifth
+control to be added to only one of; and the automated raiser is not a lesser authority, it is the
+same authority with a different hand on it. So an automated detector that suspends a session (the
+denial-pattern case) produces an entry indistinguishable to the fold from an operator's, and
+distinguishable to an auditor, which is the only reader that should care.
+
+**Each act is expressed in a vocabulary that already exists.** A suspend closes the session's own G1
+dispatch gate, so a suspended step is refused through the same path and with the same
+`ServerReject.Gate` shape as any other policy refusal; a throttle closes the effect gate over one
+capability, so a breach is the ordinary structured `GateRefused` denial — which HALTS the handler in
+the plan phase, and because every host call is staged to the perform phase (D8), a breach therefore
+performs **none** of that handler's calls rather than some of them; and a revocation REMOVES the
+performer, so it reads as `Unregistered` — the arm that says "the capability is absent from this
+host" — which carries the withdrawal through `ServerCoverage` to the demanded-effect check with
+nothing new to teach it. A new denial arm per control would have been the obvious design and would
+have left every existing consumer of the two-arm distinction unable to see any of them.
+
+**A `Resume` lifts the suspend and NOTHING else, and a revocation is never lifted at all.** The
+monotonicity is a property of six lines — no arm of `Controls.step` removes a key from `Revoked` — and
+not a promise about a lifetime, which is what makes it checkable over every prefix of a stream rather
+than assertable in prose. Re-registering a withdrawn performer is a host act on a fresh session, and
+that ceremony is the point. A resume that also cleared throttles and revocations would read as tidier
+and would make the mildest word in the vocabulary the most consequential one.
+
+**What this forecloses.** A throttle window is COUNTED, never timed: it is a per-invocation budget of
+attempts, because a rate over wall-clock time folds to a different answer on every re-read and the
+whole value of recording these acts is that it does not. A host that wants a time-based rate limit
+owns that above this placement, where a clock is legitimate. The control stream is also keyed by
+SESSION rather than by invocation, and is a second port beside `EffectJournal` rather than a field
+added to it — the shapes agree, the keys do not, and filing a suspend under one invocation id would
+make it invisible to the next one.
+
+And the wire form is **deliberately a host document, not a specified one.** The program wire
+specifies what a handler declares, what it may reach and what it reports; the control stream is what
+a host's operator did to a session. Specifying it now would pin an encoding before a second host had
+ever read one — the same posture the demanded-effect projection takes, for the same reason. It
+round-trips canonically here so the acts are portable between this host's own stores in the meantime,
+and a fifth control arm is refused at decode rather than admitted, so the closure is enforced and not
+merely intended.
+
 ## D17 — The gate decides on ARGUMENTS as well as on the capability name; the policy is declared DATA, carried in the envelope, and refused through the vocabulary that already exists (2026-09-19)
 
 **Decision.** A host declares an argument policy beside an effect registration — a closed set of
