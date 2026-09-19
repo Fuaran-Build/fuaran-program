@@ -65,6 +65,47 @@ engine, and before a performer is looked up as a callable, so no side effect of 
 the policy decision. Every refusal is recorded, and a refusal carries the capability only, never the
 payload it wanted to act on.
 
+## The gate decides on arguments, not only on the effect name
+
+"`HostCall` allowed" is not "`HostCall` to `api.example.com` allowed". An admitted capability can
+still carry a value that came off the wire — an endpoint, a channel, a source name — and a gate that
+decided on the capability alone could not see where the call actually went.
+
+So a host declares an **argument policy** beside the registration, as data:
+
+```fsharp
+registry
+|> ServerEffectRegistry.register "fetch" performer
+|> ServerEffectRegistry.constrain
+       "host:fetch"
+       [ ServerConstraintClause.AllowList("url", [ "api.example.com" ])
+         ServerConstraintClause.Ceiling 65536
+         ServerConstraintClause.Label "pii" ]
+```
+
+Three clauses, closed: an **allow-list** over one named argument, a **ceiling** on the declarative
+payload's canonical bytes, and a **label** that is carried for a deployer and decides nothing. The
+check runs in the gate's own position — after the capability is admitted by name, and still before
+the pipeline, the apply engine and the performer lookup — so an off-list endpoint is refused with
+nothing having run. The refusal names the host's own declaration (`argument-not-allowed:url`,
+`payload-over-ceiling:65536`) and never the value or the size that met it: an argument check is the
+one place here that reads a wire-supplied string, and echoing it would be the leak the rest of this
+placement is shaped to avoid.
+
+The two halves compose in **one direction**. A capability the gate refuses by name never has its
+arguments examined at all, and an argument bound can only ever narrow a capability the gate already
+admitted — it can never widen one it refused.
+
+**A capability nobody constrained is unconstrained**, exactly as a host that declares no call surface
+is not checked against one, so a host that declares nothing behaves as it did before this existed.
+Two limits are stated rather than assumed: a host call's arguments are read **one level deep** and
+string-valued only, so a bound belongs on the top-level argument the performer takes; and a ceiling
+bounds a **declarative payload** — a host call's arguments, a notification's payload — never an op
+sequence.
+
+The declared policy travels in the capability envelope below, so a deployer reads *HTTP to
+api.example.com, ≤ 64 KB* rather than *HTTP*.
+
 ## Atomicity, stated honestly
 
 The **handler** is the unit. Stages thread a value; nothing commits until the last stage succeeds; a
@@ -202,6 +243,16 @@ no finding: that string is the one value in this subsystem that comes off the wi
 pre-execution finding naming it would be exactly the leak the payload-free denials avoid. A call
 action inside a stage demands nothing, because it is the documented no-op. And a query's landing slot
 is not a demand — the source it reads is.
+
+`ServerDemanded.ofTreeHandlersAndRegistry` is the same document with the host's **declared argument
+policy** joined on — the clauses for the capabilities this tier demands, and no others, so a host's
+whole registry never leaks into a document about one program. A capability the host did not constrain
+contributes nothing, which is how the document says *unconstrained* by silence rather than by an empty
+bound a reader would have to interpret. `signWithRegistry` / `verifyWithRegistry` are `sign` /
+`verify` over that walk, and the policy is therefore part of what verification **recomputes**: a host
+that has since widened an allow-list, raised a ceiling or dropped a clause presents as drift. Signing
+the demand without the policy would have left the bound attestable and unverifiable — a verifier could
+read what the host once claimed and could not tell whether it still held.
 
 ## Refusing an unsatisfiable handler before the tree runs
 

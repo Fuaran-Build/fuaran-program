@@ -322,7 +322,12 @@ let tests =
               Expect.equal (Demanded.encode a) (Demanded.encode b) "and encode to the same bytes"
 
               let json = Demanded.encode a
-              Expect.stringContains json "\"version\":3" "the version moved with the shape"
+              Expect.stringContains json (sprintf "\"version\":%d" Demanded.Version) "the version the encoder emits"
+
+              Expect.stringContains
+                  json
+                  "\"constraints\":[]"
+                  "this walk declares no argument policy — the key is present and EMPTY rather than absent, so 'predates the member' and 'read and empty' stay distinguishable"
 
               Expect.stringContains
                   json

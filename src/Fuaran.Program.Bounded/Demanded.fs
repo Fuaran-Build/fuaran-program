@@ -152,6 +152,54 @@ type ReplayPosture =
         Reasons: ReplayReasonDemand list
     }
 
+/// One clause of a capability's declared argument policy — the vocabulary a
+/// host writes a bound in, and the one this document carries it in.
+///
+/// **A closed set of three, and the closure is the point**: this is what a
+/// policy gate can decide about an effect's ARGUMENTS without interpreting a
+/// payload, so a fourth kind is a deliberate widening of what the gate reasons
+/// over rather than a new option on a record.
+///
+/// **A clause is PRESENT or it is not; there is no "unconstrained" clause.** An
+/// argument nobody allow-listed, a payload nobody bounded and a capability
+/// nobody labelled are all expressed by silence, which is why this is a list of
+/// what was declared rather than a record of nullable bounds. A host that never
+/// declared a bound has not declared an empty one, and the two must not be one
+/// shape with a blank in it.
+[<RequireQualifiedAccess>]
+type ServerConstraintClause =
+    /// The values permitted for ONE named argument. The argument is named rather
+    /// than positional because an effect's arguments are a declarative object,
+    /// not a tuple — and because "which value did the host constrain" is what a
+    /// deployer reading this is asking. An EMPTY permitted list is a real
+    /// declaration ("this argument may carry nothing"), never an absent one.
+    | AllowList of argument: string * permitted: string list
+    /// A ceiling on the payload's canonical encoded size, in bytes.
+    | Ceiling of bytes: int
+    /// A disclosure label. CARRIED, never checked — it is a word for a deployer
+    /// and an auditor, and inventing a meaning for it here would make it a
+    /// policy nobody wrote.
+    | Label of label: string
+
+/// One capability's declared argument policy, as the document carries it.
+///
+/// It is the HOST's declaration travelling beside the handlers' demand, which is
+/// what makes the pair readable as "HTTP to api.example.com, ≤ 64 KB" rather
+/// than as "HTTP". It is not itself a demand, and no coverage finding is
+/// computed from it: the enforcement happens at the placement, where the
+/// arguments are, and this is the fact that enforcement runs on — published so a
+/// deployer reads the bound without holding the registry it came from.
+type ServerConstraintDemand =
+    {
+        /// The capability the clauses govern — the same string the gate is asked
+        /// about, so a constrained capability and a gated one cannot be two
+        /// spellings of an intention.
+        Capability: string
+        /// What was declared for it. A capability with NO clauses never appears
+        /// here at all, so this list is never empty in a normalised document.
+        Clauses: ServerConstraintClause list
+    }
+
 /// What a SERVER placement's handler registration can ever ask of its host —
 /// the second tier of the document, and the half a program tree cannot express.
 ///
@@ -186,6 +234,17 @@ type ServerDemand =
         /// fact it enforces against, published so a capability manifest can
         /// state the posture without re-deriving it.
         Replay: ReplayPosture list
+        /// The argument policy the HOST declared for the capabilities this tier
+        /// demands — one clause per constrained capability.
+        ///
+        /// DESCRIPTIVE here, exactly as `Replay` is, and for a sharper version
+        /// of the same reason: it is not something a handler asks of a host, it
+        /// is something the host answered in advance. A capability the host
+        /// constrained but these handlers never name contributes nothing, so the
+        /// document stays about this program on this host; a capability they
+        /// name and the host did not constrain contributes nothing either, and
+        /// that silence reads as unconstrained rather than as an empty bound.
+        Constraints: ServerConstraintDemand list
     }
 
 /// What a program tree can ever ask of its host, as data.
@@ -680,6 +739,20 @@ module Demanded =
               Read = r })
         |> List.sortBy _.Namespace
 
+    /// The canonical position of one policy clause within a capability's list.
+    ///
+    /// Sorted by CLAUSE KIND first and by the argument within the allow-lists,
+    /// not by the declaration order a host happened to write: two hosts with the
+    /// same policy must encode to the same bytes, which is the property the
+    /// whole document rests on. The ordinal is the clause's position in the DU's
+    /// own declaration, so adding a clause extends this match rather than
+    /// renumbering it, and the compiler says so.
+    let private clauseOrder (clause: ServerConstraintClause) : int * string =
+        match clause with
+        | ServerConstraintClause.AllowList(argument, _) -> 0, argument
+        | ServerConstraintClause.Ceiling _ -> 1, ""
+        | ServerConstraintClause.Label _ -> 2, ""
+
     /// Put a projection's every list into the canonical form the document
     /// promises: distinct, sorted, one entry per namespace. The single place
     /// that ordering is decided, so `ofTree`, `ofAction` and `union` cannot
@@ -703,7 +776,30 @@ module Demanded =
                   // left in stage order: they are a sequence through one
                   // handler, not a set, and sorting them would destroy the one
                   // thing that makes a stage ordinal useful.
-                  Replay = s.Replay |> List.distinct |> List.sortBy _.Handler }) }
+                  Replay = s.Replay |> List.distinct |> List.sortBy _.Handler
+                  // Sorted by CAPABILITY, and the permitted values within a
+                  // clause sorted too: a permitted set is a set, unlike a
+                  // posture's reasons, so leaving it in declaration order would
+                  // make two hosts with the same policy encode to different
+                  // bytes.
+                  Constraints =
+                    s.Constraints
+                    |> List.map (fun c ->
+                        { c with
+                            Clauses =
+                                c.Clauses
+                                |> List.map (fun clause ->
+                                    match clause with
+                                    | ServerConstraintClause.AllowList(argument, permitted) ->
+                                        ServerConstraintClause.AllowList(
+                                            argument,
+                                            permitted |> List.distinct |> List.sort
+                                        )
+                                    | other -> other)
+                                |> List.distinct
+                                |> List.sortBy clauseOrder })
+                    |> List.distinct
+                    |> List.sortBy _.Capability }) }
 
     /// The projection that demands nothing. The identity of `union`, and what a
     /// tree with no reachable handler slot projects.
@@ -763,7 +859,10 @@ module Demanded =
                         |> List.collect (fun p -> p.Server |> Option.map _.Channels |> Option.defaultValue [])
                       Replay =
                         projections
-                        |> List.collect (fun p -> p.Server |> Option.map _.Replay |> Option.defaultValue []) }
+                        |> List.collect (fun p -> p.Server |> Option.map _.Replay |> Option.defaultValue [])
+                      Constraints =
+                        projections
+                        |> List.collect (fun p -> p.Server |> Option.map _.Constraints |> Option.defaultValue []) }
             else
                 None
 
@@ -848,7 +947,19 @@ module Demanded =
     /// The version this encoder emits, and — see `decodableVersions` — the only
     /// one this reader reads.
     [<Literal>]
-    let Version = 3
+    let Version = 4
+
+    // The policy clause's discriminator, written once and read once. A literal
+    // spelled at the encoder and again at the reader is the drift this document
+    // otherwise has no detector for.
+    [<Literal>]
+    let ClauseAllowList = "allowList"
+
+    [<Literal>]
+    let ClauseCeiling = "ceiling"
+
+    [<Literal>]
+    let ClauseLabel = "label"
 
     /// The three common control characters keep their short escapes; every other
     /// control character (U+0000–U+001F) is escaped as `\u00XX`. A raw control
@@ -911,6 +1022,16 @@ module Demanded =
     /// whether a session may be resumed is the last consumer that should have to
     /// guess which of the two it is holding. The number is in-band and cheap;
     /// the ambiguity would not have been.
+    ///
+    /// **Version 4 adds the declared argument policy**, on that same argument a
+    /// third time rather than by analogy to it. The `constraints` key is present
+    /// on EVERY server tier from here on — `[]` where no reachable capability
+    /// was constrained — so an ABSENT `constraints` says "this producer predates
+    /// the policy" and an EMPTY one says "this registration was read and nothing
+    /// bounds these capabilities". Those need different answers, and this is the
+    /// one member where reading the first as the second is actively dangerous: a
+    /// deployer who takes "no clause" for "no bound" when the truth is "I could
+    /// not see the bounds" has been told the opposite of the safe thing.
     let encode (projection: DemandedProjection) : string =
         let effects = projection.Effects |> List.map q |> arr
 
@@ -957,7 +1078,27 @@ module Demanded =
                         $"""{{"handler":{q p.Handler},"safety":{q p.Safety},"reasons":{reasons}}}""")
                     |> arr
 
-                $"""{{"effects":{se},"capabilities":{sc},"functions":{fns},"channels":{channels},"replay":{replay}}}"""
+                let constraints =
+                    s.Constraints
+                    |> List.map (fun c ->
+                        let clauses =
+                            c.Clauses
+                            |> List.map (fun clause ->
+                                match clause with
+                                | ServerConstraintClause.AllowList(argument, permitted) ->
+                                    let values = permitted |> List.map q |> arr
+
+                                    $"""{{"clause":{q ClauseAllowList},"argument":{q argument},"permitted":{values}}}"""
+                                | ServerConstraintClause.Ceiling bytes ->
+                                    $"""{{"clause":{q ClauseCeiling},"bytes":{bytes}}}"""
+                                | ServerConstraintClause.Label label ->
+                                    $"""{{"clause":{q ClauseLabel},"label":{q label}}}""")
+                            |> arr
+
+                        $"""{{"capability":{q c.Capability},"clauses":{clauses}}}""")
+                    |> arr
+
+                $"""{{"effects":{se},"capabilities":{sc},"functions":{fns},"channels":{channels},"replay":{replay},"constraints":{constraints}}}"""
 
         $"""{{"kind":{q Kind},"version":{Version},"effects":{effects},"hostCalls":{hostCalls},"stateNamespaces":{namespaces},"opaqueHandlers":{opaque},"server":{server}}}"""
 
@@ -982,14 +1123,16 @@ module Demanded =
     //  nothing" for a document that says no such thing.
     //
     //  ONE VERSION, and the refusal of the others is the point. `encode` has
-    //  emitted version 3 since the replay posture landed, and no encoder in this
-    //  package emits 1 or 2 — so "read every version still emitted" is, honestly
-    //  read, "read 3". A version-1 or -2 document meets `UnknownVersion` NAMING
-    //  the version, never a v3 lens applied to a v2 shape: reading a v2 document
-    //  as v3 would find no `replay` key and could only either fail on a
-    //  well-formed document or invent an empty posture, and inventing one is
-    //  exactly the collapse of "predates the tier" into "walked and empty" that
-    //  the version numbers exist to prevent.
+    //  emitted version 4 since the declared argument policy landed, and no
+    //  encoder in this package emits 1, 2 or 3 — so "read every version still
+    //  emitted" is, honestly read, "read 4". An older document meets
+    //  `UnknownVersion` NAMING the version, never a v4 lens applied to a v3
+    //  shape: reading a v3 document as v4 would find no `constraints` key and
+    //  could only either fail on a well-formed document or invent an empty
+    //  policy, and inventing one is exactly the collapse of "predates the
+    //  member" into "read and empty" that the version numbers exist to prevent
+    //  — the collapse that, for THIS member, turns "I cannot see the bounds"
+    //  into "there are none".
     //
     //  DISCRIMINATORS ARE CARRIED, NOT INTERPRETED. An effect name, a safety
     //  word, a defect token: each is read as the string the document holds and
@@ -1341,8 +1484,53 @@ module Demanded =
                       Safety = safety
                       Reasons = reasons })))
 
+    /// One policy clause.
+    ///
+    /// The discriminator is read FIRST and decides which members this object
+    /// declares, so a `ceiling` carrying a `permitted` array is refused as an
+    /// undeclared member rather than read as an allow-list with a stray bound.
+    /// An unknown discriminator is refused outright — unlike the safety word and
+    /// the defect token above, which are carried uninterpreted, this one selects
+    /// a SHAPE, so a reader that carried it could not have read the object it
+    /// introduces.
+    let private decodeClause version path value : Result<ServerConstraintClause, DemandedDecodeFailure> =
+        requireString version (child path "clause") "clause" value
+        |> Result.bind (fun clause ->
+            match clause with
+            | ClauseAllowList ->
+                declaredOnly version path [ "clause"; "argument"; "permitted" ] value
+                |> Result.bind (fun () -> requireString version (child path "argument") "argument" value)
+                |> Result.bind (fun argument ->
+                    requireStrings version (child path "permitted") "permitted" value
+                    |> Result.map (fun permitted -> ServerConstraintClause.AllowList(argument, permitted)))
+            | ClauseCeiling ->
+                declaredOnly version path [ "clause"; "bytes" ] value
+                |> Result.bind (fun () -> requireInt version (child path "bytes") "bytes" value)
+                |> Result.map ServerConstraintClause.Ceiling
+            | ClauseLabel ->
+                declaredOnly version path [ "clause"; "label" ] value
+                |> Result.bind (fun () -> requireString version (child path "label") "label" value)
+                |> Result.map ServerConstraintClause.Label
+            | other ->
+                failWith
+                    DemandedDefect.WrongType
+                    version
+                    (child path "clause")
+                    ("'"
+                     + other
+                     + "' is not a policy clause this version declares; the discriminator selects the members, so an unknown one cannot be carried"))
+
+    let private decodeConstraint version path value : Result<ServerConstraintDemand, DemandedDecodeFailure> =
+        declaredOnly version path [ "capability"; "clauses" ] value
+        |> Result.bind (fun () -> requireString version (child path "capability") "capability" value)
+        |> Result.bind (fun capability ->
+            requireObjects version (child path "clauses") "clauses" value decodeClause
+            |> Result.map (fun clauses ->
+                { Capability = capability
+                  Clauses = clauses }))
+
     let private decodeServer version path value : Result<ServerDemand, DemandedDecodeFailure> =
-        declaredOnly version path [ "effects"; "capabilities"; "functions"; "channels"; "replay" ] value
+        declaredOnly version path [ "effects"; "capabilities"; "functions"; "channels"; "replay"; "constraints" ] value
         |> Result.bind (fun () -> requireStrings version (child path "effects") "effects" value)
         |> Result.bind (fun effects ->
             requireStrings version (child path "capabilities") "capabilities" value
@@ -1352,12 +1540,15 @@ module Demanded =
                     requireObjects version (child path "channels") "channels" value decodeHostCall
                     |> Result.bind (fun channels ->
                         requireObjects version (child path "replay") "replay" value decodePosture
-                        |> Result.map (fun replay ->
-                            { Effects = effects
-                              Capabilities = capabilities
-                              Functions = functions
-                              Channels = channels
-                              Replay = replay })))))
+                        |> Result.bind (fun replay ->
+                            requireObjects version (child path "constraints") "constraints" value decodeConstraint
+                            |> Result.map (fun constraints ->
+                                { Effects = effects
+                                  Capabilities = capabilities
+                                  Functions = functions
+                                  Channels = channels
+                                  Replay = replay
+                                  Constraints = constraints }))))))
 
     /// The four members every version of this document has carried.
     let private decodeClientTier version root : Result<DemandedProjection, DemandedDecodeFailure> =

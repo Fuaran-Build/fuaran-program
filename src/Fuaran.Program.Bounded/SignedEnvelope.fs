@@ -216,7 +216,14 @@ module SignedEnvelope =
           Capabilities = except a.Capabilities b.Capabilities
           Functions = except a.Functions b.Functions
           Channels = except a.Channels b.Channels
-          Replay = except a.Replay b.Replay }
+          Replay = except a.Replay b.Replay
+          // Whole clause-set per capability, never clause by clause: a host that
+          // RELAXED a bound and a host that never declared one are both "this
+          // capability's policy is no longer what was signed", and the drift
+          // report's job is to hand the verifier the signed policy and the
+          // recomputed one rather than a diff of bounds it would have to
+          // reassemble.
+          Constraints = except a.Constraints b.Constraints }
 
     /// Everything `a` demands that `b` does not. On the server tier the option
     /// is preserved: `a` carrying a tier `b` does not is reported as that whole

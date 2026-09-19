@@ -61,6 +61,24 @@ effects are safe; that remains `Demanded.check`'s question, asked of a host's co
 The demanded wire is unchanged: a consumer that ignores the signature reads what it read before. See
 [DECISIONS.md](DECISIONS.md) D15.
 
+## The gate decides on arguments, not only on the effect name
+
+"`HostCall` allowed" is not "`HostCall` to `api.example.com` allowed". An admitted capability can
+still carry a value that came off the wire, and a gate that decided on the capability's name alone
+could not see where the call actually went. Since Phase 1739 a host declares an **argument policy**
+beside the registration, as data — an **allow-list** over one named argument, a **ceiling** on the
+declarative payload's canonical bytes, a **label** carried for a deployer — and the gate checks the
+effect's actual arguments against it in its own position: after the capability is admitted by name,
+and still before the pipeline, the apply engine and the performer lookup. An off-list endpoint is
+refused with nothing having run, and the refusal names the host's own declaration rather than the
+value it refused.
+
+A capability nobody constrained is **unconstrained**, so a host that declares nothing behaves as it
+did before. The declared policy travels in the demanded document and is part of what verification
+recomputes, which is what lets a deployer read *HTTP to api.example.com, ≤ 64 KB* rather than *HTTP*
+— and lets a verifier tell whether the bound still holds. See the placement's
+[README](src/Fuaran.Program.Server/README.md#the-gate-decides-on-arguments-not-only-on-the-effect-name).
+
 ## Build
 
 ```powershell
