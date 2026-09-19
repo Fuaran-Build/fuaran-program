@@ -171,7 +171,8 @@ let harvestTests =
                             Capabilities = []
                             Functions = fns
                             Channels = []
-                            Replay = [] } }
+                            Replay = []
+                            Constraints = [] } }
 
               let a =
                   { Function = "a"

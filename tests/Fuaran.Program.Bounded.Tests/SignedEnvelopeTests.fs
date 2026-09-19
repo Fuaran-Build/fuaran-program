@@ -102,7 +102,8 @@ let private emptyTier: ServerDemand =
       Capabilities = []
       Functions = []
       Channels = []
-      Replay = [] }
+      Replay = []
+      Constraints = [] }
 
 /// A server-placement walk over a tree naming no handler: the client tier plus
 /// an EMPTY server tier — "walked, found nothing".

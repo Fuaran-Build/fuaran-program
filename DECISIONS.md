@@ -488,3 +488,67 @@ directory's question, answered before the key is handed to `verify`; this reposi
 signature under a key it was given, and nothing more. And the operator command that runs the check
 lives with the tooling that has a tree and a key directory in hand, not here: this repository
 delivers the two library functions it calls.
+
+## D16 — The gate decides on ARGUMENTS as well as on the capability name; the policy is declared DATA, carried in the envelope, and refused through the vocabulary that already exists (2026-09-19)
+
+**Decision.** A host declares an argument policy beside an effect registration — a closed set of
+three clauses: an **allow-list** over one named argument, a **ceiling** on the declarative payload's
+canonical bytes, and a **label** that is carried and decides nothing. `Handler.runEffect` checks the
+effect's actual arguments against the clauses declared for its capability in the gate's own
+position: after the capability is admitted by name, and still before a pipeline is evaluated, an op
+reaches the apply engine, or a performer is looked up. A capability nobody constrained is
+UNCONSTRAINED. The declared policy is joined onto the demanded document
+(`ServerDemanded.ofTreeHandlersAndRegistry`) and is part of what `verifyWithRegistry` recomputes.
+
+**Why the gate was not enough.** It decides about a NAME derived from the effect's own
+discriminator, which is the whole decision for an effect whose arguments a host authored and not the
+whole decision for one whose arguments carry a value that came off the wire. "`HostCall` allowed" is
+not "`HostCall` to `api.example.com` allowed", and a permitted capability reaching an endpoint nobody
+permitted is the confused deputy the escape-hatch inventory records as the residual on the host-call
+hatch. The two halves compose in one direction only: a bound can narrow a capability the gate
+admitted and can never widen one it refused, and a capability refused by name never has its arguments
+examined at all.
+
+**Why DATA rather than a second predicate.** `Gate` is a closure: it can be asked and it cannot be
+read. A bound written down can be read back, carried in the demanded document, and put in front of a
+deployer before anything runs — which is the difference between a record that says "HTTP" and one
+that says "HTTP to api.example.com, ≤ 64 KB". It is also what makes the bound VERIFIABLE rather than
+merely attestable: because the policy is recomputed from the registry, a host that has since widened
+an allow-list, raised a ceiling or dropped a clause presents as drift. Signing the demand without the
+policy would have left a verifier able to read what a host once claimed and unable to tell whether it
+still held.
+
+**Why the refusal reuses `Failed(capability, reason)` and adds NO denial arm.** The denial DU is
+wire-specified — `Unregistered` and `GateRefused` are a closed `oneOf` in the program wire's outcome
+schema — and neither is true here: the capability exists and the gate admitted it. A third arm would
+have been a five-artefact change across two repositories (normative text, schemas, resident emitter,
+manifest, host codec) to say something the existing halt already says exactly: the landing-slot
+refusal beside it is the same class of check — a declarative bound on a declared argument, applied
+while planning — and reports the same way. The `reason` member is an unconstrained string in the
+schema, so `argument-not-allowed:<argument>` and `payload-over-ceiling:<limit>` are conformant bytes
+on the day they ship.
+
+**What a refusal may say.** The host's own DECLARATION and nothing measured from the payload: the
+argument the host constrained, never the value found there, and the host's limit, never the size that
+met it. A measured size is not the payload, but it is a fact about it, and an argument check is the
+one place in this placement that reads a wire-supplied string — the seam to hold that line at, not the
+one to concede it at.
+
+**The document version moved to 4**, on the argument versions 2 and 3 already made rather than by
+analogy to it. `constraints` is present on EVERY server tier from here on, `[]` where nothing was
+constrained, so an ABSENT key says "this producer predates the policy" and an EMPTY one says "this was
+read and nothing bounds these capabilities". For this member the collapse is not merely lossy: it
+turns "I cannot see the bounds" into "there are none", which is the opposite of the safe reading.
+
+**Two limits, stated rather than assumed.** A host call's arguments are read ONE LEVEL DEEP and
+string-valued only, so a host whose performer reads a nested member cannot express an allow-list over
+it — the bound belongs on the top-level argument the performer takes, or the performer belongs behind
+a narrower registration. And a ceiling bounds a DECLARATIVE payload — a host call's arguments, a
+notification's payload — never an op sequence: those are not a `JVal` at that point in compile order,
+and a ceiling that silently meant one thing for three arms and another for two would be worse than one
+that names the two it does not cover.
+
+**An allow-list an effect names nothing under is VACUOUSLY satisfied**, and that is the correct
+reading rather than a lenient one: a bound says what may be reached under that name, and an effect
+naming nothing there reaches nothing there. A host wanting the argument to be mandatory is asking for
+a clause it did not declare.

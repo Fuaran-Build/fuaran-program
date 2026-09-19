@@ -59,12 +59,12 @@ open Fuaran.Program.Bounded
 //
 //  FORWARD-COUPLING: a new `ServerEffect` arm extends the match below, and the
 //  compiler says so. A new source-bearing arm in the substrate's pipeline
-//  vocabulary extends `refsOfTransform` — that match carries NO catch-all
-//  precisely so raising the substrate pin surfaces the addition as an
-//  incomplete-match warning against a gate that runs at zero warnings, rather
-//  than as silent under-reporting by a walk that quietly ignored it. That is
-//  what the arms enumerated but unused below are for; deleting them for
-//  tidiness would delete the coupling.
+//  vocabulary extends `ServerArgumentPolicy.refsOfTransform`, which this file
+//  reads rather than duplicating — that match carries NO catch-all precisely so
+//  raising the substrate pin surfaces the addition as an incomplete-match
+//  warning against a gate that runs at zero warnings, rather than as silent
+//  under-reporting by a walk that quietly ignored it. Deleting the arms
+//  enumerated but unused there, for tidiness, would delete the coupling.
 // ============================================================================
 
 module ServerDemanded =
@@ -82,7 +82,13 @@ module ServerDemanded =
           // constraint rather than an inconvenience: it keeps this file's job
           // "what does this ask of a host" and leaves "may this be re-run"
           // where the enforcement is.
-          Replay = [] }
+          Replay = []
+          // The declared argument policy is joined AFTER this walk too, and for
+          // a different reason from the replay posture's: it is not a fact about
+          // the handlers at all. It is what the HOST wrote down, so it enters
+          // the document from the registry rather than from the registration —
+          // see `withConstraints`.
+          Constraints = [] }
 
     /// The projection a server walk starts from: nothing demanded, but a server
     /// tier PRESENT. Seeding with it is what makes "a walk ran and found
@@ -95,34 +101,18 @@ module ServerDemanded =
     /// A projection carrying only this server tier.
     let private tier (demand: ServerDemand) : DemandedProjection = { seed with Server = Some demand }
 
-    /// The by-reference source names a data source reads. An embedded table
-    /// carries its own rows and asks the host for nothing.
-    let private refsOfSource (source: Fuaran.Core.DataSource) : string list =
-        match source with
-        | Fuaran.Core.Embedded _ -> []
-        | Fuaran.Core.Ref name -> [ name ]
-
-    /// The by-reference source names one pipeline stage reads. Four arms of the
-    /// pinned vocabulary take a second source; the rest work on the table they
-    /// are handed. A stage whose second source went unread here would be a
-    /// by-reference demand the host is never asked for, so the arms are
-    /// enumerated and there is deliberately no wildcard.
-    let private refsOfTransform (transform: Fuaran.Core.Transform) : string list =
-        match transform with
-        | Fuaran.Core.Join(source, _, _) -> refsOfSource source
-        | Fuaran.Core.Union source
-        | Fuaran.Core.Intersect source
-        | Fuaran.Core.Except source -> refsOfSource source
-        | Fuaran.Core.Filter _
-        | Fuaran.Core.Project _
-        | Fuaran.Core.Derive _
-        | Fuaran.Core.GroupBy _
-        | Fuaran.Core.Window _
-        | Fuaran.Core.Pivot _
-        | Fuaran.Core.Unpivot _
-        | Fuaran.Core.Sort _
-        | Fuaran.Core.Distinct
-        | Fuaran.Core.Limit _ -> []
+    /// The by-reference source names a query reads — the source itself and every
+    /// pipeline stage that takes a second one.
+    ///
+    /// Read through the ARGUMENT POLICY's own extraction rather than a second
+    /// walk beside it. The two questions are the same question: a name that
+    /// reaches the host's source resolver is what this projection reports and
+    /// what an allow-list bounds, so a demanded source and a checked one cannot
+    /// be two enumerations of one vocabulary. The no-wildcard forward coupling
+    /// this file used to carry moved with the function; its note is there.
+    let private refsOfQuery (source: Fuaran.Core.DataSource) (pipeline: Fuaran.Core.Transform list) : string list =
+        ServerArgumentPolicy.refsOfSource source
+        @ (pipeline |> List.collect ServerArgumentPolicy.refsOfTransform)
 
     /// What one server effect demands.
     ///
@@ -166,7 +156,7 @@ module ServerDemanded =
                     Effects = [ kind ]
                     Capabilities = [ capability ]
                     Channels =
-                        (refsOfSource source @ (pipeline |> List.collect refsOfTransform))
+                        refsOfQuery source pipeline
                         |> List.map (fun name -> { Channel = kind; Name = name }) }
 
         | ServerEffect.Notify(channel, _) ->
@@ -249,6 +239,69 @@ module ServerDemanded =
         |> ServerCoverage.withFunctions (ServerEffectRegistry.registered registry)
         |> ServerCoverage.withGate registry.Gate
 
+    // ─── the declared argument policy, joined onto the document ──────────────
+
+    /// The capabilities a server tier demands, across both halves of the split:
+    /// the arms whose capability IS their discriminator, and the host functions,
+    /// whose capability is namespaced per function.
+    ///
+    /// Read off the tier rather than re-walked, so the policy joined on is the
+    /// policy for exactly the capabilities this document reports — a clause for
+    /// something these handlers cannot reach would be the host's whole registry
+    /// leaking into a document about one program.
+    let private demandedCapabilities (server: ServerDemand) : string list =
+        (server.Capabilities @ (server.Functions |> List.map _.Capability))
+        |> List.distinct
+        |> List.sort
+
+    /// Join a registry's declared argument policy onto a projection's server
+    /// tier — the clauses for the capabilities that tier demands, and no others.
+    ///
+    /// A projection with NO server tier is returned unchanged, on exactly the
+    /// reasoning the replay join gives: `None` means no server walk was
+    /// performed, and attaching a host's policy would turn "not asked" into
+    /// "asked". Use `ofTreeHandlersAndRegistry` below, which walks and joins
+    /// together and so cannot reach that state.
+    ///
+    /// A capability the registry does not constrain contributes NOTHING — not an
+    /// empty clause list. The document then says "unconstrained" by silence,
+    /// which is the same thing the registry says by absence, rather than by an
+    /// empty record a reader would have to know how to interpret.
+    let withConstraints (registry: ServerEffectRegistry) (projection: DemandedProjection) : DemandedProjection =
+        match projection.Server with
+        | None -> projection
+        | Some server ->
+            let declared =
+                demandedCapabilities server
+                |> List.choose (fun capability ->
+                    match ServerEffectRegistry.constraintsFor capability registry with
+                    | [] -> None
+                    | clauses ->
+                        Some
+                            { Capability = capability
+                              Clauses = clauses })
+
+            Demanded.withServer
+                { server with
+                    Constraints = server.Constraints @ declared }
+                projection
+
+    /// **The one call for a constrained host**: the two-tier document for a tree
+    /// and the handler registration behind it, with the registry's declared
+    /// argument policy joined on.
+    ///
+    /// Separate from `ofTreeAndHandlers` rather than replacing it, because the
+    /// two answer different questions and a host that wired no policy should not
+    /// have to pass a registry to ask the first. It composes on the outside,
+    /// which is what lets the replay join compose with it in either order — both
+    /// write disjoint members of the same tier.
+    let ofTreeHandlersAndRegistry
+        (registry: ServerEffectRegistry)
+        (handlers: Map<string, Handler>)
+        (root: Node<obj>)
+        : DemandedProjection =
+        ofTreeAndHandlers handlers root |> withConstraints registry
+
     // ─── the signed envelope, at this placement ──────────────────────────────
 
     /// Sign a tree paired with the two-tier document — the tree's own demands
@@ -279,3 +332,44 @@ module ServerDemanded =
         (signed: SignedEnvelope)
         : Async<Result<VerifiedEnvelope, VerifyRefusal>> =
         SignedEnvelope.verify crypto key (ofTreeAndHandlers handlers) root signed
+
+    /// Sign a tree paired with the two-tier document AND the host's declared
+    /// argument policy. `sign` with `ofTreeHandlersAndRegistry` as its walk.
+    ///
+    /// What this buys over `sign` is the half the phase that added it exists
+    /// for: the signed record says "HTTP to api.example.com, ≤ 64 KB" where the
+    /// unconstrained one says "HTTP", so a deployer decides on the bound rather
+    /// than on the capability's name.
+    let signWithRegistry
+        (sink: Fuaran.Core.IAttestationSink)
+        (registry: ServerEffectRegistry)
+        (handlers: Map<string, Handler>)
+        (root: Node<obj>)
+        : Result<SignedEnvelope, SignRefusal> =
+        SignedEnvelope.sign sink (ofTreeHandlersAndRegistry registry handlers) root
+
+    /// Verify a signed record by recomputation against THIS registration and
+    /// THIS registry.
+    ///
+    /// **The policy is part of what is recomputed, which is the point.** A host
+    /// that has RELAXED a bound since the record was signed — widened an
+    /// allow-list, raised a ceiling, dropped a clause — presents as drift with
+    /// the signed policy and the recomputed one both enumerated, exactly as a
+    /// registration that gained a stage does. Signing the demand without the
+    /// policy would have left the bound attestable and unverifiable: a verifier
+    /// could read what the host once claimed and could not tell whether it still
+    /// held.
+    ///
+    /// Verifying a policy-bearing record through `verify` (no registry) reports
+    /// the whole clause set as shortfall rather than silently ignoring it, on the
+    /// same terms the `None`-versus-empty tier distinction survives — so the two
+    /// calls cannot be confused for one another by accident.
+    let verifyWithRegistry
+        (crypto: Fuaran.UI.OpStream.Abstractions.IClaimSignatureVerifier)
+        (key: Fuaran.UI.OpStream.Abstractions.KeyDirectoryEntry option)
+        (registry: ServerEffectRegistry)
+        (handlers: Map<string, Handler>)
+        (root: Node<obj>)
+        (signed: SignedEnvelope)
+        : Async<Result<VerifiedEnvelope, VerifyRefusal>> =
+        SignedEnvelope.verify crypto key (ofTreeHandlersAndRegistry registry handlers) root signed

@@ -262,6 +262,16 @@ module Handler =
     /// a performer is even looked up as a callable — so no side effect of any
     /// kind can precede the policy decision.
     ///
+    /// **The gate is TWO decisions in that one position, and both precede
+    /// everything.** The capability is decided first, by name; then, only if it
+    /// was admitted, the effect's ARGUMENTS are decided against the policy the
+    /// host declared for that capability. The order matters in one direction
+    /// only — a refused capability never has its arguments examined, so a host
+    /// learns nothing about a call it was never going to make — and the
+    /// composition matters in the other: a permitted capability reaching an
+    /// endpoint nobody permitted is the confused deputy, and a gate that decided
+    /// on the name alone could not see it.
+    ///
     /// Four of the five arms complete here, and can, because none of them
     /// commits anything outside the returned value: a query READS, an op edits
     /// an in-memory tree, and a patch and a notification are values the host
@@ -280,88 +290,101 @@ module Handler =
             registry.OnDenied denial
             deny denial acc
         else
-            let performed =
-                { acc with
-                    Performed = capability :: acc.Performed }
+            match ServerArgumentPolicy.check registry effect with
+            // Reported as a HALT rather than as a denial, and the choice is
+            // deliberate. The denial vocabulary is a closed, wire-specified pair
+            // — "this host has no such capability" and "this host's gate refused
+            // it" — and neither is true here: the capability exists and the gate
+            // admitted it. What refused is a bound the host declared about the
+            // arguments, which is what the halt names, through the same
+            // capability-plus-reason shape the landing-slot refusal below
+            // already uses for the same class of check. Nothing is `Performed`,
+            // and `Halted` stops every later stage, so the handler reaches no
+            // performer and commits nothing.
+            | Error defect -> halt capability (ServerArgumentPolicy.describe defect) acc
+            | Ok() ->
+                let performed =
+                    { acc with
+                        Performed = capability :: acc.Performed }
 
-            match effect with
-            | ServerEffect.RunQuery(name, source, pipeline) ->
-                let evaluated =
-                    Fuaran.Core.DataFrame.evalSource resolve source
-                    |> Result.bind (Fuaran.Core.DataFrame.evalPipelineWith resolve pipeline)
+                match effect with
+                | ServerEffect.RunQuery(name, source, pipeline) ->
+                    let evaluated =
+                        Fuaran.Core.DataFrame.evalSource resolve source
+                        |> Result.bind (Fuaran.Core.DataFrame.evalPipelineWith resolve pipeline)
 
-                match evaluated with
-                | Error err -> halt capability (evalErrorKind err) acc
-                | Ok table ->
+                    match evaluated with
+                    | Error err -> halt capability (evalErrorKind err) acc
+                    | Ok table ->
+                        { performed with
+                            Store =
+                                { performed.Store with
+                                    Bindings =
+                                        { performed.Store.Bindings with
+                                            QueryResults =
+                                                Map.add
+                                                    name
+                                                    (Unchecked.nonNull (box table))
+                                                    performed.Store.Bindings.QueryResults } } }
+
+                | ServerEffect.ApplyOps ops ->
+                    // The only domain-state mutation. Folded with short-circuit: an
+                    // op that fails leaves the whole handler uncommitted rather than
+                    // applying its predecessors, which is what makes the atomicity
+                    // claim above true of the tree and not merely of the store.
+                    let applied =
+                        ops
+                        |> List.fold
+                            (fun state op -> state |> Result.bind (Fuaran.UI.Ops.Apply.apply op))
+                            (Ok performed.Store.Tree)
+
+                    match applied with
+                    | Error err -> halt capability (sprintf "%A" err.Code) acc
+                    | Ok tree ->
+                        { performed with
+                            Store = { performed.Store with Tree = tree } }
+
+                | ServerEffect.HostCall(fn, args, into) ->
+                    match Map.tryFind fn registry.HostFunctions with
+                    | None ->
+                        let denial = ServerEffectDenial.Unregistered capability
+                        registry.OnDenied denial
+                        deny denial acc
+                    | Some performer ->
+                        // The host-reserved namespace is closed here for the same
+                        // reason the shared interpreter closes it: a landing slot is
+                        // a write, and a write into the host's own namespace is the
+                        // case the namespace exists for. Checked while PLANNING —
+                        // the slot is declared, so nothing about the check needs the
+                        // performer to have run, and refusing here means a handler
+                        // with a bad slot never reaches the outside world at all.
+                        match into with
+                        | Some key when Fuaran.UI.Renderer.StateKeys.isHostReserved key ->
+                            halt
+                                capability
+                                (sprintf
+                                    "landing slot is under the host-reserved '%s' namespace"
+                                    Fuaran.UI.Renderer.StateKeys.HostReservedPrefix)
+                                acc
+                        | _ ->
+                            // Admitted, not performed. `Performed` is deliberately
+                            // NOT extended here: it is the audit trail of what
+                            // happened, and at this point nothing has.
+                            { acc with
+                                Staged =
+                                    { Capability = capability
+                                      Performer = performer
+                                      Args = args
+                                      Into = into }
+                                    :: acc.Staged }
+
+                | ServerEffect.EmitPatch ops ->
                     { performed with
-                        Store =
-                            { performed.Store with
-                                Bindings =
-                                    { performed.Store.Bindings with
-                                        QueryResults =
-                                            Map.add
-                                                name
-                                                (Unchecked.nonNull (box table))
-                                                performed.Store.Bindings.QueryResults } } }
+                        Patches = List.rev ops @ performed.Patches }
 
-            | ServerEffect.ApplyOps ops ->
-                // The only domain-state mutation. Folded with short-circuit: an
-                // op that fails leaves the whole handler uncommitted rather than
-                // applying its predecessors, which is what makes the atomicity
-                // claim above true of the tree and not merely of the store.
-                let applied =
-                    ops
-                    |> List.fold
-                        (fun state op -> state |> Result.bind (Fuaran.UI.Ops.Apply.apply op))
-                        (Ok performed.Store.Tree)
-
-                match applied with
-                | Error err -> halt capability (sprintf "%A" err.Code) acc
-                | Ok tree ->
+                | ServerEffect.Notify(channel, payload) ->
                     { performed with
-                        Store = { performed.Store with Tree = tree } }
-
-            | ServerEffect.HostCall(fn, args, into) ->
-                match Map.tryFind fn registry.HostFunctions with
-                | None ->
-                    let denial = ServerEffectDenial.Unregistered capability
-                    registry.OnDenied denial
-                    deny denial acc
-                | Some performer ->
-                    // The host-reserved namespace is closed here for the same
-                    // reason the shared interpreter closes it: a landing slot is
-                    // a write, and a write into the host's own namespace is the
-                    // case the namespace exists for. Checked while PLANNING —
-                    // the slot is declared, so nothing about the check needs the
-                    // performer to have run, and refusing here means a handler
-                    // with a bad slot never reaches the outside world at all.
-                    match into with
-                    | Some key when Fuaran.UI.Renderer.StateKeys.isHostReserved key ->
-                        halt
-                            capability
-                            (sprintf
-                                "landing slot is under the host-reserved '%s' namespace"
-                                Fuaran.UI.Renderer.StateKeys.HostReservedPrefix)
-                            acc
-                    | _ ->
-                        // Admitted, not performed. `Performed` is deliberately
-                        // NOT extended here: it is the audit trail of what
-                        // happened, and at this point nothing has.
-                        { acc with
-                            Staged =
-                                { Capability = capability
-                                  Performer = performer
-                                  Args = args
-                                  Into = into }
-                                :: acc.Staged }
-
-            | ServerEffect.EmitPatch ops ->
-                { performed with
-                    Patches = List.rev ops @ performed.Patches }
-
-            | ServerEffect.Notify(channel, payload) ->
-                { performed with
-                    Notifications = (channel, payload) :: performed.Notifications }
+                        Notifications = (channel, payload) :: performed.Notifications }
 
     /// Run one stage.
     let private runStage

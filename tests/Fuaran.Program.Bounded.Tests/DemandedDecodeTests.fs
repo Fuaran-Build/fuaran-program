@@ -86,7 +86,8 @@ let private serverTier: ServerDemand =
         [ { Channel = "Notify"; Name = "ops" }
           { Channel = "RunQuery"
             Name = "orders" } ]
-      Replay = [] }
+      Replay = []
+      Constraints = [] }
 
 /// A tier that was walked and demands nothing — the document's other server
 /// fact, and the one `None` must never be confused with.
@@ -95,7 +96,8 @@ let private emptyTier: ServerDemand =
       Capabilities = []
       Functions = []
       Channels = []
-      Replay = [] }
+      Replay = []
+      Constraints = [] }
 
 /// One posture of each grade, including the `unknown` one whose reasons are the
 /// whole reason postures carry reasons at all.
@@ -136,7 +138,7 @@ let private refusal (json: string) : DemandedDecodeFailure =
     | Ok _ -> failtest "expected a refusal, got a projection"
     | Error failure -> failure
 
-/// A canonical version-3 document, built from a real emission so a refusal test
+/// A canonical current-version document, built from a real emission so a refusal test
 /// cannot drift from the envelope by hand-spelling it.
 let private emitted: string = Demanded.encode (Demanded.ofTree richTree)
 
@@ -281,16 +283,18 @@ let private behaviour: Test list =
       // ── what is refused ───────────────────────────────────────
 
       test "PROBE TARGET — a version this reader does not read is REFUSED, naming it" {
-          // Not read through a version-3 lens. A version-2 document carries a
-          // server tier with no `replay` key, and reading it as 3 could only
-          // either fail on a well-formed document or invent an empty posture —
-          // and inventing one collapses "predates the tier" into "walked and
-          // empty", which is the whole reason the number moved.
+          // Not read through the current version's lens. A version-2 document
+          // carries a server tier with no `replay` key — and no `constraints`
+          // key either — and reading it as current could only either fail on a
+          // well-formed document or invent an empty posture and an empty policy.
+          // Inventing them collapses "predates the member" into "walked and
+          // empty", which is the whole reason each number moved; for the policy
+          // it turns "I cannot see the bounds" into "there are none".
           //
-          // PROBE (run destructively, 2026-08-22): widening `decodableVersions`
-          // to [1; 2; 3] turns this test and the one below red — the v2 document
-          // then refuses as a MISSING MEMBER, which is a report about the wrong
-          // thing entirely.
+          // PROBE (run destructively, 2026-08-22, re-run 2026-09-19): widening
+          // `decodableVersions` to include the older numbers turns this test and
+          // the one below red — the older document then refuses as a MISSING
+          // MEMBER, which is a report about the wrong thing entirely.
           let v2 =
               """{"kind":"demanded","version":2,"effects":[],"hostCalls":[],"stateNamespaces":[],"opaqueHandlers":[],"server":{"effects":[],"capabilities":[],"functions":[],"channels":[]}}"""
 
@@ -337,12 +341,12 @@ let private behaviour: Test list =
 
       test "a missing member is refused, naming the member and the version" {
           let dropped =
-              """{"kind":"demanded","version":3,"effects":[],"hostCalls":[],"stateNamespaces":[],"server":null}"""
+              """{"kind":"demanded","version":4,"effects":[],"hostCalls":[],"stateNamespaces":[],"server":null}"""
 
           let missing = refusal dropped
           Expect.equal missing.Defect DemandedDefect.MissingMember "absent, not defaulted"
           Expect.equal missing.Field "opaqueHandlers" "the member is named"
-          Expect.equal missing.Version (Some 3) "and the version it is required by"
+          Expect.equal missing.Version (Some 4) "and the version it is required by"
       }
 
       test "a member this version does not declare is refused" {
@@ -351,7 +355,7 @@ let private behaviour: Test list =
           Expect.equal
               failure.Defect
               DemandedDefect.UndeclaredMember
-              "the producer and this reader disagree about version 3"
+              "the producer and this reader disagree about version 4"
 
           Expect.equal failure.Field "tier" "named"
       }
@@ -378,13 +382,13 @@ let private behaviour: Test list =
           Expect.equal failure.Field "server" "named"
       }
 
-      test "a version-3 document with no server member at all is refused" {
-          // The key is present on EVERY version-3 document, `null` where no walk
-          // ran. A document without it is not a version-3 document, and reading
-          // it as 'no walk ran' would silently accept a shape this version does
-          // not describe.
+      test "a current-version document with no server member at all is refused" {
+          // The key is present on EVERY document from version 2 on, `null` where
+          // no walk ran. A document without it is not a document of this
+          // version, and reading it as 'no walk ran' would silently accept a
+          // shape this version does not describe.
           let noServer =
-              """{"kind":"demanded","version":3,"effects":[],"hostCalls":[],"stateNamespaces":[],"opaqueHandlers":[]}"""
+              """{"kind":"demanded","version":4,"effects":[],"hostCalls":[],"stateNamespaces":[],"opaqueHandlers":[]}"""
 
           let failure = refusal noServer
           Expect.equal failure.Defect DemandedDefect.MissingMember "absent is not null"
@@ -436,14 +440,14 @@ let private behaviour: Test list =
           // defect and hand back a value that no longer re-encodes to the bytes
           // it came from.
           let unsorted =
-              """{"kind":"demanded","version":3,"effects":["WriteToClipboard","Navigate"],"hostCalls":[],"stateNamespaces":[],"opaqueHandlers":[],"server":null}"""
+              """{"kind":"demanded","version":4,"effects":["WriteToClipboard","Navigate"],"hostCalls":[],"stateNamespaces":[],"opaqueHandlers":[],"server":null}"""
 
           let failure = refusal unsorted
           Expect.equal failure.Defect DemandedDefect.NotCanonical "not sorted"
           Expect.equal failure.Field "effects" "named"
 
           let duplicated =
-              """{"kind":"demanded","version":3,"effects":[],"hostCalls":[],"stateNamespaces":[{"namespace":"cart","written":true,"read":false},{"namespace":"cart","written":false,"read":true}],"opaqueHandlers":[],"server":null}"""
+              """{"kind":"demanded","version":4,"effects":[],"hostCalls":[],"stateNamespaces":[{"namespace":"cart","written":true,"read":false},{"namespace":"cart","written":false,"read":true}],"opaqueHandlers":[],"server":null}"""
 
           Expect.equal
               (refusal duplicated).Field
@@ -453,7 +457,7 @@ let private behaviour: Test list =
 
       test "a non-canonical SERVER list is refused too" {
           let unsorted =
-              """{"kind":"demanded","version":3,"effects":[],"hostCalls":[],"stateNamespaces":[],"opaqueHandlers":[],"server":{"effects":["Notify","ApplyOps"],"capabilities":[],"functions":[],"channels":[],"replay":[]}}"""
+              """{"kind":"demanded","version":4,"effects":[],"hostCalls":[],"stateNamespaces":[],"opaqueHandlers":[],"server":{"effects":["Notify","ApplyOps"],"capabilities":[],"functions":[],"channels":[],"replay":[],"constraints":[]}}"""
 
           let failure = refusal unsorted
           Expect.equal failure.Defect DemandedDefect.NotCanonical "the tier's lists carry the same promise"
