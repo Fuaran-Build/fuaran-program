@@ -124,6 +124,15 @@
          `ServerDemanded`, and no change to any existing shape or wire. A draft
          slot takes an additive change without moving; only a change of a higher
          class than the slot already carries advances it. -->
+    <!-- Phase 1742 RIDES 0.5.0 too, on the same reading. The denial detector is
+         a new module (`DenialDetector`) beside the ones already shipping, plus
+         one function on `ServerDemanded` that stops being private so the
+         detector and the argument-policy join read the SAME capability set
+         rather than two enumerations of it. Nothing existing changed shape, no
+         wire moved, and no dependency was added — the detector consumes the
+         denial sink and the control vocabulary this package already carries. An
+         additive change against an untagged, unpinned draft slot, so the number
+         stays where it is. -->
     <Version>0.5.0</Version>
     <!-- This repository's restore path is PUBLIC: it publishes to nuget.org, so
          a consumer of the published packages reaches the registry and nothing

@@ -79,6 +79,28 @@ recomputes, which is what lets a deployer read *HTTP to api.example.com, ≤ 64 
 — and lets a verifier tell whether the bound still holds. See the placement's
 [README](src/Fuaran.Program.Server/README.md#the-gate-decides-on-arguments-not-only-on-the-effect-name).
 
+## Watching the denials: the pattern a probe leaves behind
+
+Every refusal is already recorded — the effect registry fires a payload-free **denial sink** for each
+one — and until Phase 1742 nothing watched it. A program repeatedly demanding effects its own
+envelope never claimed is behaving the way a breach does, and that is a different fact from a program
+being refused something it *did* claim: the first is a probe, the second is a policy working.
+
+`DenialDetector` classifies each denial against the session's demanded document — **envelope-outside**
+when the capability is absent from it, **ordinary** when it is present — counts the first class against
+a tunable per-session threshold, and on a breach **reports the pattern before it acts**: the session,
+the count, the threshold, and the capabilities reached for. Suspension is opted into
+(`DenialDetector.suspending`); the default reports and does nothing else, so a host can run it in
+report-only mode and see exactly what a suspending one would have acted on. When it does act it acts
+through the controls that already exist — `ControlOp.Suspend`, recorded on the session's control
+stream with the detector as a **machine** actor and the pattern itself as the reason.
+
+A detector with no envelope, or one whose document carries no server tier, classifies **every** denial
+as ordinary: `None` there means no server walk was performed, and reading "not asked" as "asked, and
+the answer was nothing" would make every denial an intrusion signal. It adds no wire vocabulary, no
+dependency, and no second denial stream. See [DECISIONS.md](DECISIONS.md) D16 for the control op it
+raises.
+
 ## Build
 
 ```powershell
