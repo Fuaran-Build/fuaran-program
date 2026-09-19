@@ -32,20 +32,18 @@
              reason and in the same scope.
 
          The incomplete-match warnings the extractor's field projectors produce
-         are DEMOTED here, not suppressed: `WarningsNotAsErrors` takes FS0025
-         back to the warning it is by default, so it is still printed and still
-         readable, where `NoWarn` would make it invisible. The repository
-         escalates FS0025 to an error deliberately and that escalation is right
-         for every file a human writes; read the `Directory.Build.props` beside
-         this one for why it is not right for a generated extraction, and for
-         why that file imports the root's settings rather than replacing
-         them. -->
+         are DEMOTED rather than suppressed, and the demotion is done in the
+         `Directory.Build.props` beside this file rather than here — read it for
+         why the repository's FS0025 escalation is right for every file a human
+         writes and not for a generated extraction, and for why it imports the
+         root's settings rather than replacing them. `NoWarn` is deliberately
+         NOT used: it would make the warning invisible, and it should still be
+         printed and still be read. -->
     <PropertyGroup>
         <TargetFramework>net10.0</TargetFramework>
         <IsPackable>false</IsPackable>
         <OtherFlags>$(OtherFlags) --strict-indentation-</OtherFlags>
         <NoWarn>$(NoWarn);58;64</NoWarn>
-        <WarningsNotAsErrors>FS0025;$(WarningsNotAsErrors)</WarningsNotAsErrors>
         <GenerateDocumentationFile>false</GenerateDocumentationFile>
     </PropertyGroup>
     <ItemGroup>

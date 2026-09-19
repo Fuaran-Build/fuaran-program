@@ -27,9 +27,21 @@
        stronger guarantee than the compiler warning asks for, obtained a
        different way.
 
-       So the project below demotes FS0025 to a WARNING rather than suppressing
-       it: `NoWarn` would make it invisible, and it should still be printed and
-       still be read. Nothing hand-written compiles in this directory, and
-       nothing should. -->
+       So FS0025 is demoted back to a WARNING here: still printed, still read,
+       just not fatal. `NoWarn` would make it invisible instead, and `NoWarn` is
+       deliberately not used. Nothing hand-written compiles in this directory,
+       and nothing should.
+
+       The demotion is a CLEAR of `WarningsAsErrors` rather than an entry in
+       `WarningsNotAsErrors`, and that is a measured choice rather than a
+       stylistic one: the F# targets here do not act on `WarningsNotAsErrors`,
+       so a project that set it built green incrementally and then failed the
+       solution build with 54 errors — a setting that appears to work and does
+       not is worse than no setting at all. `WarningsAsErrors` holds FS0025 and
+       nothing else in this repository, so clearing it removes exactly the one
+       escalation this directory needs removed. -->
   <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" />
+  <PropertyGroup>
+    <WarningsAsErrors></WarningsAsErrors>
+  </PropertyGroup>
 </Project>
