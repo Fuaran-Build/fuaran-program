@@ -18,6 +18,7 @@
     <Compile Include="HarvestTests.fs" />
     <Compile Include="DurableInterpreterTests.fs" />
     <Compile Include="OperatorControlTests.fs" />
+    <Compile Include="DenialDetectorTests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
   <ItemGroup>

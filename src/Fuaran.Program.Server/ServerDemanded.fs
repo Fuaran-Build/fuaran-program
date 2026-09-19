@@ -249,7 +249,14 @@ module ServerDemanded =
     /// policy for exactly the capabilities this document reports — a clause for
     /// something these handlers cannot reach would be the host's whole registry
     /// leaking into a document about one program.
-    let private demandedCapabilities (server: ServerDemand) : string list =
+    ///
+    /// Public because it is the ONE definition of "what this document claims the
+    /// program may ask for", and a second consumer now reads it: the denial
+    /// detector classifies a refusal as inside or outside the envelope against
+    /// exactly this set. Two enumerations of that vocabulary would let a
+    /// capability be demanded by the document and unknown to the detector, which
+    /// is the disagreement the whole join above exists to rule out.
+    let demandedCapabilities (server: ServerDemand) : string list =
         (server.Capabilities @ (server.Functions |> List.map _.Capability))
         |> List.distinct
         |> List.sort

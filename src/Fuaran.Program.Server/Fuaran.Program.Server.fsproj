@@ -38,6 +38,13 @@
     <Compile Include="Journal.fs" />
     <Compile Include="Facets.fs" />
     <Compile Include="Durable.fs" />
+    <!-- The denial detector, appended after the durable tier because it reaches
+         BOTH of the things it joins: the effect registry's denial sink above,
+         and the control vocabulary (and `ControlServices`) that the durable tier
+         carries. Nothing above it consumes it — a host wires it onto its own
+         registry before handing that registry to either interpreter — so last is
+         where it costs the compile order nothing. -->
+    <Compile Include="DenialDetector.fs" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Fuaran.Program.Bounded\Fuaran.Program.Bounded.fsproj" />
