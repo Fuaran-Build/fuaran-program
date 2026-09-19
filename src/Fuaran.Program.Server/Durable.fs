@@ -407,3 +407,231 @@ module Durable =
         (declared: PlacementDeclaration)
         : FacetFinding list =
         Facets.checkDeclaration (discipline services) services.Performers handlers declared
+
+// ============================================================================
+//  The OPERATOR CONTROLS, wired to this interpreter.
+//
+//  The vocabulary and the fold are in `Journal.fs` beside the effect journal,
+//  because they are a durability contract and not an interpreter. This section
+//  is the other half: what a folded `ControlState` MEANS to a running session.
+//
+//  ── Nothing above this line changed ─────────────────────────────────────────
+//  `Durable.run`, `Durable.arm` and `Durable.step` are untouched, and the
+//  controls-aware forms below CALL them rather than reproducing them — the same
+//  discipline D12 records for the two interpreters, one level down. A control
+//  takes effect by wrapping the REGISTRY the run is handed, which is the one
+//  place every effect already passes through, so there is no arm of the
+//  vocabulary a control can be forgotten for.
+//
+//  ── Where each act lands ────────────────────────────────────────────────────
+//  Three of the four land at the effect gate and are `Controls.apply`'s work.
+//  The fourth — the suspend's "refuse every dispatch" — lands one level up, at
+//  the session's own G1 gate, because a dispatch is refused before a handler is
+//  reached and therefore before any registry is consulted. `stepControlled`
+//  expresses it by closing `ServerServices.CanDispatch`, which is the gate the
+//  loop already asks, so a suspended step is refused through the SAME path and
+//  with the same `ServerReject.Gate` shape as any other policy refusal. No new
+//  refusal type, and nothing for a host's existing rejection handling to learn.
+//
+//  A suspension refuses a DISPATCH. An event carrying no action dispatches
+//  nothing, so it stays inert rather than being refused — that is the honest
+//  reading of the word, and the alternative would have a suspended session
+//  reporting refusals of things nobody asked it to do.
+//
+//  ── Why resume needs no resume ENGINE ───────────────────────────────────────
+//  Because the suspend performed nothing. A refused dispatch leaves the session
+//  value untouched, so the continuation after a `Resume` is the continuation the
+//  uninterrupted session would have had — not reconstructed, the same value. The
+//  case that DOES need replay is a suspend raised across a live invocation, and
+//  that is the durable interpreter's existing job: the resumed run re-reads the
+//  journal, serves every recorded step and re-invokes none of them. So the
+//  controls add a decision and no second replay path, which is the whole reason
+//  they were worth expressing as journal ops.
+// ============================================================================
+
+/// Where a session's control stream lives, and under which key.
+///
+/// A record rather than two parameters so a call site reads as a stream a host
+/// wired rather than as a string somebody passed, and so a later control-side
+/// question extends it without changing every signature — the same shape, for
+/// the same reason, as `ReplayPolicy`.
+type ControlServices =
+    {
+        Journal: ControlJournal
+        /// The SESSION this stream is keyed by. Not an invocation id: see the
+        /// scope note in `Journal.fs`.
+        Scope: string
+    }
+
+module ControlServices =
+
+    /// No stream, so no control can ever be in force. The default, and the
+    /// configuration under which every controls-aware function below is exactly
+    /// its uncontrolled counterpart.
+    let create (scope: string) : ControlServices =
+        { Journal = Controls.none
+          Scope = scope }
+
+    let withJournal (journal: ControlJournal) (services: ControlServices) : ControlServices =
+        { services with Journal = journal }
+
+/// What one controlled run did, beyond the durable outcome itself.
+///
+/// The durable outcome is carried WHOLE rather than flattened, for the reason
+/// `DurableOutcome` carries the handler outcome whole: the parity claim is
+/// stated against the uncontrolled value, and a reshaped one would make it
+/// unstateable.
+type ControlledOutcome =
+    {
+        /// The durable outcome — the same value, of the same type, an
+        /// uncontrolled run produces.
+        Durable: DurableOutcome
+        /// The state the stream folded to at entry. The prefix this run was
+        /// decided by, so a reader can say which acts were in force without
+        /// re-reading the stream and hoping it has not moved.
+        Controls: ControlState
+        /// Every refusal the controls caused, in order. Empty on a session with
+        /// no control recorded, which is the whole cost of the feature there.
+        Refusals: ControlRefusal list
+    }
+
+/// One controlled step of a server session.
+type ControlledStep =
+    { Session: ServerSession
+      Output: ServerStepOutput
+      Controls: ControlState
+      Refusals: ControlRefusal list }
+
+module DurableControls =
+
+    /// **Run one handler under deterministic replay, with the operator controls
+    /// in force.**
+    ///
+    /// Exactly `Durable.run` against a registry `Controls.apply` has wrapped.
+    /// That is the whole implementation, and it is worth saying why it can be:
+    /// every effect this placement performs passes the gate first (`Handler.run`
+    /// consults it before a pipeline is evaluated, before an op reaches the
+    /// apply engine and before a performer is looked up), so a control expressed
+    /// at the registry reaches every arm of the closed vocabulary without this
+    /// file enumerating them.
+    let run
+        (services: DurableServices)
+        (controls: ControlServices)
+        (invocation: string)
+        (registry: ServerEffectRegistry)
+        (resolve: string -> Result<Fuaran.Core.Table, Fuaran.Core.EvalError>)
+        (nodeId: string)
+        (handler: Handler)
+        (store: ServerStore)
+        : ControlledOutcome =
+        let state = Controls.stateOf controls.Journal controls.Scope
+        let refusals = ResizeArray<ControlRefusal>()
+        let controlled = Controls.apply refusals.Add state registry
+
+        { Durable = Durable.run services invocation controlled resolve nodeId handler store
+          Controls = state
+          Refusals = List.ofSeq refusals }
+
+    /// This interpreter's answer to a call action, with the controls in force.
+    ///
+    /// `record` receives every control refusal the handlers this arm answers
+    /// caused. It is a sink rather than a return value because an arm is a
+    /// closure the fold calls — the same shape, and for the same reason, as the
+    /// registry's own `OnDenied`.
+    let arm
+        (services: DurableServices)
+        (controls: ControlServices)
+        (invocation: string)
+        (record: ControlRefusal -> unit)
+        (host: ServerServices)
+        : HandlerArm<HandlerTally> =
+        let state = Controls.stateOf controls.Journal controls.Scope
+
+        Durable.arm
+            services
+            invocation
+            { host with
+                Effects = Controls.apply record state host.Effects }
+
+    /// **Step a server session with the controls in force.**
+    ///
+    /// A suspended session refuses the dispatch through its own G1 gate and
+    /// leaves the session value untouched — see the header. An unsuspended one
+    /// runs the durable interpreter against a controlled registry.
+    let step
+        (services: DurableServices)
+        (controls: ControlServices)
+        (invocation: string)
+        (session: ServerSession)
+        (ev: Fuaran.UI.ServerDriven.Validation.LiveEvent)
+        : ControlledStep =
+        let state = Controls.stateOf controls.Journal controls.Scope
+        let refusals = ResizeArray<ControlRefusal>()
+
+        match state.Suspended with
+        | Some(actor, reason) ->
+            // The G1 gate, closed. The refusal travels the loop's own path, so
+            // the session is carried forward unchanged by the same code that
+            // carries it forward under any other policy refusal — and the
+            // session RETURNED is the caller's own, so a suspension leaves no
+            // trace on the value a resume continues from.
+            let closed =
+                { session with
+                    Services =
+                        { session.Services with
+                            CanDispatch = fun _ -> false } }
+
+            let _, output =
+                ServerSession.stepWith (Durable.arm services invocation closed.Services) closed ev
+
+            { Session = session
+              Output = output
+              Controls = state
+              Refusals =
+                match output.Rejected with
+                | Some _ -> [ ControlRefusal.Suspended(ControlCode.DispatchCapability, actor, reason) ]
+                | None -> [] }
+        | None ->
+            let next, output =
+                ServerSession.stepWith (arm services controls invocation refusals.Add session.Services) session ev
+
+            { Session = next
+              Output = output
+              Controls = state
+              Refusals = List.ofSeq refusals }
+
+    /// The controls in force on a session, without running anything.
+    let stateOf (controls: ControlServices) : ControlState =
+        Controls.stateOf controls.Journal controls.Scope
+
+    /// Record one act on a session's stream, returning the entry as it landed.
+    ///
+    /// The one write path, so a raiser never has to know the stream's key twice.
+    /// A machine raiser and an operator reach it identically — the difference is
+    /// the `ControlActor` inside `request`, and nothing here reads it.
+    let record (controls: ControlServices) (request: ControlRequest) : ControlEntry =
+        Controls.record controls.Journal controls.Scope request
+
+    /// Suspend a session ACROSS whatever indeterminate window is open on these
+    /// invocations — the mid-stage case, with the window read from the effect
+    /// journal rather than asserted by the raiser.
+    ///
+    /// A suspend raised between invocations records no window, and that is a
+    /// statement rather than an omission: it says the journal was asked and
+    /// answered nothing, which is exactly the fact a resume needs and cannot
+    /// recover later.
+    let suspendMidStage
+        (services: DurableServices)
+        (controls: ControlServices)
+        (invocations: string seq)
+        (actor: ControlActor)
+        (reason: string)
+        : ControlEntry =
+        Controls.midStageWindows services.Journal invocations
+        |> Controls.suspendMidStage actor reason
+        |> record controls
+
+    /// This host's server-tier coverage with the controls in force — what a
+    /// demanded-effect check is asked once a performer has been withdrawn.
+    let coverage (controls: ControlServices) (host: ServerServices) : ServerCoverage =
+        Controls.coverage (stateOf controls) host.Effects
