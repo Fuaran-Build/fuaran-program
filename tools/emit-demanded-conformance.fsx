@@ -90,10 +90,10 @@ let emptyTier = (Harvest.ofRegistration []).Document
 /// Kept by the decoder, never dropped — a vocabulary that grew on this side must
 /// make a program look MORE effectful to a consumer, not less.
 let unknownArm =
-    """{"kind":"demanded","version":3,"effects":[],"hostCalls":[],"stateNamespaces":[],"opaqueHandlers":[],"server":{"effects":["RunQuery","TeleportSomewhere"],"capabilities":[],"functions":[],"channels":[],"replay":[]}}"""
+    """{"kind":"demanded","version":4,"effects":[],"hostCalls":[],"stateNamespaces":[],"opaqueHandlers":[],"server":{"effects":["RunQuery","TeleportSomewhere"],"capabilities":[],"functions":[],"channels":[],"replay":[],"constraints":[]}}"""
 
 let canonical =
-    """{"kind":"demanded","version":3,"effects":[],"hostCalls":[],"stateNamespaces":[],"opaqueHandlers":[],"server":{"effects":[],"capabilities":[],"functions":[],"channels":[],"replay":[]}}"""
+    """{"kind":"demanded","version":4,"effects":[],"hostCalls":[],"stateNamespaces":[],"opaqueHandlers":[],"server":{"effects":[],"capabilities":[],"functions":[],"channels":[],"replay":[],"constraints":[]}}"""
 
 let vectors: (string * string * string) list =
     [ "harvest-full",
@@ -106,8 +106,14 @@ let vectors: (string * string * string) list =
       "unknown-effect-arm",
       unknownArm,
       "A server tier naming an arm outside a consumer's vocabulary. Carried, never dropped: dropping it would make a newer program look safer than an older one."
+      "declared-argument-policy",
+      """{"kind":"demanded","version":4,"effects":[],"hostCalls":[],"stateNamespaces":[],"opaqueHandlers":[],"server":{"effects":["HostCall"],"capabilities":[],"functions":[{"function":"fetch","capability":"host:fetch"}],"channels":[],"replay":[],"constraints":[{"capability":"host:fetch","clauses":[{"clause":"allowList","argument":"url","permitted":["api.example.com"]},{"clause":"ceiling","bytes":65536},{"clause":"label","label":"pii"}]}]}}""",
+      "A tier carrying the host's declared argument policy. A reader that dropped the clauses would report 'unconstrained' for a bounded capability, which is the one misreading in this document that is dangerous rather than merely lossy."
+      "unknown-policy-clause",
+      """{"kind":"demanded","version":4,"effects":[],"hostCalls":[],"stateNamespaces":[],"opaqueHandlers":[],"server":{"effects":[],"capabilities":[],"functions":[],"channels":[],"replay":[],"constraints":[{"capability":"host:fetch","clauses":[{"clause":"teleport","argument":"url"}]}]}}""",
+      "A clause discriminator this version does not declare. REFUSED, unlike an unknown effect arm: the discriminator selects which members the object has, so a reader that carried it could not have read the object it introduces."
       "unknown-version",
-      canonical.Replace("\"version\":3", "\"version\":2"),
+      canonical.Replace("\"version\":4", "\"version\":2"),
       "A version this reader does not read. Refused rather than read through another version's lens."
       "wrong-kind",
       canonical.Replace("\"demanded\"", "\"manifest\""),
@@ -120,13 +126,13 @@ let vectors: (string * string * string) list =
       "The same rule, one level down."
       "missing-server",
       canonical.Replace(
-          ",\"server\":{\"effects\":[],\"capabilities\":[],\"functions\":[],\"channels\":[],\"replay\":[]}",
+          ",\"server\":{\"effects\":[],\"capabilities\":[],\"functions\":[],\"channels\":[],\"replay\":[],\"constraints\":[]}",
           ""
       ),
       "The tier omitted entirely. This version carries it on every document, null where no walk ran — so its absence is a document this version does not describe."
       "null-server",
       canonical.Replace(
-          "\"server\":{\"effects\":[],\"capabilities\":[],\"functions\":[],\"channels\":[],\"replay\":[]}",
+          "\"server\":{\"effects\":[],\"capabilities\":[],\"functions\":[],\"channels\":[],\"replay\":[],\"constraints\":[]}",
           "\"server\":null"
       ),
       "The tier spelled null: no walk was performed. A member spelled null IS an absent member."
@@ -137,10 +143,10 @@ let vectors: (string * string * string) list =
       canonical.Replace("\"effects\":[],\"hostCalls\"", "\"effects\":\"none\",\"hostCalls\""),
       "A member carrying the wrong JSON type. Distinct from an absent one: only this means the producer and the reader disagree about what the member IS."
       "non-canonical-effects",
-      """{"kind":"demanded","version":3,"effects":["b","a"],"hostCalls":[],"stateNamespaces":[],"opaqueHandlers":[],"server":null}""",
+      """{"kind":"demanded","version":4,"effects":["b","a"],"hostCalls":[],"stateNamespaces":[],"opaqueHandlers":[],"server":null}""",
       "A client-tier list that is not distinct and sorted. Two such documents would not compare by value, which is the property the encoding exists to provide."
       "non-canonical-server-functions",
-      """{"kind":"demanded","version":3,"effects":[],"hostCalls":[],"stateNamespaces":[],"opaqueHandlers":[],"server":{"effects":[],"capabilities":[],"functions":[{"function":"b","capability":"host:b"},{"function":"a","capability":"host:a"}],"channels":[],"replay":[]}}""",
+      """{"kind":"demanded","version":4,"effects":[],"hostCalls":[],"stateNamespaces":[],"opaqueHandlers":[],"server":{"effects":[],"capabilities":[],"functions":[{"function":"b","capability":"host:b"},{"function":"a","capability":"host:a"}],"channels":[],"replay":[],"constraints":[]}}""",
       "The same rule in the server tier."
       "not-an-object", "[]", "A document whose root is not an object."
       "not-json", "{", "Bytes that are not readable JSON." ]
@@ -179,6 +185,30 @@ let renderTier (tier: ServerDemand option) =
             |> List.map (fun p -> "{\"handler\":" + q p.Handler + ",\"safety\":" + q p.Safety + "}")
             |> arr
 
+        // The declared argument policy, rendered clause by clause. A consumer
+        // whose reader silently dropped a bound would otherwise agree with this
+        // corpus while reading "unconstrained" off a constrained document — the
+        // one misreading this member makes dangerous rather than merely lossy.
+        let constraints =
+            t.Constraints
+            |> List.map (fun c ->
+                let clauses =
+                    c.Clauses
+                    |> List.map (fun clause ->
+                        match clause with
+                        | ServerConstraintClause.AllowList(argument, permitted) ->
+                            "{\"clause\":\"allowList\",\"argument\":"
+                            + q argument
+                            + ",\"permitted\":"
+                            + arr (permitted |> List.map q)
+                            + "}"
+                        | ServerConstraintClause.Ceiling bytes -> "{\"clause\":\"ceiling\",\"bytes\":" + string bytes + "}"
+                        | ServerConstraintClause.Label label -> "{\"clause\":\"label\",\"label\":" + q label + "}")
+                    |> arr
+
+                "{\"capability\":" + q c.Capability + ",\"clauses\":" + clauses + "}")
+            |> arr
+
         "\"serverWalked\":true,\"server\":{\"effects\":"
         + arr (t.Effects |> List.map q)
         + ",\"capabilities\":"
@@ -189,6 +219,8 @@ let renderTier (tier: ServerDemand option) =
         + chans
         + ",\"replay\":"
         + replay
+        + ",\"constraints\":"
+        + constraints
         + "}"
 
 let entries =
