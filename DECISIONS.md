@@ -489,7 +489,7 @@ signature under a key it was given, and nothing more. And the operator command t
 lives with the tooling that has a tree and a key directory in hand, not here: this repository
 delivers the two library functions it calls.
 
-## D16 — The gate decides on ARGUMENTS as well as on the capability name; the policy is declared DATA, carried in the envelope, and refused through the vocabulary that already exists (2026-09-19)
+## D17 — The gate decides on ARGUMENTS as well as on the capability name; the policy is declared DATA, carried in the envelope, and refused through the vocabulary that already exists (2026-09-19)
 
 **Decision.** A host declares an argument policy beside an effect registration — a closed set of
 three clauses: an **allow-list** over one named argument, a **ceiling** on the declarative payload's
