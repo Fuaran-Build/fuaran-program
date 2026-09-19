@@ -1,0 +1,168 @@
+{
+  "$comment": [
+    "The claims ladder of proofs/README.md, declared as DATA so a registry can read it rather",
+    "than parse prose. Hand-authored and never generated: the point of the manifest is that a",
+    "human decided which rung each claim sits on, and a generator would only be able to restate",
+    "what the code already says.",
+    "",
+    "`level` is a CLOSED set — proved | tested | assumed | policy — and the four map onto the",
+    "README's four rungs: proved, differentially tested, assumed-and-stated, and not-claimed.",
+    "A `policy` entry is an exclusion carrying its reason, because an unstated exclusion reads,",
+    "to whoever finds it later, as a claim that failed.",
+    "",
+    "A `proved` entry names its lemma and the prover pin so an evidence check can resolve the",
+    "lemma in the named module and the pin in the named file. Nothing here is checkable by",
+    "reading this file alone, and that is the intended shape: the manifest says where to look,",
+    "the proof leg (proofs/check.ps1) is what looks.",
+    "",
+    "Every later proof phase in this repository appends its claims here rather than starting a",
+    "second manifest."
+  ],
+  "kind": "proofs",
+  "version": 1,
+  "subject": "the proved models under proofs/: the shared bounded fold — BoundedActions.runBoundedActionWith, the one interpreter every placement runs, over the closed Action union, its State store, its closure-free client effects and its diagnostics (Phase 1715)",
+  "provers": {
+    "fstar-pinned": {
+      "tool": "fstar",
+      "pin": "proofs/fstar-pin.json",
+      "version": "v2026.09.06",
+      "solver": "z3 4.13.3",
+      "leg": "proofs/check.ps1",
+      "reproducibility": "proof hints no longer exist in this prover, so the pin, a margin on --z3rlimit, and --quake 3 over three cold runs are what stand in for them"
+    }
+  },
+  "claims": [
+    {
+      "id": "fold-totality",
+      "level": "proved",
+      "statement": "The fold is defined on every arm of the closed Action union — no wildcard, no partial match, no throw — and one step that is neither the composition arm nor a call the placement answered is characterised structurally: the placement accumulation is untouched, the store is either unchanged or written at exactly one key the host-reserved predicate rejects, and at most one client effect and at most one diagnostic are emitted.",
+      "evidence": {
+        "prover": "fstar-pinned",
+        "module": "proofs/BoundedFold.fst",
+        "lemmas": [
+          "run_total"
+        ],
+        "definitions": [
+          "run",
+          "run_many",
+          "handled"
+        ],
+        "note": "termination is structural on the action, carried by the decreases clause on `run`/`run_many` rather than by a depth counter; `handled` names every constructor a second time without a wildcard, so a fifteenth arm fails to compile here exactly as it fails to compile in the fold"
+      }
+    },
+    {
+      "id": "no-closure-invocation",
+      "level": "proved",
+      "statement": "Two actions differing ONLY in the closures they carry produce identical outcomes and identical placement accumulations. A fold that invoked a carried closure could not satisfy this, so the safety property the interpreter's own header states — a generated tree running through this fold has no arbitrary-code-execution surface — is a theorem rather than a comment.",
+      "evidence": {
+        "prover": "fstar-pinned",
+        "module": "proofs/BoundedFold.fst",
+        "lemmas": [
+          "run_no_closure",
+          "run_no_closure_list",
+          "describe_ignores_closures"
+        ],
+        "note": "the closure slots have an abstract type parameter with no elimination form, so in the model a fold that DID invoke one cannot be written at all; the lemma is what makes that absence a statement rather than an accident of how the model was written"
+      }
+    },
+    {
+      "id": "chain-homomorphism",
+      "level": "proved",
+      "statement": "Running the concatenation of two operation lists equals running the first and then the second against the store the first left, with the effect lists and the diagnostic lists concatenated in order and the placement threaded through. This is DECISIONS.md D7's splice property — a nested call sees the writes before it and is seen by the writes after it — stated as an equation.",
+      "evidence": {
+        "prover": "fstar-pinned",
+        "module": "proofs/BoundedFold.fst",
+        "lemmas": [
+          "chain_homomorphism",
+          "chain_action_homomorphism"
+        ]
+      }
+    },
+    {
+      "id": "host-reserved-keys-untouched",
+      "level": "proved",
+      "statement": "The store the fold returns agrees with the store it was given at every host-reserved State key, for any handler arm that preserves them. The only write the fold performs is the SetState arm's, and that arm refuses a reserved key before reaching it.",
+      "evidence": {
+        "prover": "fstar-pinned",
+        "module": "proofs/BoundedFold.fst",
+        "lemmas": [
+          "reserved_untouched",
+          "reserved_untouched_list",
+          "inert_preserves_reserved"
+        ],
+        "note": "the side condition is about the placement SEAM, which returns a store of its own and which the fold therefore cannot bound; `inert_preserves_reserved` discharges it for the two placements that run no handlers, which is what keeps the theorem from being a conditional nobody has met"
+      }
+    },
+    {
+      "id": "model-agrees-with-shipped-code",
+      "level": "tested",
+      "statement": "The extracted model and the shipped interpreter produce the same store, the same client-effect list and the same diagnostics for every action the conformance corpus's driver-semantics family contains, for an arm-complete corpus naming all fourteen arms and every refusal path inside the three arms that have one, and across the placement seam when a handler answers. This is the only thing that says the proved model is about the code that runs.",
+      "evidence": {
+        "host": "tests/Fuaran.Program.Parity.Tests/ProofOracleTests.fs",
+        "list": "Phase 1715 - the proved bounded fold as oracle",
+        "cases": [
+          "the driver-semantics family yields actions to compare",
+          "the oracle agrees with production over the driver-semantics family",
+          "the oracle agrees with production over every arm and every refusal path",
+          "the oracle agrees with production when the placement ANSWERS a call",
+          "GO RED: a fold that invokes a carried closure loses the comparison"
+        ],
+        "runner": "proofs/check.ps1 step 6, which asserts a CASE COUNT because a filter matching nothing reports success"
+      }
+    },
+    {
+      "id": "binding-resolution-axiomatised",
+      "level": "assumed",
+      "statement": "Binding resolution is a total pure arrow the model takes as a parameter, never a definition it owns: resolveJVal, resolveScalarText, resolveTextSource and the i18n catalogue probe are assumed to terminate and to answer the same way for the same store. Nothing proved here depends on WHAT any of them answers — the theorems hold for every total arrow — only on the fold composing them where it does.",
+      "mitigation": "the differential host wires each arrow to production's own implementation, so the only thing that can disagree in the comparison is the fold; modelling a resolver instead would introduce a second implementation free to drift from the shipped one"
+    },
+    {
+      "id": "url-floor-axiomatised",
+      "level": "assumed",
+      "statement": "The renderer URL floor (Sanitize.sanitizeUrl) is a total pure arrow the model takes as a parameter. The fold is proved to consult it on the RESOLVED route and to emit no navigation when it declines; nothing here is a claim about which URLs it declines.",
+      "mitigation": "the floor is the tree wire specification's, and this repository states it does not narrow it; the arm-complete differential corpus includes a route the floor refuses and a route it admits, so a fold that stopped consulting it would be caught"
+    },
+    {
+      "id": "host-reserved-predicate-axiomatised",
+      "level": "assumed",
+      "statement": "StateKeys.isHostReserved and the namespace prefix it names are a total pure arrow and a constant the model takes as parameters. `host-reserved-keys-untouched` is quantified over every such predicate, so it says the fold refuses whatever that predicate rejects — not which keys are reserved.",
+      "mitigation": "the differential host supplies the shipped predicate and the shipped prefix, and the arm-complete corpus writes a key under it"
+    },
+    {
+      "id": "placement-seam",
+      "level": "assumed",
+      "statement": "What a call action MEANS is the placement's, supplied through the handler arm. The model proves only that WHERE a call is recognised is the fold, at every depth, and that an answer is threaded in place; the store, the effects and the diagnostics an arm returns are its own, and the fold neither constrains nor inspects them.",
+      "mitigation": "the structural characterisation in `run_total` names the answered-call case explicitly and excludes it rather than quietly covering it, and `reserved_untouched` carries the seam's obligation as a stated side condition that the inert arm discharges"
+    },
+    {
+      "id": "toolchain-trusted",
+      "level": "assumed",
+      "statement": "The extractor and the F# compiler are trusted. The theorem is about the model; the code that runs in the differential is the extraction, and nothing verifies that the extraction preserves semantics.",
+      "mitigation": "the differential host runs the EXTRACTION, not the model, so an extraction defect that changes behaviour on any corpus action is caught there; and proofs/check.ps1 byte-diffs the committed extraction against a fresh one on every run, so the file the repository compiles is the file the prover emitted"
+    },
+    {
+      "id": "durable-journal",
+      "level": "policy",
+      "statement": "The durable journal is OUT of the theorem.",
+      "reason": "it is a placement concern — what a session persists between interactions and how a replay reconstructs it — and the fold is placement-neutral by construction. A model that reached into it would be modelling one placement and calling the result a property of the interpreter."
+    },
+    {
+      "id": "browser-placement",
+      "level": "policy",
+      "statement": "The browser placement's loop is OUT of the theorem.",
+      "reason": "the theorems are about the shared fold, which the browser placement runs unchanged; everything ABOVE it there — the transport, the effect performer, the DOM patch application — is neither modelled nor claimed. A reader should take 'the fold is total and invokes no closure' and nothing more from this about what a browser does."
+    },
+    {
+      "id": "session-cells",
+      "level": "policy",
+      "statement": "The per-connection session cells (BoundedConnection) are OUT of the theorem.",
+      "reason": "same boundary as the journal. The fold takes a store and returns a store; who owns that store between interactions, and what concurrency it is subject to, is the placement's question and is not answered anywhere in proofs/."
+    },
+    {
+      "id": "resource-bounds",
+      "level": "policy",
+      "statement": "The per-interaction resource budget is OUT of the theorem.",
+      "reason": "bounded CODE and bounded COST are the two halves of running an untrusted tree on shared infrastructure, and only the first is proved here. The budget is the driver's (Budget.fs); a proof of it would be a separate model with a separate claim, and reading this one as covering it would be the more dangerous of the two mistakes."
+    }
+  ]
+}

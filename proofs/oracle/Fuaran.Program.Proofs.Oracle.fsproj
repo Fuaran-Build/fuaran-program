@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Microsoft.NET.Sdk">
+    <!-- Phase 1715 — the F* model of the shared bounded fold, extracted to F#
+         and compiled so the differential host can RUN it beside production
+         over the conformance corpus's driver-semantics family.
+
+         `BoundedFold.fs` is GENERATED: `proofs/check.ps1` re-extracts it from
+         `proofs/BoundedFold.fst` and byte-compares the result against the
+         committed copy, so editing it by hand is a change the proof leg
+         refuses rather than one it absorbs. It is committed nonetheless, and
+         deliberately: the F* toolchain is a large download, and requiring it
+         to BUILD the repository would put a prover on the critical path of
+         every contributor and every CI job that has nothing to do with proofs.
+         The committed extraction is the seam — `run.ps1` compiles it like any
+         other source, and the proofs job is what holds it honest.
+
+         `IsPackable` is false and must stay false: none of this ships. The
+         four packages this repository publishes carry the interpreter, not its
+         model.
+
+         Two compiler settings are forced by the extractor's output shape
+         rather than chosen:
+
+           * The strict-indentation opt-out in `OtherFlags` below. The F#
+             backend emits pre-F#-8 layout (an `if ... then begin` block
+             indented to its own column, a `let ... in` opening after a blank
+             line). F# 8 made that an error; the flag restores it to a warning,
+             and the warning is silenced below. Scoped to THIS project, so
+             nothing hand-written in the repository relaxes.
+           * `FS0058` (possible incorrect indentation) and `FS0064` (a type
+             instantiated less generally than its annotation) off, for the same
+             reason and in the same scope.
+
+         The incomplete-match warnings the extractor's field projectors produce
+         are DEMOTED here, not suppressed: `WarningsNotAsErrors` takes FS0025
+         back to the warning it is by default, so it is still printed and still
+         readable, where `NoWarn` would make it invisible. The repository
+         escalates FS0025 to an error deliberately and that escalation is right
+         for every file a human writes; read the `Directory.Build.props` beside
+         this one for why it is not right for a generated extraction, and for
+         why that file imports the root's settings rather than replacing
+         them. -->
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <IsPackable>false</IsPackable>
+        <OtherFlags>$(OtherFlags) --strict-indentation-</OtherFlags>
+        <NoWarn>$(NoWarn);58;64</NoWarn>
+        <WarningsNotAsErrors>FS0025;$(WarningsNotAsErrors)</WarningsNotAsErrors>
+        <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    </PropertyGroup>
+    <ItemGroup>
+        <!-- The whole runtime the extraction needs. Must precede it. -->
+        <Compile Include="Prims.fs" />
+        <!-- GENERATED from ../BoundedFold.fst — do not edit. A later proof
+             phase APPENDS its extraction below. -->
+        <Compile Include="BoundedFold.fs" />
+    </ItemGroup>
+</Project>

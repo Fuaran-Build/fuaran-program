@@ -1,0 +1,7 @@
+# The pinned prover, and the two working directories check.ps1 wipes on every
+# run. The toolchain is a large download and is not a build dependency: the
+# committed extraction under oracle/ is the seam, and check.ps1 is the only
+# thing that needs a prover at all.
+.fstar/
+.cache/
+.extract/

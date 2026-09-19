@@ -1,0 +1,134 @@
+name: proofs
+
+# Phase 1715 — the proof leg, run on its own lane.
+#
+# ── Why this is not part of CI ───────────────────────────────────────────────
+# `ci.yml` runs `run.ps1`, which is the gate every contributor runs. This one
+# runs `proofs/check.ps1`, which downloads a pinned F* release — a large, one-off
+# fetch — checks the models on it, re-extracts them, byte-compares each
+# extraction against the committed `proofs/oracle/*.fs`, builds that project and
+# then runs the differential hosts. Nothing in `run.ps1` needs a prover, and that
+# is deliberate: the extractions are COMMITTED precisely so a contributor with no
+# interest in proofs never installs one. Folding this into CI would put a 200 MB
+# download and a solver on the critical path of every push.
+#
+# ── Why three runs ───────────────────────────────────────────────────────────
+# `-Runs 3` repeats the whole check three times from a COLD cache with
+# `--quake 3` — nine seeds per query. Proof hints no longer exist in F*
+# (`--record_hints` / `--use_hints` were removed), so the usual way of pinning an
+# SMT search is unavailable, and a proof that passes once may be riding a lucky
+# seed. The pin, the `--z3rlimit` margin and this repetition are what stand in.
+#
+# ── Why windows-latest ───────────────────────────────────────────────────────
+# `proofs/fstar-pin.json` carries a verified SHA-256 for the Windows asset and an
+# EMPTY one for Linux, because nothing has run this leg on Linux and a hash
+# recorded as if it were verified is worse than an absent one. `check.ps1`
+# refuses a platform whose hash is empty and says so. Pinning a Linux hash is how
+# this moves to a cheaper runner, not editing this line.
+#
+# ── Step 6 needs the corpus; steps 1-5 do not ────────────────────────────────
+# The differential host compares the oracle against production over the program
+# wire corpus's driver-semantics family, and that corpus is a private sibling
+# repository — the same BUILD INPUT `ci.yml` documents at length. When the
+# credential is absent (every fork pull request, by GitHub's design), the proof
+# half still runs in full and the differential is reported as a NAMED, VISIBLY
+# SKIPPED step. A skipped differential that read as a pass would be the exact
+# failure the corpus exists to rule out; `-SkipHost` is how the script says so
+# itself rather than by a comment here.
+#
+# ── No deploy ────────────────────────────────────────────────────────────────
+# Verification only. No artifact, no package push, no `workflow_run` chain;
+# `permissions` is read-only.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: proofs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  proofs:
+    name: proofs/check.ps1 -Runs 3
+    runs-on: windows-latest
+    # Three cold checks plus an extraction, a build and the differential hosts.
+    # An upper bound rather than a target: a run that reaches it has hung.
+    timeout-minutes: 60
+
+    env:
+      SPEC: Fuaran/Fuaran-UI/fuaran-program-spec
+
+    steps:
+      # The workspace layout `ci.yml` assembles, and for the same two reasons:
+      # `nuget.config` declares a `local` folder source at `../../local-nuget-feed`
+      # and NuGet hard-errors on a missing one (NU1301), and the parity suite
+      # resolves the corpus from the source tree as a sibling clone.
+      - name: Checkout fuaran-program
+        uses: actions/checkout@v4
+        with:
+          path: Fuaran/Fuaran-Program
+
+      - name: Check whether the corpus credential is granted here
+        id: cred
+        shell: bash
+        env:
+          HAS_TOKEN: ${{ secrets.PROGRAM_SPEC_TOKEN != '' }}
+        run: echo "granted=$HAS_TOKEN" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout the program wire corpus
+        if: steps.cred.outputs.granted == 'true'
+        continue-on-error: true
+        uses: actions/checkout@v4
+        with:
+          repository: Fuaran-Build/fuaran-program-spec
+          token: ${{ secrets.PROGRAM_SPEC_TOKEN }}
+          path: Fuaran/Fuaran-UI/fuaran-program-spec
+
+      - name: Corpus status
+        id: status
+        shell: bash
+        run: |
+          if [ -f "$SPEC/wire-fixtures/manifest.json" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Conformance corpus present::The FULL proof leg runs, differential hosts included."
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Conformance corpus ABSENT - the differential hosts did NOT run::The proofs, the extractions, the byte-diffs and the oracle build all ran. The differential hosts did not, because they compare the oracle against production over the program wire corpus, which this runner could not fetch. Cause: the PROGRAM_SPEC_TOKEN repository secret is unset or invalid, or this is a pull request from a fork (fork PRs receive no secrets, by design). This run asserts that the models CHECK; it asserts nothing about whether they describe the shipped code."
+          fi
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: Fuaran/Fuaran-Program/global.json
+
+      - name: Create the empty local NuGet feed dir (NU1301 workaround)
+        shell: bash
+        run: mkdir -p local-nuget-feed
+
+      - name: The proof leg (pwsh ./proofs/check.ps1 -Runs 3)
+        if: ${{ steps.status.outputs.present == 'true' }}
+        working-directory: Fuaran/Fuaran-Program
+        shell: pwsh
+        run: ./proofs/check.ps1 -Runs 3
+
+      - name: The proof leg, without the differential hosts (corpus unavailable)
+        if: ${{ steps.status.outputs.present != 'true' }}
+        working-directory: Fuaran/Fuaran-Program
+        shell: pwsh
+        run: ./proofs/check.ps1 -Runs 3 -SkipHost
+
+      - name: SKIPPED — the differential hosts (corpus unavailable)
+        if: ${{ steps.status.outputs.present != 'true' }}
+        shell: bash
+        run: |
+          echo "NOT RUN in this job: proofs/check.ps1 step 6, the differential hosts."
+          echo "They compare the extracted model against production over the program wire"
+          echo "corpus, which this runner could not fetch. See the warning annotation."
+          echo "This is a visible skip, not a pass: the run makes no claim that the proved"
+          echo "models describe the code that ships."

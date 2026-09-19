@@ -93,6 +93,26 @@ the three legs that did not run, and a step whose title is the skip. The rest of
 so such a contribution is still verified for everything the corpus does not decide. A silent skip
 would be the same defect the paragraph above rules out for a local run.
 
+### Mechanised: four of the interpreter's laws are theorems
+
+The four laws the bounded interpreter's own header states — that its fold is total over the closed
+`Action` union, that it never invokes a closure an action carries, that `Chain` is its homomorphism,
+and that host-reserved `State` keys are not writable from a tree — are **proved**, in an F\* model of
+the fold under a pinned prover with no admits. The extracted model is then run beside the shipped
+interpreter over the conformance corpus's driver-semantics family, so the theorem is a claim about
+the code rather than about a document.
+
+That leg is separate from the gate above and stays that way: `.github/workflows/proofs.yml` runs
+`proofs/check.ps1 -Runs 3`, and nothing in `run.ps1` or `dotnet build` needs a prover — the
+extraction is committed precisely so a contributor with no interest in proofs never installs one.
+
+**What is proved is narrow, and [`proofs/README.md`](proofs/README.md) is where the boundary is
+drawn.** It carries the claims ladder — proved, differentially tested, assumed and stated, not
+claimed — and it is the only place in this repository where the phrase "formally verified" appears.
+The durable journal, the session cells, and the per-interaction resource budget are on the
+not-claimed rung, explicitly: bounded code and bounded cost are two different properties, and only
+the first of them has a theorem here. [`proofs.json`](proofs.json) is the same ladder as data.
+
 ## License
 
 Apache-2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).

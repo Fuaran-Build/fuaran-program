@@ -7,10 +7,16 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="ParityTests.fs" />
+    <!-- Phase 1715 — the differential host for the proved bounded fold. It
+         references the oracle project, which holds the F* extraction; that
+         project is NOT in the solution, and deliberately so: nothing packs it
+         and nothing but this suite consumes it. -->
+    <Compile Include="ProofOracleTests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Fuaran.Program.Parity\Fuaran.Program.Parity.fsproj" />
+    <ProjectReference Include="..\..\proofs\oracle\Fuaran.Program.Proofs.Oracle.fsproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Expecto" />
