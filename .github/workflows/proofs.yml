@@ -24,7 +24,9 @@ name: proofs
 # EMPTY one for Linux, because nothing has run this leg on Linux and a hash
 # recorded as if it were verified is worse than an absent one. `check.ps1`
 # refuses a platform whose hash is empty and says so. Pinning a Linux hash is how
-# this moves to a cheaper runner, not editing this line.
+# this moves to a cheaper runner, not editing this line - and the `linux-pin` job
+# at the foot of this file (Phase 1848.D, workflow_dispatch only) is how the hash
+# gets measured rather than asserted.
 #
 # ── Step 6 needs the corpus; steps 1-5 do not ────────────────────────────────
 # The differential host compares the oracle against production over the program
@@ -132,3 +134,83 @@ jobs:
           echo "corpus, which this runner could not fetch. See the warning annotation."
           echo "This is a visible skip, not a pass: the run makes no claim that the proved"
           echo "models describe the code that ships."
+
+  # Phase 1848.D — the Linux pin probe. MANUAL ONLY (`workflow_dispatch`), because its whole
+  # job is to answer a question the pin cannot answer about itself: does this leg run on Linux
+  # at all, and what does the pinned release's linux-x64 asset hash to?
+  #
+  # `proofs/fstar-pin.json` carries an EMPTY sha256 for linux-x64 — deliberately, because an
+  # unverified hash recorded as if it were verified is worse than an absent one — and
+  # `check.ps1` refuses to DOWNLOAD a platform it cannot verify. So this job fetches the asset
+  # itself, prints the hash, and hands the extracted prover to the leg through `-FStarHome`,
+  # the supported route for a prover the script did not resolve. It is NOT a second download
+  # path around the pin; it is the measurement that lets the pin be filled in. Once the hash is
+  # recorded the step below starts VERIFYING it instead of printing it, with no further edit.
+  #
+  # The differential hosts are skipped here and named as skipped, exactly as the corpus-absent
+  # branch of the main job names them: this probe asks about the PLATFORM, and pairing it with
+  # a corpus fetch would make a red run ambiguous between the two.
+  linux-pin:
+    name: F* proof leg on Linux (pin probe, 3 cold runs)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      # The same workspace layout the other jobs assemble, and for the same reason:
+      # `nuget.config` declares a `local` folder source at `../../local-nuget-feed` and NuGet
+      # hard-errors on a missing one (NU1301).
+      - name: Checkout fuaran-program
+        uses: actions/checkout@v4
+        with:
+          path: Fuaran/Fuaran-Program
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: Fuaran/Fuaran-Program/global.json
+
+      - name: Create the empty local NuGet feed dir (NU1301 workaround)
+        shell: bash
+        run: mkdir -p local-nuget-feed
+
+      - name: Fetch the pinned linux-x64 asset and report its SHA-256
+        id: asset
+        shell: bash
+        working-directory: Fuaran/Fuaran-Program
+        run: |
+          set -euo pipefail
+          url=$(jq -r '.platforms["linux-x64"].url' proofs/fstar-pin.json)
+          declared=$(jq -r '.platforms["linux-x64"].sha256' proofs/fstar-pin.json)
+          echo "linux-x64 asset: $url"
+          curl -sSL --fail -o "$RUNNER_TEMP/fstar-linux.tar.gz" "$url"
+          actual=$(sha256sum "$RUNNER_TEMP/fstar-linux.tar.gz" | cut -d' ' -f1)
+          echo "sha256: $actual"
+          if [ -n "$declared" ] && [ "$declared" != "null" ]; then
+            if [ "$declared" != "$actual" ]; then
+              echo "::error title=linux-x64 pin MISMATCH::proofs/fstar-pin.json declares $declared; the asset at $url hashes to $actual. Refusing to run the leg on it."
+              exit 1
+            fi
+            echo "::notice title=linux-x64 hash verified against the pin::$actual"
+          else
+            echo "::warning title=linux-x64 is NOT hash-pinned - this run PRINTED the hash rather than verifying it::proofs/fstar-pin.json carries an empty sha256 for linux-x64. The asset at $url hashes to $actual. Record that value in the pin once this job is green; until it is recorded, nothing on this platform is pinned and check.ps1 will continue to refuse to download it."
+          fi
+          mkdir -p "$RUNNER_TEMP/fstar"
+          tar -xzf "$RUNNER_TEMP/fstar-linux.tar.gz" -C "$RUNNER_TEMP/fstar"
+          echo "home=$RUNNER_TEMP/fstar/fstar" >> "$GITHUB_OUTPUT"
+
+      - name: The proof leg on Linux (pwsh ./proofs/check.ps1 -Runs 3 -SkipHost)
+        working-directory: Fuaran/Fuaran-Program
+        shell: pwsh
+        run: ./proofs/check.ps1 -Runs 3 -SkipHost -FStarHome '${{ steps.asset.outputs.home }}'
+
+      - name: SKIPPED — the differential hosts (platform probe, corpus not fetched)
+        shell: bash
+        run: |
+          echo "NOT RUN in this job: proofs/check.ps1 step 6, the differential hosts."
+          echo "This job asks about the PLATFORM - whether the pinned prover checks these models on"
+          echo "Linux, and what its asset hashes to. It deliberately does not fetch the program wire"
+          echo "corpus, because a red run would then be ambiguous between a platform answer and a"
+          echo "credential one. This is a visible skip, not a pass: the run makes no claim that the"
+          echo "proved models describe the code that ships."
+          echo "::warning title=Differential hosts did NOT run on this Linux probe::The proofs, the extractions, the byte-diffs and the oracle build all ran. Step 6 did not - this job is a platform probe and fetches no corpus. It makes no model-agrees-with-production claim."

@@ -28,11 +28,11 @@
       "bin": "fstar/bin/fstar.exe"
     },
     "linux-x64": {
-      "asset": "fstar-v2026.09.06-Linux_x86_64.tar.gz",
+      "asset": "fstar-v2026.09.06-Linux-x86_64.tar.gz",
       "url": "https://github.com/FStarLang/FStar/releases/download/v2026.09.06/fstar-v2026.09.06-Linux-x86_64.tar.gz",
       "sha256": "",
       "bin": "fstar/bin/fstar",
-      "$comment": "Declared but NOT hash-pinned: nothing in this repository has run the proof leg on Linux, and an unverified hash recorded as if it were verified is worse than an absent one. check.ps1 refuses a platform whose sha256 is empty and says why. The CI job runs windows-latest for this reason."
+      "$comment": "Declared but NOT hash-pinned: nothing in this repository has run the proof leg on Linux, and an unverified hash recorded as if it were verified is worse than an absent one. check.ps1 refuses a platform whose sha256 is empty and says why, and the push/PR job runs windows-latest for that reason. Phase 1848.D added the route out: the workflow_dispatch-only linux-pin job in .github/workflows/proofs.yml fetches this asset, PRINTS its SHA-256 and runs the leg on it through -FStarHome. Record the printed value here once that job is green - it then starts verifying the hash instead of printing it, with no further edit. If the leg cannot run on Linux at all, the posture is recorded as the proof-leg-windows-only policy claim in proofs.json rather than left undeclared."
     }
   },
   "flags": {
