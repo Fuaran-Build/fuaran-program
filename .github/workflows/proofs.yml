@@ -20,13 +20,15 @@ name: proofs
 # seed. The pin, the `--z3rlimit` margin and this repetition are what stand in.
 #
 # ── Why windows-latest ───────────────────────────────────────────────────────
-# `proofs/fstar-pin.json` carries a verified SHA-256 for the Windows asset and an
-# EMPTY one for Linux, because nothing has run this leg on Linux and a hash
-# recorded as if it were verified is worse than an absent one. `check.ps1`
-# refuses a platform whose hash is empty and says so. Pinning a Linux hash is how
-# this moves to a cheaper runner, not editing this line - and the `linux-pin` job
-# at the foot of this file (Phase 1848.D, workflow_dispatch only) is how the hash
-# gets measured rather than asserted.
+# `proofs/fstar-pin.json` carried a verified SHA-256 for the Windows asset and an
+# EMPTY one for Linux until 2026-09-22, because nothing had run this leg on Linux
+# and a hash recorded as if it were verified is worse than an absent one. The
+# `linux-pin` job at the foot of this file (Phase 1848.D, workflow_dispatch only)
+# measured it - green on ubuntu-latest, three cold runs, every extraction
+# byte-identical - so the hash is recorded and that job now VERIFIES it. This job
+# staying on windows-latest is therefore a CHOICE now rather than a refusal;
+# moving it to a cheaper runner is a separate deliberate act, and editing this
+# line is not how it happens.
 #
 # ── Step 6 needs the corpus; steps 1-5 do not ────────────────────────────────
 # The differential host compares the oracle against production over the program
