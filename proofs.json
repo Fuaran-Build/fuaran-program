@@ -10,38 +10,33 @@
     "A `policy` entry is an exclusion carrying its reason, because an unstated exclusion reads,",
     "to whoever finds it later, as a claim that failed.",
     "",
-    "A `proved` entry names its lemma and the prover pin so an evidence check can resolve the",
-    "lemma in the named module and the pin in the named file. Nothing here is checkable by",
+    "A `proved` entry names ONE theorem, its model and the prover pin, so an evidence check can",
+    "resolve the theorem in the named model and the pin in the named file. Nothing here is checkable by",
     "reading this file alone, and that is the intended shape: the manifest says where to look,",
     "the proof leg (proofs/check.ps1) is what looks.",
     "",
     "Every later proof phase in this repository appends its claims here rather than starting a",
-    "second manifest."
+    "second manifest.",
+    "",
+    "The schema is the one `roadmapctl proofs` decodes, shared by every ladder in the estate: `claim`,",
+    "and evidence {theorem, model, prover} | {family, seeds} | {assumption} | {document} by level. A",
+    "lemma a theorem leans on is listed under `supporting`; one that is a claim in its own right gets",
+    "its own row. Other keys (mitigation, reason, note, cases) are commentary the registry ignores."
   ],
   "kind": "proofs",
   "version": 1,
-  "subject": "the proved models under proofs/: the shared bounded fold — BoundedActions.runBoundedActionWith, the one interpreter every placement runs, over the closed Action union, its State store, its closure-free client effects and its diagnostics (Phase 1715); and the interaction budget — Budget.satAdd/satMul, Budget.actionCascadeCost, Budget.treeCost and the G2 stage of BoundedDriver.step that refuses on them (Phase 1716). Bounded code and bounded cost, the two halves of running an untrusted generated tree on shared infrastructure.",
-  "provers": {
-    "fstar-pinned": {
-      "tool": "fstar",
-      "pin": "proofs/fstar-pin.json",
-      "version": "v2026.09.06",
-      "solver": "z3 4.13.3",
-      "leg": "proofs/check.ps1",
-      "reproducibility": "proof hints no longer exist in this prover, so the pin, a margin on --z3rlimit, and --quake 3 over three cold runs are what stand in for them"
-    }
-  },
+  "subject": "Fuaran-Program",
+  "$scope": "the proved models under proofs/: the shared bounded fold — BoundedActions.runBoundedActionWith, the one interpreter every placement runs, over the closed Action union, its State store, its closure-free client effects and its diagnostics (Phase 1715); and the interaction budget — Budget.satAdd/satMul, Budget.actionCascadeCost, Budget.treeCost and the G2 stage of BoundedDriver.step that refuses on them (Phase 1716). Bounded code and bounded cost, the two halves of running an untrusted generated tree on shared infrastructure.",
   "claims": [
     {
       "id": "fold-totality",
       "level": "proved",
-      "statement": "The fold is defined on every arm of the closed Action union — no wildcard, no partial match, no throw — and one step that is neither the composition arm nor a call the placement answered is characterised structurally: the placement accumulation is untouched, the store is either unchanged or written at exactly one key the host-reserved predicate rejects, and at most one client effect and at most one diagnostic are emitted.",
+      "phase": "Phase 1715",
+      "claim": "The fold is defined on every arm of the closed Action union — no wildcard, no partial match, no throw — and one step that is neither the composition arm nor a call the placement answered is characterised structurally: the placement accumulation is untouched, the store is either unchanged or written at exactly one key the host-reserved predicate rejects, and at most one client effect and at most one diagnostic are emitted.",
       "evidence": {
-        "prover": "fstar-pinned",
-        "module": "proofs/BoundedFold.fst",
-        "lemmas": [
-          "run_total"
-        ],
+        "theorem": "run_total",
+        "model": "proofs/BoundedFold.fst",
+        "prover": "proofs/fstar-pin.json",
         "definitions": [
           "run",
           "run_many",
@@ -53,12 +48,13 @@
     {
       "id": "no-closure-invocation",
       "level": "proved",
-      "statement": "Two actions differing ONLY in the closures they carry produce identical outcomes and identical placement accumulations. A fold that invoked a carried closure could not satisfy this, so the safety property the interpreter's own header states — a generated tree running through this fold has no arbitrary-code-execution surface — is a theorem rather than a comment.",
+      "phase": "Phase 1715",
+      "claim": "Two actions differing ONLY in the closures they carry produce identical outcomes and identical placement accumulations. A fold that invoked a carried closure could not satisfy this, so the safety property the interpreter's own header states — a generated tree running through this fold has no arbitrary-code-execution surface — is a theorem rather than a comment.",
       "evidence": {
-        "prover": "fstar-pinned",
-        "module": "proofs/BoundedFold.fst",
-        "lemmas": [
-          "run_no_closure",
+        "theorem": "run_no_closure",
+        "model": "proofs/BoundedFold.fst",
+        "prover": "proofs/fstar-pin.json",
+        "supporting": [
           "run_no_closure_list",
           "describe_ignores_closures"
         ],
@@ -68,12 +64,13 @@
     {
       "id": "chain-homomorphism",
       "level": "proved",
-      "statement": "Running the concatenation of two operation lists equals running the first and then the second against the store the first left, with the effect lists and the diagnostic lists concatenated in order and the placement threaded through. This is DECISIONS.md D7's splice property — a nested call sees the writes before it and is seen by the writes after it — stated as an equation.",
+      "phase": "Phase 1715",
+      "claim": "Running the concatenation of two operation lists equals running the first and then the second against the store the first left, with the effect lists and the diagnostic lists concatenated in order and the placement threaded through. This is DECISIONS.md D7's splice property — a nested call sees the writes before it and is seen by the writes after it — stated as an equation.",
       "evidence": {
-        "prover": "fstar-pinned",
-        "module": "proofs/BoundedFold.fst",
-        "lemmas": [
-          "chain_homomorphism",
+        "theorem": "chain_homomorphism",
+        "model": "proofs/BoundedFold.fst",
+        "prover": "proofs/fstar-pin.json",
+        "supporting": [
           "chain_action_homomorphism"
         ]
       }
@@ -81,25 +78,37 @@
     {
       "id": "host-reserved-keys-untouched",
       "level": "proved",
-      "statement": "The store the fold returns agrees with the store it was given at every host-reserved State key, for any handler arm that preserves them. The only write the fold performs is the SetState arm's, and that arm refuses a reserved key before reaching it.",
+      "phase": "Phase 1715",
+      "claim": "The store the fold returns agrees with the store it was given at every host-reserved State key, for any handler arm that preserves them. The only write the fold performs is the SetState arm's, and that arm refuses a reserved key before reaching it.",
       "evidence": {
-        "prover": "fstar-pinned",
-        "module": "proofs/BoundedFold.fst",
-        "lemmas": [
-          "reserved_untouched",
-          "reserved_untouched_list",
-          "inert_preserves_reserved"
+        "theorem": "reserved_untouched",
+        "model": "proofs/BoundedFold.fst",
+        "prover": "proofs/fstar-pin.json",
+        "supporting": [
+          "reserved_untouched_list"
         ],
         "note": "the side condition is about the placement SEAM, which returns a store of its own and which the fold therefore cannot bound; `inert_preserves_reserved` discharges it for the two placements that run no handlers, which is what keeps the theorem from being a conditional nobody has met"
       }
     },
     {
+      "id": "inert-placements-preserve-reserved",
+      "level": "proved",
+      "phase": "Phase 1715",
+      "claim": "The two placements that run no handlers meet `host-reserved-keys-untouched`'s side condition: their handler arm preserves every host-reserved State key. This is what keeps that theorem from being a conditional nobody has met.",
+      "evidence": {
+        "theorem": "inert_preserves_reserved",
+        "model": "proofs/BoundedFold.fst",
+        "prover": "proofs/fstar-pin.json"
+      }
+    },
+    {
       "id": "model-agrees-with-shipped-code",
       "level": "tested",
-      "statement": "The extracted model and the shipped interpreter produce the same store, the same client-effect list and the same diagnostics for every action the conformance corpus's driver-semantics family contains, for an arm-complete corpus naming all fourteen arms and every refusal path inside the three arms that have one, and across the placement seam when a handler answers. This is the only thing that says the proved model is about the code that runs.",
+      "phase": "Phase 1715",
+      "claim": "The extracted model and the shipped interpreter produce the same store, the same client-effect list and the same diagnostics for every action the conformance corpus's driver-semantics family contains, for an arm-complete corpus naming all fourteen arms and every refusal path inside the three arms that have one, and across the placement seam when a handler answers. This is the only thing that says the proved model is about the code that runs.",
       "evidence": {
+        "family": "Phase 1715 - the proved bounded fold as oracle",
         "host": "tests/Fuaran.Program.Parity.Tests/ProofOracleTests.fs",
-        "list": "Phase 1715 - the proved bounded fold as oracle",
         "cases": [
           "the driver-semantics family yields actions to compare",
           "the oracle agrees with production over the driver-semantics family",
@@ -113,67 +122,107 @@
     {
       "id": "binding-resolution-axiomatised",
       "level": "assumed",
-      "statement": "Binding resolution is a total pure arrow the model takes as a parameter, never a definition it owns: resolveJVal, resolveScalarText, resolveTextSource and the i18n catalogue probe are assumed to terminate and to answer the same way for the same store. Nothing proved here depends on WHAT any of them answers — the theorems hold for every total arrow — only on the fold composing them where it does.",
+      "phase": "Phase 1715",
+      "claim": "Binding resolution is a total pure arrow the model takes as a parameter, never a definition it owns: resolveJVal, resolveScalarText, resolveTextSource and the i18n catalogue probe are assumed to terminate and to answer the same way for the same store. Nothing proved here depends on WHAT any of them answers — the theorems hold for every total arrow — only on the fold composing them where it does.",
+      "class": "model-bridge",
+      "evidence": {
+        "assumption": "resolveJVal, resolveScalarText, resolveTextSource and the i18n catalogue probe are total pure arrows: they terminate and answer the same way for the same store"
+      },
       "mitigation": "the differential host wires each arrow to production's own implementation, so the only thing that can disagree in the comparison is the fold; modelling a resolver instead would introduce a second implementation free to drift from the shipped one"
     },
     {
       "id": "url-floor-axiomatised",
       "level": "assumed",
-      "statement": "The renderer URL floor (Sanitize.sanitizeUrl) is a total pure arrow the model takes as a parameter. The fold is proved to consult it on the RESOLVED route and to emit no navigation when it declines; nothing here is a claim about which URLs it declines.",
+      "phase": "Phase 1715",
+      "claim": "The renderer URL floor (Sanitize.sanitizeUrl) is a total pure arrow the model takes as a parameter. The fold is proved to consult it on the RESOLVED route and to emit no navigation when it declines; nothing here is a claim about which URLs it declines.",
+      "class": "model-bridge",
+      "evidence": {
+        "assumption": "Sanitize.sanitizeUrl is a total pure arrow"
+      },
       "mitigation": "the floor is the tree wire specification's, and this repository states it does not narrow it; the arm-complete differential corpus includes a route the floor refuses and a route it admits, so a fold that stopped consulting it would be caught"
     },
     {
       "id": "host-reserved-predicate-axiomatised",
       "level": "assumed",
-      "statement": "StateKeys.isHostReserved and the namespace prefix it names are a total pure arrow and a constant the model takes as parameters. `host-reserved-keys-untouched` is quantified over every such predicate, so it says the fold refuses whatever that predicate rejects — not which keys are reserved.",
+      "phase": "Phase 1715",
+      "claim": "StateKeys.isHostReserved and the namespace prefix it names are a total pure arrow and a constant the model takes as parameters. `host-reserved-keys-untouched` is quantified over every such predicate, so it says the fold refuses whatever that predicate rejects — not which keys are reserved.",
+      "class": "model-bridge",
+      "evidence": {
+        "assumption": "StateKeys.isHostReserved is a total pure predicate and the namespace prefix it names is a constant"
+      },
       "mitigation": "the differential host supplies the shipped predicate and the shipped prefix, and the arm-complete corpus writes a key under it"
     },
     {
       "id": "placement-seam",
       "level": "assumed",
-      "statement": "What a call action MEANS is the placement's, supplied through the handler arm. The model proves only that WHERE a call is recognised is the fold, at every depth, and that an answer is threaded in place; the store, the effects and the diagnostics an arm returns are its own, and the fold neither constrains nor inspects them.",
+      "phase": "Phase 1715",
+      "claim": "What a call action MEANS is the placement's, supplied through the handler arm. The model proves only that WHERE a call is recognised is the fold, at every depth, and that an answer is threaded in place; the store, the effects and the diagnostics an arm returns are its own, and the fold neither constrains nor inspects them.",
+      "class": "premise",
+      "evidence": {
+        "assumption": "what a call action means is the placement's: the store, effects and diagnostics a handler arm returns are its own, and the fold neither constrains nor inspects them"
+      },
       "mitigation": "the structural characterisation in `run_total` names the answered-call case explicitly and excludes it rather than quietly covering it, and `reserved_untouched` carries the seam's obligation as a stated side condition that the inert arm discharges"
     },
     {
       "id": "toolchain-trusted",
       "level": "assumed",
-      "statement": "The extractor and the F# compiler are trusted. The theorem is about the model; the code that runs in the differential is the extraction, and nothing verifies that the extraction preserves semantics.",
+      "phase": "Phase 1715",
+      "claim": "The extractor and the F# compiler are trusted. The theorem is about the model; the code that runs in the differential is the extraction, and nothing verifies that the extraction preserves semantics.",
+      "class": "premise",
+      "evidence": {
+        "assumption": "the F* extractor and the F# compiler are correct"
+      },
       "mitigation": "the differential host runs the EXTRACTION, not the model, so an extraction defect that changes behaviour on any corpus action is caught there; and proofs/check.ps1 byte-diffs the committed extraction against a fresh one on every run, so the file the repository compiles is the file the prover emitted"
     },
     {
       "id": "durable-journal",
       "level": "policy",
-      "statement": "The durable journal is OUT of the theorem.",
+      "phase": "Phase 1715",
+      "claim": "The durable journal is OUT of the theorem.",
+      "evidence": {
+        "document": "proofs/README.md"
+      },
       "reason": "it is a placement concern — what a session persists between interactions and how a replay reconstructs it — and the fold is placement-neutral by construction. A model that reached into it would be modelling one placement and calling the result a property of the interpreter."
     },
     {
       "id": "browser-placement",
       "level": "policy",
-      "statement": "The browser placement's loop is OUT of the theorem.",
+      "phase": "Phase 1715",
+      "claim": "The browser placement's loop is OUT of the theorem.",
+      "evidence": {
+        "document": "proofs/README.md"
+      },
       "reason": "the theorems are about the shared fold, which the browser placement runs unchanged; everything ABOVE it there — the transport, the effect performer, the DOM patch application — is neither modelled nor claimed. A reader should take 'the fold is total and invokes no closure' and nothing more from this about what a browser does."
     },
     {
       "id": "session-cells",
       "level": "policy",
-      "statement": "The per-connection session cells (BoundedConnection) are OUT of the theorem.",
+      "phase": "Phase 1715",
+      "claim": "The per-connection session cells (BoundedConnection) are OUT of the theorem.",
+      "evidence": {
+        "document": "proofs/README.md"
+      },
       "reason": "same boundary as the journal. The fold takes a store and returns a store; who owns that store between interactions, and what concurrency it is subject to, is the placement's question and is not answered anywhere in proofs/."
     },
     {
       "id": "resource-bounds",
       "level": "policy",
-      "statement": "The per-interaction resource budget is OUT of the bounded-fold theorem (Phase 1715).",
+      "phase": "Phase 1715",
+      "claim": "The per-interaction resource budget is OUT of the bounded-fold theorem (Phase 1715).",
+      "evidence": {
+        "document": "proofs/README.md"
+      },
       "reason": "bounded CODE and bounded COST are the two halves of running an untrusted tree on shared infrastructure, and only the first is proved by proofs/BoundedFold.fst. The budget is the driver's (Budget.fs). It is now proved SEPARATELY — the Phase 1716 claims below, from proofs/Budget.fst — and the two models are joined by nothing but the directory they sit in: no law of either follows from the other, and reading one as covering the other would be the more dangerous of the two mistakes."
     },
     {
       "id": "budget-saturating-arithmetic",
       "level": "proved",
-      "statement": "The saturating add and multiply are monotone in both arguments, never answer below zero, never answer above the saturation bound, and agree with ordinary arithmetic everywhere below it. A cost is a budget comparand, so an overflow that wrapped negative would read as cheap and admit the very tree the budget exists to refuse; monotonicity is the other half of the same requirement, since a bigger tree must not price smaller.",
+      "phase": "Phase 1716",
+      "claim": "The saturating add and multiply are monotone in both arguments, never answer below zero, never answer above the saturation bound, and agree with ordinary arithmetic everywhere below it. A cost is a budget comparand, so an overflow that wrapped negative would read as cheap and admit the very tree the budget exists to refuse; monotonicity is the other half of the same requirement, since a bigger tree must not price smaller.",
       "evidence": {
-        "prover": "fstar-pinned",
-        "module": "proofs/Budget.fst",
-        "lemmas": [
-          "sat_monotone"
-        ],
+        "theorem": "sat_monotone",
+        "model": "proofs/Budget.fst",
+        "prover": "proofs/fstar-pin.json",
         "definitions": [
           "sat_add",
           "sat_mul"
@@ -184,12 +233,13 @@
     {
       "id": "treecost-exact-below-ceiling",
       "level": "proved",
-      "statement": "When treeCost's answer is at or below the ceiling it is the EXACT cost — equal to what the same walk with no ceiling at all would have returned. The early stop that keeps the pricing function from itself becoming unbounded work costs nothing in the case where the number is used as a number, which matters because the session records it as NodeCount and prices later events against it.",
+      "phase": "Phase 1716",
+      "claim": "When treeCost's answer is at or below the ceiling it is the EXACT cost — equal to what the same walk with no ceiling at all would have returned. The early stop that keeps the pricing function from itself becoming unbounded work costs nothing in the case where the number is used as a number, which matters because the session records it as NodeCount and prices later events against it.",
       "evidence": {
-        "prover": "fstar-pinned",
-        "module": "proofs/Budget.fst",
-        "lemmas": [
-          "treecost_exact_below_ceiling",
+        "theorem": "treecost_exact_below_ceiling",
+        "model": "proofs/Budget.fst",
+        "prover": "proofs/fstar-pin.json",
+        "supporting": [
           "walk_agrees_below",
           "walk_free_bounds"
         ],
@@ -204,12 +254,13 @@
     {
       "id": "treecost-strict-above-ceiling",
       "level": "proved",
-      "statement": "When the exact cost of a tree is above the ceiling, treeCost's answer is above the ceiling too. The early stop never turns a refusal into an admission — the only direction that matters, and the one an optimisation to a budget function could silently break.",
+      "phase": "Phase 1716",
+      "claim": "When the exact cost of a tree is above the ceiling, treeCost's answer is above the ceiling too. The early stop never turns a refusal into an admission — the only direction that matters, and the one an optimisation to a budget function could silently break.",
       "evidence": {
-        "prover": "fstar-pinned",
-        "module": "proofs/Budget.fst",
-        "lemmas": [
-          "treecost_strict_above_ceiling",
+        "theorem": "treecost_strict_above_ceiling",
+        "model": "proofs/Budget.fst",
+        "prover": "proofs/fstar-pin.json",
+        "supporting": [
           "walk_strict_above"
         ],
         "note": "the asymmetry with treecost-exact-below-ceiling is deliberate: above the ceiling the answer is only ever 'more than this', which is all a refusal needs"
@@ -218,12 +269,13 @@
     {
       "id": "treecost-terminates",
       "level": "proved",
-      "statement": "The tree walk terminates on every finite tree, and visits at most as many nodes as the tree has AND at most ceiling+1 of them. Termination is carried by the decreases clause on the walk itself — a measure over the pending stack, not a depth counter — and the second bound is the ceiling acting as fuel: a tree ten thousand times over budget costs the same as one marginally over.",
+      "phase": "Phase 1716",
+      "claim": "The tree walk terminates on every finite tree, and visits at most as many nodes as the tree has AND at most ceiling+1 of them. Termination is carried by the decreases clause on the walk itself — a measure over the pending stack, not a depth counter — and the second bound is the ceiling acting as fuel: a tree ten thousand times over budget costs the same as one marginally over.",
       "evidence": {
-        "prover": "fstar-pinned",
-        "module": "proofs/Budget.fst",
-        "lemmas": [
-          "treecost_terminates",
+        "theorem": "treecost_terminates",
+        "model": "proofs/Budget.fst",
+        "prover": "proofs/fstar-pin.json",
+        "supporting": [
           "walk_steps_bounded",
           "walk_steps_le_size",
           "node_cost_bounds"
@@ -240,13 +292,12 @@
     {
       "id": "budget-breach-pure",
       "level": "proved",
-      "statement": "A step the budget refuses returns the session it was given — not an equal one, the same one — with no patches, no effects, and a named refusal carrying its reason. Never an exception: the model has no exceptions, so the Tot effect on the modelled step is what makes production's total signature a thing the prover checks rather than a convention a reader must notice.",
+      "phase": "Phase 1716",
+      "claim": "A step the budget refuses returns the session it was given — not an equal one, the same one — with no patches, no effects, and a named refusal carrying its reason. Never an exception: the model has no exceptions, so the Tot effect on the modelled step is what makes production's total signature a thing the prover checks rather than a convention a reader must notice.",
       "evidence": {
-        "prover": "fstar-pinned",
-        "module": "proofs/Budget.fst",
-        "lemmas": [
-          "breach_pure"
-        ],
+        "theorem": "breach_pure",
+        "model": "proofs/Budget.fst",
+        "prover": "proofs/fstar-pin.json",
         "definitions": [
           "step",
           "breached",
@@ -259,10 +310,11 @@
     {
       "id": "budget-model-agrees-with-shipped-code",
       "level": "tested",
-      "statement": "The extracted budget model and the shipped pricing functions return the SAME INTEGER for the trees the bounded driver's own suite drives and for generated trees — fans, chains, every data-bearing kind, a payload at the counting cap, a payload past it, and a chart whose multiply saturates — each priced at every ceiling around its own exact cost; the same for the action cascade cost; and the model's gate agrees with BoundedDriver.step's G2 stage on the verdict, on the refusal's reason verbatim, and on the session coming back by reference.",
+      "phase": "Phase 1716",
+      "claim": "The extracted budget model and the shipped pricing functions return the SAME INTEGER for the trees the bounded driver's own suite drives and for generated trees — fans, chains, every data-bearing kind, a payload at the counting cap, a payload past it, and a chart whose multiply saturates — each priced at every ceiling around its own exact cost; the same for the action cascade cost; and the model's gate agrees with BoundedDriver.step's G2 stage on the verdict, on the refusal's reason verbatim, and on the session coming back by reference.",
       "evidence": {
+        "family": "Phase 1716 - the proved budget as oracle",
         "host": "tests/Fuaran.Program.Parity.Tests/ProofOracleTests.fs",
-        "list": "Phase 1716 - the proved budget as oracle",
         "cases": [
           "the generated corpus straddles the ceiling in both directions",
           "the oracle agrees with production on the bounded driver's own trees",
@@ -278,31 +330,54 @@
     {
       "id": "lazy-payload-cap-assumed",
       "level": "assumed",
-      "statement": "The counted rows of a data-bearing node's Binding.Static payload are modelled as a LIST with a counting cap. Production's payload is a seq, which may be lazy and may be unbounded, and Seq.truncate is what bounds the reading of it. So what is proved is that the cap is applied and that the cost it produces is bounded by it — never that a seq is finite, and never that reading one terminates.",
+      "phase": "Phase 1716",
+      "claim": "The counted rows of a data-bearing node's Binding.Static payload are modelled as a LIST with a counting cap. Production's payload is a seq, which may be lazy and may be unbounded, and Seq.truncate is what bounds the reading of it. So what is proved is that the cap is applied and that the cost it produces is bounded by it — never that a seq is finite, and never that reading one terminates.",
+      "class": "model-bridge",
+      "evidence": {
+        "assumption": "a Binding.Static payload read through Seq.truncate behaves as the capped list the model counts"
+      },
       "mitigation": "the differential host's corpus includes a payload AT the cap and one PAST it, and reads the cap out of the extraction rather than restating production's private literal, so a divergence between the two is reported rather than papered over"
     },
     {
       "id": "int32-bound-assumed",
       "level": "assumed",
-      "statement": "The model is over unbounded integers; production is over Int32, with the ceiling's upper limit at Int32.MaxValue. The two coincide on every input production can be handed — an int64 sum and an int64 product of two Int32s both fit with room to spare, which is exactly what production computes before narrowing — so the model is over a WIDER domain than production rather than a different one. Budget.actionCascadeCost is the one function with no saturation at all, in the model or in production: what bounds it there is the Int32 range, and that is this rung rather than the proved one.",
+      "phase": "Phase 1716",
+      "claim": "The model is over unbounded integers; production is over Int32, with the ceiling's upper limit at Int32.MaxValue. The two coincide on every input production can be handed — an int64 sum and an int64 product of two Int32s both fit with room to spare, which is exactly what production computes before narrowing — so the model is over a WIDER domain than production rather than a different one. Budget.actionCascadeCost is the one function with no saturation at all, in the model or in production: what bounds it there is the Int32 range, and that is this rung rather than the proved one.",
+      "class": "model-bridge",
+      "evidence": {
+        "assumption": "the model's unbounded integers agree with production's Int32 arithmetic on every input production can be handed"
+      },
       "mitigation": "the saturation bound is a parameter, so every proved law is quantified over it and holds at Int32.MaxValue as a special case; the differential supplies Int32.MaxValue and includes a tree whose cost saturates and one whose node cost saturates inside the multiply"
     },
     {
       "id": "node-classification-sampled",
       "level": "assumed",
-      "statement": "Which NodeKind is data-bearing, and which of its fields carries the rows and the weights, is supplied to the model by the differential host as a cost shape. NodeKind has scores of arms and Budget.nodeCost reads four of them; a model that carried the union would be modelling the tree vocabulary rather than the budget. The consequence, stated plainly: a production change that began weighting a fifth kind would be invisible to the differential until the host's projection gained the kind too.",
+      "phase": "Phase 1716",
+      "claim": "Which NodeKind is data-bearing, and which of its fields carries the rows and the weights, is supplied to the model by the differential host as a cost shape. NodeKind has scores of arms and Budget.nodeCost reads four of them; a model that carried the union would be modelling the tree vocabulary rather than the budget. The consequence, stated plainly: a production change that began weighting a fifth kind would be invisible to the differential until the host's projection gained the kind too.",
+      "class": "model-bridge",
+      "evidence": {
+        "assumption": "the cost shape the differential host supplies names every NodeKind Budget.nodeCost weights, and the fields it reads"
+      },
       "mitigation": "the line is drawn where a defect is silent rather than loud — a mis-weighted kind prices visibly wrong on the first tree that contains one, where a wrapping add prices wrong only on the trees nobody tries; and the differential's corpus exercises all four kinds the projection names, so a projection that stopped matching one is caught"
     },
     {
       "id": "budget-ceilings-are-policy",
       "level": "policy",
-      "statement": "That MaxActions and MaxNodes are the RIGHT numbers is OUT of the theorem.",
+      "phase": "Phase 1716",
+      "claim": "That MaxActions and MaxNodes are the RIGHT numbers is OUT of the theorem.",
+      "evidence": {
+        "document": "proofs/README.md"
+      },
       "reason": "they are policy, set by the host per placement. Everything proved here says a tree is priced correctly against whatever number is set and refused when it exceeds it; nothing says a number is well chosen, and a proof could not."
     },
     {
       "id": "budget-wall-clock",
       "level": "policy",
-      "statement": "Wall-clock cost is OUT of the theorem.",
+      "phase": "Phase 1716",
+      "claim": "Wall-clock cost is OUT of the theorem.",
+      "evidence": {
+        "document": "proofs/README.md"
+      },
       "reason": "the budget is step- and size-based on purpose — no Stopwatch, no Date.now — so that the same tree and event sequence bound identically at every placement and are unit-testable headlessly. It bounds WORK, not time. A tree within budget can still be slow on a slow machine, and reading these laws as a latency guarantee would be reading them as something they were deliberately not built to be."
     }
   ]
