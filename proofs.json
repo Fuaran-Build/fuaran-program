@@ -18,10 +18,10 @@
     "Every later proof phase in this repository appends its claims here rather than starting a",
     "second manifest.",
     "",
-    "The schema is the one `roadmapctl proofs` decodes, shared by every ladder in the estate: `claim`,",
-    "and evidence {theorem, model, prover} | {family, seeds} | {assumption} | {document} by level. A",
-    "lemma a theorem leans on is listed under `supporting`; one that is a claim in its own right gets",
-    "its own row. Other keys (mitigation, reason, note, cases) are commentary the registry ignores."
+    "The schema is Fuaran-Core's proofs/kit/LADDER.md: `claim`, and evidence {theorem, model,",
+    "prover, supporting} | {family, cases, host, model, artifact, seeds} | {assumption} | {document} by",
+    "level. A lemma a theorem leans on is listed under `supporting` and checked like the theorem; one",
+    "that is a claim in its own right gets its own row. Other keys (mitigation, reason, note) are commentary."
   ],
   "kind": "proofs",
   "version": 1,
