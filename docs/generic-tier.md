@@ -388,7 +388,7 @@ the direction D5 already chose.
   - "Release together" becomes a cross-repository ordering rule (core, then adapter), not a single
     act.
 
-### Recommendation: Option A — proposed, pending operator ratification
+### Recommendation: Option A — ratified by the operator, 2026-09-27
 
 Option A is the smaller correct change. It keeps the dependency direction D5 chose, confined to two
 leaf packages, and it keeps the behaviour's tests beside the behaviour. Phase 1896's gate test is
@@ -399,7 +399,8 @@ boundary.
 
 The recommendation changes to B if the operator's intent is that **this repository names no UI
 package at all**, and not only that the core does. That is a judgement about what "separate" means,
-not about engineering cost, and it is why D18 records the home as proposed rather than decided.
+not about engineering cost. The operator ratified A on 2026-09-27: the core must not reference UI,
+and the two leaf adapter packages in this repository may.
 
 ---
 

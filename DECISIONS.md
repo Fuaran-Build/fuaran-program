@@ -682,7 +682,7 @@ packages. The remainder of D5 holds unchanged: **no `Fuaran.UI.*` package refere
 `Fuaran.Program.*`.** An application in the UI tier that consumes this domain is a consumer, not a
 package, and D5 never ruled that out.
 
-**The adapter's home — PROPOSED, pending operator ratification.** The adapter is two packages, split
+**The adapter's home — A, ratified by the operator on 2026-09-27.** The adapter is two packages, split
 along the core's own Fable/.NET line. One is Fable-clean and holds the UI witness plus the UI
 transport loop (event validation, `DomPatch` lowering, the live connection, the client runtime). The
 other is .NET-only and holds the server placement's UI event step. There are two candidate homes:
@@ -697,11 +697,11 @@ other is .NET-only and holds the server placement's UI event step. There are two
   that owns the behaviour. Keeping them here beside a UI-tier adapter would compile the core twice,
   which is D5's skew class.
 
-**Recommended: A.** It is the smaller correct change, and moving later from A to B moves two leaf
+**Recommended, and ratified: A.** It is the smaller correct change, and moving later from A to B moves two leaf
 packages, while moving from B back to A would move tests and a certified wire family. The
 recommendation flips to B if "separate" means this repository names no UI package *at all*, rather
-than only that its core does not. That is the operator's judgement, and it is why this clause is
-proposed rather than decided. **Phase 1896 does not depend on the choice.** It needs only a test
+than only that its core does not. That was the operator's judgement; the operator ratified A on
+2026-09-27 (the core must not reference UI; two leaf adapter packages here may). **Phase 1896 does not depend on the choice.** It needs only a test
 witness. Phase 1897 builds the adapter wherever this clause lands.
 
 **Consequences.**
