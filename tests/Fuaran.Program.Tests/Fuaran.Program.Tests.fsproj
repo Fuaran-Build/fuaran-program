@@ -7,10 +7,19 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="SmokeTests.fs" />
+    <!-- Phase 1896: the generic core at a NON-UI witness, and the boundary test
+         that keeps the core UI-free. This project references the three core
+         packages and no UI-tier package, so nothing UI-typed is in its graph. -->
+    <Compile Include="ToyDomain.fs" />
+    <Compile Include="GenericityTests.fs" />
+    <Compile Include="CoreBoundaryTests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\Fuaran.Program\Fuaran.Program.fsproj" />
+    <ProjectReference Include="..\..\src\Fuaran.Program.Bounded\Fuaran.Program.Bounded.fsproj" />
+    <ProjectReference Include="..\..\src\Fuaran.Program.Runtime\Fuaran.Program.Runtime.fsproj" />
+    <ProjectReference Include="..\..\src\Fuaran.Program.Server\Fuaran.Program.Server.fsproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="FSharp.Core" />

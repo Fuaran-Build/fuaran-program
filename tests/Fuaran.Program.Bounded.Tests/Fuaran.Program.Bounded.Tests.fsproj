@@ -12,6 +12,7 @@
     <Compile Include="DemandedTests.fs" />
     <Compile Include="DemandedDecodeTests.fs" />
     <Compile Include="SignedEnvelopeTests.fs" />
+    <Compile Include="PreCutEnvelopeTests.fs" />
     <!-- Program.fs is the Expecto entry point and stays last. -->
     <Compile Include="Program.fs" />
   </ItemGroup>
