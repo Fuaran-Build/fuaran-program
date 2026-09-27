@@ -49,16 +49,17 @@
   <ItemGroup>
     <ProjectReference Include="..\Fuaran.Program.Bounded\Fuaran.Program.Bounded.fsproj" />
   </ItemGroup>
-  <!-- The UI-typed first instantiation (DECISIONS.md D4): this package consumes
-       the UI tier's published packages, and the dependency runs one way only. -->
+  <!-- Domain-generic since Phase 1896 (DECISIONS.md D18): the handler loop,
+       the server-effect vocabulary and its codecs are written over a domain's
+       witness, and this package references NO UI-tier package — a test reads
+       this file, its sources and the resolved graph to keep it that way. What
+       it uses of the substrate it names directly: the JSON value and canonical
+       form (Wire), the columnar table (Column), and the evaluator a server
+       read runs (DataFrame). -->
   <ItemGroup>
     <PackageReference Include="FSharp.Core" />
-    <PackageReference Include="Fuaran.UI" />
-    <PackageReference Include="Fuaran.UI.Ops.Abstractions" />
-    <PackageReference Include="Fuaran.UI.Ops" />
-    <PackageReference Include="Fuaran.UI.Renderer.Core" />
-    <PackageReference Include="Fuaran.UI.OpStream.Abstractions" />
-    <PackageReference Include="Fuaran.UI.OpStream.Replay" />
-    <PackageReference Include="Fuaran.UI.ServerDriven" />
+    <PackageReference Include="Fuaran.Core.Wire" />
+    <PackageReference Include="Fuaran.Core.Column" />
+    <PackageReference Include="Fuaran.Core.DataFrame" />
   </ItemGroup>
 </Project>

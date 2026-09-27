@@ -440,7 +440,7 @@ module Facets =
     /// repeated. `EmitPatch` pushes ops the caller applies to a tree it already
     /// holds; repeating it is not provably a no-op, so it takes the mutating
     /// answer rather than the flattering one.
-    let private intrinsicIdempotency (performers: PerformerFacets) (effect: ServerEffect) : IdempotencyFacet =
+    let private intrinsicIdempotency (performers: PerformerFacets) (effect: ServerEffect<'Op>) : IdempotencyFacet =
         match effect with
         | ServerEffect.RunQuery _ -> IdempotencyFacet.Idempotent
         | ServerEffect.ApplyOps _
@@ -482,7 +482,7 @@ module Facets =
     let ofEffect
         (discipline: PlacementDiscipline)
         (performers: PerformerFacets)
-        (effect: ServerEffect)
+        (effect: ServerEffect<'Op>)
         : DerivedGuarantees =
         let intrinsic = intrinsicIdempotency performers effect
 
@@ -524,7 +524,7 @@ module Facets =
     /// The effects one handler declares, in stage order. A `Compute` stage
     /// reaches no effect vocabulary at all — it is the shared fold, against the
     /// binding store — so it contributes nothing here.
-    let effectsOf (handler: Handler) : ServerEffect list =
+    let effectsOf (handler: Handler<'Action, 'Op>) : ServerEffect<'Op> list =
         handler.Stages
         |> List.choose (fun stage ->
             match stage with
@@ -535,7 +535,7 @@ module Facets =
     let ofHandler
         (discipline: PlacementDiscipline)
         (performers: PerformerFacets)
-        (handler: Handler)
+        (handler: Handler<'Action, 'Op>)
         : DerivedGuarantees =
         effectsOf handler |> List.map (ofEffect discipline performers) |> combineAll
 
@@ -543,7 +543,7 @@ module Facets =
     let ofHandlers
         (discipline: PlacementDiscipline)
         (performers: PerformerFacets)
-        (handlers: Handler seq)
+        (handlers: Handler<'Action, 'Op> seq)
         : DerivedGuarantees =
         handlers |> Seq.map (ofHandler discipline performers) |> combineAll
 
@@ -560,7 +560,7 @@ module Facets =
         (logicTree: LogicTreeRef)
         (discipline: PlacementDiscipline)
         (performers: PerformerFacets)
-        (handlers: Handler seq)
+        (handlers: Handler<'Action, 'Op> seq)
         : PlacementDeclaration option =
         ofHandlers discipline performers handlers
         |> narrowest
@@ -571,7 +571,7 @@ module Facets =
 
     /// Every host function the registration names whose idempotency the host has
     /// not declared, distinct and sorted.
-    let undeclaredPerformers (performers: PerformerFacets) (handlers: Handler seq) : string list =
+    let undeclaredPerformers (performers: PerformerFacets) (handlers: Handler<'Action, 'Op> seq) : string list =
         handlers
         |> Seq.collect effectsOf
         |> Seq.choose (fun effect ->
@@ -602,7 +602,7 @@ module Facets =
     let checkDeclaration
         (discipline: PlacementDiscipline)
         (performers: PerformerFacets)
-        (handlers: Handler seq)
+        (handlers: Handler<'Action, 'Op> seq)
         (declaration: PlacementDeclaration)
         : FacetFinding list =
         let derived = ofHandlers discipline performers handlers

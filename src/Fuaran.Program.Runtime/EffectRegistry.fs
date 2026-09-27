@@ -1,7 +1,7 @@
 namespace Fuaran.Program.Runtime
 
 open Fuaran.Core
-open Fuaran.UI.ServerDriven
+open Fuaran.Program.Bounded
 
 // ============================================================================
 //  The client host-effect seam — closed vocabulary, registered performers,
@@ -10,8 +10,10 @@ open Fuaran.UI.ServerDriven
 //  This is DECISIONS.md D3 as code, for the browser placement. Read it there
 //  rather than re-deriving it here; what this file adds is the mechanism:
 //
-//    - The effect vocabulary is a CLOSED DU (`ClientEffect`). A program tree can
-//      *name* only what that DU can express, and nothing on the wire widens it.
+//    - The effect vocabulary is a CLOSED DU — a domain's, reached through its
+//      effect witness (DECISIONS.md D18): the witness names each effect's
+//      discriminator and its destination. A program tree can *name* only what
+//      that DU can express, and nothing on the wire widens it.
 //    - Extensibility is a HOST act: an embedding host registers a named
 //      performer. Until it does, the effect has nowhere to go.
 //    - Every dispatch passes a policy gate FIRST. The gate defaults to refusing
@@ -22,7 +24,7 @@ open Fuaran.UI.ServerDriven
 //      debugged needs to tell them apart.
 //
 //  The server placement reaches the same vocabulary through a different
-//  transport: it ships `ClientEffect`s to a browser shim that performs them.
+//  transport: it ships the same effects to a browser shim that performs them.
 //  One effect vocabulary, two transports — so a host registering performers
 //  here should match the shim's behaviour arm for arm, and the parity family
 //  asserts it where the behaviour is observable.
@@ -46,9 +48,11 @@ open Fuaran.UI.ServerDriven
 //  destination is even parsed.
 //
 //  **Why the origin machinery is expressed here rather than imported.** The
-//  scheme floor IS imported — `Fuaran.UI.Renderer.Sanitize.sanitizeUrl` decides
-//  whether a URL is safe to have, and duplicating that would be a second
-//  implementation of a security decision. What is local is the ORIGIN
+//  scheme floor is the DOMAIN's — handed to `EgressPolicy.classifyWith` by the
+//  witness that owns it (the UI tier's renderer URL floor, for the UI witness)
+//  — because it decides whether a URL is safe to have, and duplicating that
+//  would be a second implementation of a security decision. What is local is
+//  the ORIGIN
 //  extraction and the allowlist, because the UI tier's matching form arrived in
 //  a version this repo does not pin (DECISIONS.md D4's deliberate lag: the pin
 //  is a visible decision, not drift). The two are written to the same rules —
@@ -107,35 +111,6 @@ type EgressPolicy =
         /// to name, so it can only be permitted wholesale, never allowlisted.
         AllowNonNetwork: bool
     }
-
-/// What an effect's payload resolves to, once the scheme floor has spoken.
-[<RequireQualifiedAccess>]
-type EffectDestination =
-    /// The effect names no destination at all (`WriteToClipboard`, `Focus`).
-    /// The discriminator gate is the whole policy for these.
-    | Absent
-    /// Same-origin: a relative route, a fragment, an empty URL. Also where
-    /// `ReadFileBody` lands — see `destinationOf`.
-    | Local
-    /// An absolute network destination at this host, normalised.
-    | Remote of host: string
-    /// A scheme with no network host for a rule to name.
-    | NonNetwork of scheme: string
-    /// The scheme floor rejected it, or it declares a network scheme with no
-    /// extractable host.
-    | Rejected
-
-module EffectDestination =
-
-    /// The log-safe name of a destination. `Remote` yields the HOST — never the
-    /// path or query, which is exactly where an exfiltrated payload sits.
-    let describe (d: EffectDestination) : string =
-        match d with
-        | EffectDestination.Absent -> "none"
-        | EffectDestination.Local -> "local"
-        | EffectDestination.Remote host -> host
-        | EffectDestination.NonNetwork scheme -> scheme + ":"
-        | EffectDestination.Rejected -> "unparseable"
 
 module EgressPolicy =
 
@@ -236,11 +211,12 @@ module EgressPolicy =
                     let n = normalizeHost h
                     if n = "" then None else Some n
 
-    /// Resolve a URL to the destination a policy reasons about. The scheme floor
-    /// runs FIRST and is the UI tier's, not a second copy of it — there is
-    /// nothing to say about where an unsafe URL points.
-    let classify (url: string) : EffectDestination =
-        match Fuaran.UI.Renderer.Sanitize.sanitizeUrl url with
+    /// Resolve a URL to the destination a policy reasons about. The scheme
+    /// floor runs FIRST and is the DOMAIN's — handed in, not a second copy of
+    /// it here: it answers the safe spelling of a URL, or `None` for one it
+    /// refuses, and there is nothing to say about where an unsafe URL points.
+    let classifyWith (floor: string -> string option) (url: string) : EffectDestination =
+        match floor url with
         | None -> EffectDestination.Rejected
         | Some safe ->
             if safe = "" then
@@ -316,53 +292,6 @@ module EgressPolicy =
                        && originMatches r.Origin host))
 
 /// Where each arm of the closed effect vocabulary sends its payload.
-module ClientEffectDestination =
-
-    /// The destination an effect reaches, by arm.
-    ///
-    /// `ReadFileBody` is `Local` rather than `Absent`, and the distinction is the
-    /// honest one rather than a convenience: the arm carries a node id, not a URL,
-    /// so there is no origin to allowlist — but the body it reads travels back to
-    /// the host that is driving the loop, which is the local origin by
-    /// construction. A policy denying local egress therefore denies it, and one
-    /// permitting local egress leaves it to the discriminator gate, which is
-    /// exactly where the decision belongs. What this seam does NOT claim is any
-    /// bound on what the host does with the body once it has it.
-    let destinationOf (effect: ClientEffect) : EffectDestination =
-        match effect with
-        // The route is what a destination policy judges; the browsing-context
-        // target the tier added beside it is not a destination and changes none
-        // of this. `Blank` opens the SAME URL in another context, so a policy
-        // that permits the origin permits it and one that refuses the origin
-        // refuses it — reading the target here would make an allowlist mean two
-        // different things depending on where the page opens, which is not a
-        // property any origin rule can express.
-        | ClientEffect.Navigate(route, _)
-        | ClientEffect.PushState route -> EgressPolicy.classify route
-        | ClientEffect.Download(url, _) -> EgressPolicy.classify url
-        | ClientEffect.ReadFileBody _ -> EffectDestination.Local
-        // `Print` is `Absent` for the strongest form of the reason above: it is
-        // payload-free, so there is no URL to classify, no node to read from,
-        // and nothing that travels anywhere. It reaches the reader's own machine
-        // and reports nothing back — not whether they printed, not what they
-        // chose. The discriminator gate still governs whether it runs at all, an
-        // unbidden print dialogue being host-observable, and that is exactly the
-        // decision `Absent` defers to rather than pre-empts.
-        //
-        // `Confirm` joins them, and it is the arm most likely to be misread as
-        // something else. It carries a prompt the author wrote and an opaque
-        // token, asks the reader a question, and sends nothing anywhere: the
-        // answer returns through the ordinary event channel, and the
-        // continuation it may unlock is dispatched separately and meets its OWN
-        // destination check when it does. So the egress question has no subject
-        // here — classifying the confirmation by where its continuation might
-        // later go would judge one act by another act's destination, and would
-        // have to guess at a continuation this arm does not carry.
-        | ClientEffect.Print
-        | ClientEffect.WriteToClipboard _
-        | ClientEffect.Confirm _
-        | ClientEffect.Focus _ -> EffectDestination.Absent
-
 /// Why an effect did not run. Every arm is recorded through `OnDenied`; the
 /// distinctions matter to whoever is debugging an emission, because they say
 /// different things — "this host does not offer that capability", "this host
@@ -448,12 +377,12 @@ module EffectDenial =
             sprintf "effect '%s' was not performed: destination '%s' is not declared for it on this host" name origin
 
 /// A closed, default-deny registry of host-performed effects.
-type EffectRegistry =
+type EffectRegistry<'Effect> =
     {
         /// Performers by effect discriminator (`ClientEffect.kind`). An effect
         /// whose name is absent is `Unregistered` — never performed, always
         /// recorded.
-        Performers: Map<string, ClientEffect -> unit>
+        Performers: Map<string, 'Effect -> unit>
         /// The policy gate, consulted BEFORE any performer runs. Takes the
         /// effect's discriminator so a host can allow `Navigate` and refuse
         /// `WriteToClipboard` without inspecting payloads.
@@ -479,7 +408,7 @@ module EffectRegistry =
     /// dropped. This is the DEFAULT a host starts from — a host that wires
     /// nothing performs nothing, which is the only defensible default for a
     /// loop whose whole premise is that the tree is untrusted.
-    let denyAll: EffectRegistry =
+    let denyAll<'Effect> : EffectRegistry<'Effect> =
         { Performers = Map.empty
           Gate = fun _ -> false
           Egress = EgressPolicy.denyNonLocal
@@ -490,21 +419,30 @@ module EffectRegistry =
     /// `"Download"`, `"ReadFileBody"`). Registering does NOT permit — the gate
     /// still decides. The two are separate on purpose: a host can register its
     /// whole capability set once and vary the policy per session.
-    let register (name: string) (performer: ClientEffect -> unit) (registry: EffectRegistry) : EffectRegistry =
+    let register
+        (name: string)
+        (performer: 'Effect -> unit)
+        (registry: EffectRegistry<'Effect>)
+        : EffectRegistry<'Effect> =
         { registry with
             Performers = Map.add name performer registry.Performers }
 
     /// Replace the policy gate.
-    let withGate (gate: string -> bool) (registry: EffectRegistry) : EffectRegistry = { registry with Gate = gate }
+    let withGate (gate: string -> bool) (registry: EffectRegistry<'Effect>) : EffectRegistry<'Effect> =
+        { registry with Gate = gate }
 
     /// Replace the destination policy. The counterpart of `withGate` for the
     /// second question.
-    let withEgress (policy: EgressPolicy) (registry: EffectRegistry) : EffectRegistry =
+    let withEgress (policy: EgressPolicy) (registry: EffectRegistry<'Effect>) : EffectRegistry<'Effect> =
         { registry with Egress = policy }
 
     /// Declare an origin for a set of effect names. The one-line way to say
     /// "this host downloads from our CDN and navigates within our own site".
-    let allowOrigin (origin: EgressOrigin) (effects: string list) (registry: EffectRegistry) : EffectRegistry =
+    let allowOrigin
+        (origin: EgressOrigin)
+        (effects: string list)
+        (registry: EffectRegistry<'Effect>)
+        : EffectRegistry<'Effect> =
         { registry with
             Egress = EgressPolicy.allowOrigin origin effects registry.Egress }
 
@@ -516,18 +454,18 @@ module EffectRegistry =
     /// It opens BOTH gates, which is the honest reading of the name: a
     /// `permissive` that quietly kept a deny-non-local egress policy would be a
     /// host that believes it permitted everything and did not.
-    let permissive (registry: EffectRegistry) : EffectRegistry =
+    let permissive (registry: EffectRegistry<'Effect>) : EffectRegistry<'Effect> =
         withGate
             (fun _ -> true)
             { registry with
                 Egress = EgressPolicy.permissive }
 
     /// Set the denial sink.
-    let onDenied (sink: EffectDenial -> unit) (registry: EffectRegistry) : EffectRegistry =
+    let onDenied (sink: EffectDenial -> unit) (registry: EffectRegistry<'Effect>) : EffectRegistry<'Effect> =
         { registry with OnDenied = sink }
 
     /// The registered effect names, for host introspection.
-    let registered (registry: EffectRegistry) : string list =
+    let registered (registry: EffectRegistry<'Effect>) : string list =
         registry.Performers |> Map.toList |> List.map fst
 
     /// Decide one effect: `None` permits it, `Some denial` declines it and says
@@ -550,8 +488,12 @@ module EffectRegistry =
     ///      refused it" and "the destination was undeclared" are answers to
     ///      different questions, and emitting both would make a log read as two
     ///      attempts.
-    let decide (registry: EffectRegistry) (effect: ClientEffect) : EffectDenial option =
-        let name = ClientEffect.kind effect
+    let decide
+        (effects: EffectWitness<'Effect>)
+        (registry: EffectRegistry<'Effect>)
+        (effect: 'Effect)
+        : EffectDenial option =
+        let name = effects.Kind effect
 
         match Map.tryFind name registry.Performers with
         | None -> Some(EffectDenial.Unregistered name)
@@ -559,18 +501,18 @@ module EffectRegistry =
             if not (registry.Gate name) then
                 Some(EffectDenial.GateRefused name)
             else
-                let destination = ClientEffectDestination.destinationOf effect
+                let destination = effects.Destination effect
 
                 if EgressPolicy.permits registry.Egress name destination then
                     None
                 else
                     Some(EffectDenial.DestinationRefused(name, EffectDestination.describe destination))
 
-    let perform (registry: EffectRegistry) (effect: ClientEffect) : unit =
-        match decide registry effect with
+    let perform (effects: EffectWitness<'Effect>) (registry: EffectRegistry<'Effect>) (effect: 'Effect) : unit =
+        match decide effects registry effect with
         | Some denial -> registry.OnDenied denial
         | None ->
-            match Map.tryFind (ClientEffect.kind effect) registry.Performers with
+            match Map.tryFind (effects.Kind effect) registry.Performers with
             | Some performer -> performer effect
             // Unreachable: `decide` returns `None` only where a performer was
             // found. Matched rather than asserted because the alternative is an
@@ -584,15 +526,19 @@ module EffectRegistry =
     /// comparing two placements needs the refusals as a VALUE. One decision per
     /// effect either way — this is `decide` and `perform` composed, not a second
     /// walk that could drift from the first.
-    let performAll (registry: EffectRegistry) (effects: ClientEffect list) : EffectDenial list =
-        effects
+    let performAll
+        (effects: EffectWitness<'Effect>)
+        (registry: EffectRegistry<'Effect>)
+        (performed: 'Effect list)
+        : EffectDenial list =
+        performed
         |> List.choose (fun effect ->
-            match decide registry effect with
+            match decide effects registry effect with
             | Some denial ->
                 registry.OnDenied denial
                 Some denial
             | None ->
-                match Map.tryFind (ClientEffect.kind effect) registry.Performers with
+                match Map.tryFind (effects.Kind effect) registry.Performers with
                 | Some performer -> performer effect
                 | None -> ()
 

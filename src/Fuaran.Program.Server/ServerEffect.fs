@@ -1,6 +1,5 @@
 namespace Fuaran.Program.Server
 
-open Fuaran.UI.Ops.Types
 
 // ============================================================================
 //  The SERVER placement's host-effect seam — closed vocabulary, registered
@@ -50,19 +49,19 @@ open Fuaran.UI.Ops.Types
 /// Extensibility is a host act (`HostCall` + a registered performer), never a
 /// widening of this DU — D3.
 [<RequireQualifiedAccess>]
-type ServerEffect =
+type ServerEffect<'Op> =
     /// Evaluate `pipeline` over `source` and land the resulting table in the
     /// session's query slot `name`. A read: it touches no domain state.
     | RunQuery of name: string * source: Fuaran.Core.DataSource * pipeline: Fuaran.Core.Transform list
     /// Apply a `TreeOp` sequence to the domain tree through the apply engine.
     /// **The only domain-state mutation in the whole placement.**
-    | ApplyOps of ops: TreeOp<obj> list
+    | ApplyOps of ops: 'Op list
     /// Call a named host performer with declarative arguments, optionally
     /// landing its result in the session's state slot `into`. The escape hatch
     /// the total algebra needs (D2), held behind registration and policy.
     | HostCall of fn: string * args: Fuaran.Core.JVal * into: string option
     /// Ship ops to the connected client without touching domain state.
-    | EmitPatch of ops: TreeOp<obj> list
+    | EmitPatch of ops: 'Op list
     /// Send a host-channel message. The host performs the delivery; this
     /// placement records that the handler asked for it.
     | Notify of channel: string * payload: Fuaran.Core.JVal
@@ -71,7 +70,7 @@ module ServerEffect =
 
     /// The effect's discriminator — log-safe, and the coarse unit a gate can
     /// reason about ("this session may read, but may not mutate").
-    let kind (effect: ServerEffect) : string =
+    let kind (effect: ServerEffect<'Op>) : string =
         match effect with
         | ServerEffect.RunQuery _ -> "RunQuery"
         | ServerEffect.ApplyOps _ -> "ApplyOps"
@@ -93,7 +92,7 @@ module ServerEffect =
     ///
     /// The `host:` prefix keeps the two namespaces disjoint, so a host function
     /// named `ApplyOps` can never be permitted by a rule about the built-in arm.
-    let capability (effect: ServerEffect) : string =
+    let capability (effect: ServerEffect<'Op>) : string =
         match effect with
         | ServerEffect.HostCall(fn, _, _) -> "host:" + fn
         | other -> kind other
@@ -326,7 +325,7 @@ module ServerArgumentPolicy =
     /// An argument may appear more than once — a query reading three sources
     /// yields three `source` pairs — and an allow-list must admit every one of
     /// them, because a pipeline that reaches one off-list table has reached it.
-    let arguments (effect: ServerEffect) : (string * string) list =
+    let arguments (effect: ServerEffect<'Op>) : (string * string) list =
         match effect with
         | ServerEffect.HostCall(_, args, _) ->
             match args with
@@ -348,7 +347,7 @@ module ServerArgumentPolicy =
     /// encoding — the same bytes the wire carries, so a ceiling a deployer reads
     /// bounds the thing they would meet rather than an in-memory estimate of it.
     /// Zero for the arms that carry no such payload; see the module header.
-    let payloadBytes (effect: ServerEffect) : int =
+    let payloadBytes (effect: ServerEffect<'Op>) : int =
         let sizeOf (value: Fuaran.Core.JVal) =
             System.Text.Encoding.UTF8.GetByteCount(Fuaran.Program.Bounded.ProgramWire.render value)
 
@@ -365,7 +364,7 @@ module ServerArgumentPolicy =
     /// for a deployer and an auditor, and a check that invented a meaning for it
     /// would be enforcing a policy nobody wrote.
     let private checkClause
-        (effect: ServerEffect)
+        (effect: ServerEffect<'Op>)
         (clause: Fuaran.Program.Bounded.ServerConstraintClause)
         : Result<unit, ServerConstraintDefect> =
         match clause with
@@ -396,7 +395,7 @@ module ServerArgumentPolicy =
     /// An effect whose capability the registry does not constrain passes — the
     /// list is empty, so the fold is vacuous, and "unconstrained" needs no arm of
     /// its own anywhere in this module.
-    let check (registry: ServerEffectRegistry) (effect: ServerEffect) : Result<unit, ServerConstraintDefect> =
+    let check (registry: ServerEffectRegistry) (effect: ServerEffect<'Op>) : Result<unit, ServerConstraintDefect> =
         ServerEffectRegistry.constraintsFor (ServerEffect.capability effect) registry
         |> List.fold (fun state clause -> state |> Result.bind (fun () -> checkClause effect clause)) (Ok())
 

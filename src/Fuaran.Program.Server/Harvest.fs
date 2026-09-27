@@ -1,6 +1,5 @@
 namespace Fuaran.Program.Server
 
-open Fuaran.UI.Types
 open Fuaran.Program.Bounded
 
 // ============================================================================
@@ -106,8 +105,12 @@ module Harvest =
     /// each of those handlers' replay postures — the complete two-tier
     /// document, computed through the single reachability rule so the
     /// capabilities and the postures cannot describe different handler sets.
-    let ofProgram (handlers: Map<string, Handler>) (root: Node<obj>) : HarvestedDemand =
-        publish (Replay.ofTreeAndHandlers handlers root)
+    let ofProgram
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (handlers: Map<string, Handler<'Action, 'Op>>)
+        (root: 'Node)
+        : HarvestedDemand =
+        publish (Replay.ofTreeAndHandlers witness handlers root)
 
     /// The document for a REGISTRATION alone, with no program in hand.
     ///
@@ -117,5 +120,11 @@ module Harvest =
     /// describe its own surface rather than one program's use of it. The client
     /// tier is therefore empty — there is no tree — and the server tier is
     /// present, because a walk did run.
-    let ofRegistration (handlers: Handler seq) : HarvestedDemand =
-        publish (ServerDemanded.ofHandlers handlers |> Replay.withPostures handlers)
+    let ofRegistration
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (handlers: Handler<'Action, 'Op> seq)
+        : HarvestedDemand =
+        publish (
+            ServerDemanded.ofHandlers witness handlers
+            |> Replay.withPostures witness handlers
+        )

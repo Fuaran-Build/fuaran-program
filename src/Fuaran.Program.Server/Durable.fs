@@ -103,11 +103,11 @@ type DurableOverrideRecord =
 /// it is the direct interpreter's own value and must stay comparable to one: the
 /// parity claim is `Handler.run ... = (Durable.run ...).Outcome`, and a
 /// reshaped outcome would make that claim unstateable.
-type DurableOutcome =
+type DurableOutcome<'Node, 'Store, 'Op, 'Effect> =
     {
         /// The handler outcome — the same value, of the same type, the direct
         /// interpreter produces.
-        Outcome: HandlerOutcome
+        Outcome: HandlerOutcome<'Node, 'Store, 'Op, 'Effect>
         /// Ordinals SERVED from the journal: the performer was not invoked.
         /// This list is the certification's subject — a replay whose every
         /// recorded ordinal appears here performed no duplicate effect.
@@ -198,14 +198,15 @@ module Durable =
     /// share nothing, which is what a caller wants for two clicks of the same
     /// button.
     let run
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
         (services: DurableServices)
         (invocation: string)
         (registry: ServerEffectRegistry)
         (resolve: string -> Result<Fuaran.Core.Table, Fuaran.Core.EvalError>)
         (nodeId: string)
-        (handler: Handler)
-        (store: ServerStore)
-        : DurableOutcome =
+        (handler: Handler<'Action, 'Op>)
+        (store: ServerStore<'Node, 'Store>)
+        : DurableOutcome<'Node, 'Store, 'Op, 'Effect> =
         let recorded = services.Journal.Read invocation
 
         // The ordinal of the next performer invocation. Mutable because the
@@ -298,7 +299,7 @@ module Durable =
             { registry with
                 HostFunctions = registry.HostFunctions |> Map.map wrap }
 
-        let outcome = Handler.run journalling resolve nodeId handler store
+        let outcome = Handler.run witness journalling resolve nodeId handler store
 
         // An audit fact, not a short circuit. A completed invocation is
         // REPLAYED rather than skipped — the outcome of a handler is a tree and
@@ -326,7 +327,11 @@ module Durable =
     /// resuming an event therefore resumes each of its handlers against its own
     /// journal, rather than against a shared one where the second handler's
     /// steps would be read as the first's.
-    let arm (services: DurableServices) (invocation: string) (host: ServerServices) : HandlerArm<HandlerTally> =
+    let arm
+        (services: DurableServices)
+        (invocation: string)
+        (host: ServerServices<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        : HandlerArm<'Store, 'Effect, HandlerTally<'Node, 'Op>> =
         let mutable index = 0
 
         { Answer =
@@ -346,6 +351,7 @@ module Durable =
 
                     let durable =
                         run
+                            host.Witness
                             services
                             (sprintf "%s/%d" invocation ordinal)
                             host.Effects
@@ -369,25 +375,32 @@ module Durable =
                               Notifications = tally.Notifications @ outcome.Notifications
                               Diagnostics = tally.Diagnostics @ outcome.Diagnostics } } }
 
-    /// Step a server session with this interpreter behind its call actions.
+    /// Step a server session with this interpreter behind its call actions,
+    /// through a TRANSPORT's step (K8): `transport arm session` runs that
+    /// transport's own validate and hands the chosen action to
+    /// `ServerSession.dispatchWith arm`.
     ///
-    /// The loop is `ServerSession.step`'s — the same validate, the same budget,
-    /// the same fold, the same re-resolution and diff. Only the arm differs,
-    /// which is the shape the placement seam was cut for.
-    let step
+    /// The loop is the session's — the same validate, the same budget, the
+    /// same fold, the same re-resolution and diff. Only the arm differs, which
+    /// is the shape the placement seam was cut for.
+    let stepVia
+        (transport:
+            HandlerArm<'Store, 'Effect, HandlerTally<'Node, 'Op>>
+                -> ServerSession<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>
+                -> ServerSession<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect> *
+                ServerStepOutput<'Node, 'Op, 'Effect, 'Reject>)
         (services: DurableServices)
         (invocation: string)
-        (session: ServerSession)
-        (ev: Fuaran.UI.ServerDriven.Validation.LiveEvent)
-        : ServerSession * ServerStepOutput =
-        ServerSession.stepWith (arm services invocation session.Services) session ev
+        (session: ServerSession<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        : ServerSession<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect> * ServerStepOutput<'Node, 'Op, 'Effect, 'Reject> =
+        transport (arm services invocation session.Services) session
 
     // ─── the placement declaration ───────────────────────────────────────────
 
     /// What this interpreter guarantees for a registration — derived, never
     /// authored. `None` where the derivation proves both delivery hazards and no
     /// facet says both.
-    let guarantees (services: DurableServices) (handlers: Handler seq) : DerivedGuarantees =
+    let guarantees (services: DurableServices) (handlers: Handler<'Action, 'Op> seq) : DerivedGuarantees =
         Facets.ofHandlers (discipline services) services.Performers handlers
 
     /// **The declaration a composition's logic-tree slot can carry** for this
@@ -395,7 +408,7 @@ module Durable =
     let declaration
         (services: DurableServices)
         (logicTree: LogicTreeRef)
-        (handlers: Handler seq)
+        (handlers: Handler<'Action, 'Op> seq)
         : PlacementDeclaration option =
         Facets.declare PlacementId.durable logicTree (discipline services) services.Performers handlers
 
@@ -403,7 +416,7 @@ module Durable =
     /// against the registration this host actually runs.
     let checkDeclaration
         (services: DurableServices)
-        (handlers: Handler seq)
+        (handlers: Handler<'Action, 'Op> seq)
         (declared: PlacementDeclaration)
         : FacetFinding list =
         Facets.checkDeclaration (discipline services) services.Performers handlers declared
@@ -481,11 +494,11 @@ module ControlServices =
 /// `DurableOutcome` carries the handler outcome whole: the parity claim is
 /// stated against the uncontrolled value, and a reshaped one would make it
 /// unstateable.
-type ControlledOutcome =
+type ControlledOutcome<'Node, 'Store, 'Op, 'Effect> =
     {
         /// The durable outcome — the same value, of the same type, an
         /// uncontrolled run produces.
-        Durable: DurableOutcome
+        Durable: DurableOutcome<'Node, 'Store, 'Op, 'Effect>
         /// The state the stream folded to at entry. The prefix this run was
         /// decided by, so a reader can say which acts were in force without
         /// re-reading the stream and hoping it has not moved.
@@ -496,9 +509,9 @@ type ControlledOutcome =
     }
 
 /// One controlled step of a server session.
-type ControlledStep =
-    { Session: ServerSession
-      Output: ServerStepOutput
+type ControlledStep<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect, 'Reject> =
+    { Session: ServerSession<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>
+      Output: ServerStepOutput<'Node, 'Op, 'Effect, 'Reject>
       Controls: ControlState
       Refusals: ControlRefusal list }
 
@@ -515,20 +528,21 @@ module DurableControls =
     /// at the registry reaches every arm of the closed vocabulary without this
     /// file enumerating them.
     let run
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
         (services: DurableServices)
         (controls: ControlServices)
         (invocation: string)
         (registry: ServerEffectRegistry)
         (resolve: string -> Result<Fuaran.Core.Table, Fuaran.Core.EvalError>)
         (nodeId: string)
-        (handler: Handler)
-        (store: ServerStore)
-        : ControlledOutcome =
+        (handler: Handler<'Action, 'Op>)
+        (store: ServerStore<'Node, 'Store>)
+        : ControlledOutcome<'Node, 'Store, 'Op, 'Effect> =
         let state = Controls.stateOf controls.Journal controls.Scope
         let refusals = ResizeArray<ControlRefusal>()
         let controlled = Controls.apply refusals.Add state registry
 
-        { Durable = Durable.run services invocation controlled resolve nodeId handler store
+        { Durable = Durable.run witness services invocation controlled resolve nodeId handler store
           Controls = state
           Refusals = List.ofSeq refusals }
 
@@ -543,8 +557,8 @@ module DurableControls =
         (controls: ControlServices)
         (invocation: string)
         (record: ControlRefusal -> unit)
-        (host: ServerServices)
-        : HandlerArm<HandlerTally> =
+        (host: ServerServices<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        : HandlerArm<'Store, 'Effect, HandlerTally<'Node, 'Op>> =
         let state = Controls.stateOf controls.Journal controls.Scope
 
         Durable.arm
@@ -557,14 +571,20 @@ module DurableControls =
     ///
     /// A suspended session refuses the dispatch through its own G1 gate and
     /// leaves the session value untouched — see the header. An unsuspended one
-    /// runs the durable interpreter against a controlled registry.
-    let step
+    /// runs the durable interpreter against a controlled registry. The step is
+    /// a TRANSPORT's (K8): `transport arm session` validates the event and
+    /// hands the chosen action to `ServerSession.dispatchWith arm`.
+    let stepVia
+        (transport:
+            HandlerArm<'Store, 'Effect, HandlerTally<'Node, 'Op>>
+                -> ServerSession<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>
+                -> ServerSession<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect> *
+                ServerStepOutput<'Node, 'Op, 'Effect, 'Reject>)
         (services: DurableServices)
         (controls: ControlServices)
         (invocation: string)
-        (session: ServerSession)
-        (ev: Fuaran.UI.ServerDriven.Validation.LiveEvent)
-        : ControlledStep =
+        (session: ServerSession<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        : ControlledStep<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect, 'Reject> =
         let state = Controls.stateOf controls.Journal controls.Scope
         let refusals = ResizeArray<ControlRefusal>()
 
@@ -581,8 +601,7 @@ module DurableControls =
                         { session.Services with
                             CanDispatch = fun _ -> false } }
 
-            let _, output =
-                ServerSession.stepWith (Durable.arm services invocation closed.Services) closed ev
+            let _, output = transport (Durable.arm services invocation closed.Services) closed
 
             { Session = session
               Output = output
@@ -593,7 +612,7 @@ module DurableControls =
                 | None -> [] }
         | None ->
             let next, output =
-                ServerSession.stepWith (arm services controls invocation refusals.Add session.Services) session ev
+                transport (arm services controls invocation refusals.Add session.Services) session
 
             { Session = next
               Output = output
@@ -633,5 +652,8 @@ module DurableControls =
 
     /// This host's server-tier coverage with the controls in force — what a
     /// demanded-effect check is asked once a performer has been withdrawn.
-    let coverage (controls: ControlServices) (host: ServerServices) : ServerCoverage =
+    let coverage
+        (controls: ControlServices)
+        (host: ServerServices<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        : ServerCoverage =
         Controls.coverage (stateOf controls) host.Effects

@@ -1,7 +1,6 @@
 namespace Fuaran.Program.Server
 
 open Fuaran.Core
-open Fuaran.UI.Ops.Types
 open Fuaran.Program.Bounded
 
 // ============================================================================
@@ -42,12 +41,12 @@ open Fuaran.Program.Bounded
 /// ran against, which is this host's own state and not something a caller is
 /// told. The report is the projection a caller receives, and `ofOutcome` is the
 /// only way to build one from a run.
-type HandlerReport =
+type HandlerReport<'Op> =
     {
         Committed: bool
         Diagnostics: ServerDiagnostic list
         Notifications: (string * JVal) list
-        Patches: TreeOp<obj> list
+        Patches: 'Op list
         /// EXECUTION order, not stage order — staging defers every host call to
         /// the perform phase, so one declared first appears after the
         /// capabilities the plan phase ran.
@@ -59,7 +58,7 @@ module HandlerReport =
     /// The projection of a run. Everything it drops is state the caller does not
     /// receive; everything it keeps is what the specification's outcome document
     /// declares.
-    let ofOutcome (outcome: HandlerOutcome) : HandlerReport =
+    let ofOutcome (outcome: HandlerOutcome<'Node, 'Store, 'Op, 'Effect>) : HandlerReport<'Op> =
         { Committed = outcome.Committed
           Diagnostics = outcome.Diagnostics
           Notifications = outcome.Notifications
@@ -70,7 +69,10 @@ module HandlerWire =
 
     // ─── the server-effect vocabulary ────────────────────────────────────────
 
-    let encodeEffect (effect: ServerEffect) : Result<JVal, WireRefusal> =
+    let encodeEffect
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (effect: ServerEffect<'Op>)
+        : Result<JVal, WireRefusal> =
         match effect with
         | ServerEffect.RunQuery(name, source, pipeline) ->
             ProgramWire.encodePipeline pipeline
@@ -83,12 +85,12 @@ module HandlerWire =
 
         | ServerEffect.ApplyOps ops ->
             ops
-            |> ProgramWire.traverse ProgramWire.encodeOp
+            |> ProgramWire.traverse (ProgramWire.encodeOp witness)
             |> Result.map (fun encoded -> Canon.typed "ApplyOps" [ "ops", JArr encoded ])
 
         | ServerEffect.EmitPatch ops ->
             ops
-            |> ProgramWire.traverse ProgramWire.encodeOp
+            |> ProgramWire.traverse (ProgramWire.encodeOp witness)
             |> Result.map (fun encoded -> Canon.typed "EmitPatch" [ "ops", JArr encoded ])
 
         | ServerEffect.HostCall(fn, args, into) ->
@@ -105,7 +107,10 @@ module HandlerWire =
         | ServerEffect.Notify(channel, payload) ->
             Ok(Canon.typed "Notify" [ "channel", JStr channel; "payload", payload ])
 
-    let decodeEffect (value: JVal) : Result<ServerEffect, WireRefusal> =
+    let decodeEffect
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (value: JVal)
+        : Result<ServerEffect<'Op>, WireRefusal> =
         match ProgramWire.tag value with
         | None -> ProgramWire.refuse RefusalClass.MissingMember "required member '$type' is absent"
 
@@ -123,13 +128,13 @@ module HandlerWire =
         | Some "ApplyOps" ->
             ProgramWire.declaredOnly [ "$type"; "ops" ] value
             |> Result.bind (fun () -> ProgramWire.requireArray "ops" value)
-            |> Result.bind (ProgramWire.traverse ProgramWire.decodeOp)
+            |> Result.bind (ProgramWire.traverse (ProgramWire.decodeOp witness))
             |> Result.map ServerEffect.ApplyOps
 
         | Some "EmitPatch" ->
             ProgramWire.declaredOnly [ "$type"; "ops" ] value
             |> Result.bind (fun () -> ProgramWire.requireArray "ops" value)
-            |> Result.bind (ProgramWire.traverse ProgramWire.decodeOp)
+            |> Result.bind (ProgramWire.traverse (ProgramWire.decodeOp witness))
             |> Result.map ServerEffect.EmitPatch
 
         | Some "HostCall" ->
@@ -147,11 +152,11 @@ module HandlerWire =
                 // document never becomes a handler at all.
                 match ProgramWire.tryMember "into" value with
                 | None -> Ok(ServerEffect.HostCall(fn, args, None))
-                | Some(JStr slot) when Fuaran.UI.Renderer.StateKeys.isHostReserved slot ->
+                | Some(JStr slot) when witness.Store.IsReserved slot ->
                     ProgramWire.refuse
                         RefusalClass.HostReservedLandingSlot
                         ("the landing slot is under the host-reserved '"
-                         + Fuaran.UI.Renderer.StateKeys.HostReservedPrefix
+                         + witness.Store.ReservedPrefix
                          + "' namespace")
                 | Some(JStr slot) -> Ok(ServerEffect.HostCall(fn, args, Some slot))
                 | Some _ -> ProgramWire.refuse RefusalClass.MissingMember "member 'into' is not a string")
@@ -174,24 +179,30 @@ module HandlerWire =
     [<Literal>]
     let MaxHandlerNameLength = 256
 
-    let encodeStage (stage: HandlerStage) : Result<JVal, WireRefusal> =
+    let encodeStage
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (stage: HandlerStage<'Action, 'Op>)
+        : Result<JVal, WireRefusal> =
         match stage with
-        | Compute action -> Ok(Canon.typed "Compute" [ "action", ProgramWire.encodeAction action ])
+        | Compute action -> Ok(Canon.typed "Compute" [ "action", ProgramWire.encodeAction witness action ])
         | Effect effect ->
-            encodeEffect effect
+            encodeEffect witness effect
             |> Result.map (fun e -> Canon.typed "Effect" [ "effect", e ])
 
-    let decodeStage (value: JVal) : Result<HandlerStage, WireRefusal> =
+    let decodeStage
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (value: JVal)
+        : Result<HandlerStage<'Action, 'Op>, WireRefusal> =
         match ProgramWire.tag value with
         | Some "Compute" ->
             ProgramWire.declaredOnly [ "$type"; "action" ] value
             |> Result.bind (fun () -> ProgramWire.requireMember "action" value)
-            |> Result.bind ProgramWire.decodeAction
+            |> Result.bind (ProgramWire.decodeAction witness)
             |> Result.map Compute
         | Some "Effect" ->
             ProgramWire.declaredOnly [ "$type"; "effect" ] value
             |> Result.bind (fun () -> ProgramWire.requireMember "effect" value)
-            |> Result.bind decodeEffect
+            |> Result.bind (decodeEffect witness)
             |> Result.map Effect
         | Some other ->
             ProgramWire.refuse
@@ -201,15 +212,24 @@ module HandlerWire =
                  + "' is not a stage kind; there are exactly two, and sequencing is not a third")
         | None -> ProgramWire.refuse RefusalClass.MissingMember "a stage carries no '$type'"
 
-    let encodeHandlerJson (handler: Handler) : Result<JVal, WireRefusal> =
+    let encodeHandlerJson
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (handler: Handler<'Action, 'Op>)
+        : Result<JVal, WireRefusal> =
         handler.Stages
-        |> ProgramWire.traverse encodeStage
+        |> ProgramWire.traverse (encodeStage witness)
         |> Result.map (fun stages -> Canon.typed "Handler" [ "name", JStr handler.Name; "stages", JArr stages ])
 
-    let encodeHandler (handler: Handler) : Result<string, WireRefusal> =
-        encodeHandlerJson handler |> Result.map ProgramWire.render
+    let encodeHandler
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (handler: Handler<'Action, 'Op>)
+        : Result<string, WireRefusal> =
+        encodeHandlerJson witness handler |> Result.map ProgramWire.render
 
-    let decodeHandlerJson (value: JVal) : Result<Handler, WireRefusal> =
+    let decodeHandlerJson
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (value: JVal)
+        : Result<Handler<'Action, 'Op>, WireRefusal> =
         ProgramWire.declaredOnly [ "$type"; "name"; "stages" ] value
         |> Result.bind (fun () ->
             match ProgramWire.tag value with
@@ -231,11 +251,14 @@ module HandlerWire =
                 Ok name)
         |> Result.bind (fun name ->
             ProgramWire.requireArray "stages" value
-            |> Result.bind (ProgramWire.traverse decodeStage)
+            |> Result.bind (ProgramWire.traverse (decodeStage witness))
             |> Result.map (fun stages -> { Name = name; Stages = stages }))
 
-    let decodeHandler (json: string) : Result<Handler, WireRefusal> =
-        ProgramWire.parseDocument json |> Result.bind decodeHandlerJson
+    let decodeHandler
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (json: string)
+        : Result<Handler<'Action, 'Op>, WireRefusal> =
+        ProgramWire.parseDocument json |> Result.bind (decodeHandlerJson witness)
 
     // ─── the derived replay classification ───────────────────────────────────
 
@@ -256,17 +279,15 @@ module HandlerWire =
     /// value, which is what keeps this package free of a second `Action` match
     /// AND keeps this rule literally identical to the one the conformance
     /// corpus's own emitter applies.
-    let replayReasons (handler: Handler) : ReplayReason list =
+    let replayReasons
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (handler: Handler<'Action, 'Op>)
+        : ReplayReason list =
         let ofEffect effect =
             match effect with
             | ServerEffect.RunQuery _ -> []
             | ServerEffect.ApplyOps ops
-            | ServerEffect.EmitPatch ops ->
-                ops
-                |> List.collect (fun op ->
-                    match ProgramWire.encodeOp op with
-                    | Ok encoded -> ProgramWire.replayDefectsOfOp encoded
-                    | Error _ -> [ ReplayDefect.UnencodableOp ])
+            | ServerEffect.EmitPatch ops -> ops |> List.collect (ProgramWire.replayDefectsOfOp witness)
             // Both reach outside: one commits somewhere this host does not own,
             // the other ships a message a second run would duplicate.
             | ServerEffect.HostCall _ -> [ ReplayDefect.OpaqueHostCall ]
@@ -277,7 +298,7 @@ module HandlerWire =
             let defects =
                 match stage with
                 | Effect effect -> ofEffect effect
-                | Compute action -> ProgramWire.replayDefectsOfAction (ProgramWire.encodeAction action)
+                | Compute action -> ProgramWire.replayDefectsOfAction witness action
 
             // Qualified: the projection document declares a record with the same
             // two field names, and its `Defect` is the wire TOKEN rather than
@@ -300,8 +321,11 @@ module HandlerWire =
     /// looks: the corpus pins this function's answer per vector, so a reasons
     /// walk that drifted from it would be a set of explanations for a verdict
     /// nobody reached.
-    let replaySafety (handler: Handler) : ReplaySafety =
-        replayReasons handler |> ProgramWire.verdictOfReasons
+    let replaySafety
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (handler: Handler<'Action, 'Op>)
+        : ReplaySafety =
+        replayReasons witness handler |> ProgramWire.verdictOfReasons
 
     // ─── the outcome report ──────────────────────────────────────────────────
 
@@ -405,9 +429,12 @@ module HandlerWire =
             ProgramWire.requireMember "payload" value
             |> Result.map (fun payload -> channel, payload))
 
-    let encodeReportJson (report: HandlerReport) : Result<JVal, WireRefusal> =
+    let encodeReportJson
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (report: HandlerReport<'Op>)
+        : Result<JVal, WireRefusal> =
         report.Patches
-        |> ProgramWire.traverse ProgramWire.encodeOp
+        |> ProgramWire.traverse (ProgramWire.encodeOp witness)
         |> Result.map (fun patches ->
             Canon.typed
                 "HandlerReport"
@@ -417,10 +444,16 @@ module HandlerWire =
                   "patches", JArr patches
                   "performed", JArr(report.Performed |> List.map JStr) ])
 
-    let encodeReport (report: HandlerReport) : Result<string, WireRefusal> =
-        encodeReportJson report |> Result.map ProgramWire.render
+    let encodeReport
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (report: HandlerReport<'Op>)
+        : Result<string, WireRefusal> =
+        encodeReportJson witness report |> Result.map ProgramWire.render
 
-    let decodeReportJson (value: JVal) : Result<HandlerReport, WireRefusal> =
+    let decodeReportJson
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (value: JVal)
+        : Result<HandlerReport<'Op>, WireRefusal> =
         // Every member is required even when empty: an omitted array and an
         // empty array would be two spellings of one fact, and a reader would
         // have to guess which producer it was talking to.
@@ -434,7 +467,7 @@ module HandlerWire =
                 |> Result.bind (ProgramWire.traverse decodeNotification)
                 |> Result.bind (fun notifications ->
                     ProgramWire.requireArray "patches" value
-                    |> Result.bind (ProgramWire.traverse ProgramWire.decodeOp)
+                    |> Result.bind (ProgramWire.traverse (ProgramWire.decodeOp witness))
                     |> Result.bind (fun patches ->
                         ProgramWire.requireArray "performed" value
                         |> Result.bind (
@@ -472,5 +505,8 @@ module HandlerWire =
             else
                 Ok report)
 
-    let decodeReport (json: string) : Result<HandlerReport, WireRefusal> =
-        ProgramWire.parseDocument json |> Result.bind decodeReportJson
+    let decodeReport
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (json: string)
+        : Result<HandlerReport<'Op>, WireRefusal> =
+        ProgramWire.parseDocument json |> Result.bind (decodeReportJson witness)

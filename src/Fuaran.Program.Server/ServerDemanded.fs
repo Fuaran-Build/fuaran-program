@@ -1,6 +1,5 @@
 namespace Fuaran.Program.Server
 
-open Fuaran.UI.Types
 open Fuaran.Program.Bounded
 
 // ============================================================================
@@ -122,7 +121,7 @@ module ServerDemanded =
     /// one string literal, which is the 892 discipline applied to a second
     /// vocabulary: a demanded capability and a gated one cannot be two spellings
     /// of an intention, because they are one call to one function.
-    let private ofEffect (effect: ServerEffect) : DemandedProjection =
+    let private ofEffect (effect: ServerEffect<'Op>) : DemandedProjection =
         let kind = ServerEffect.kind effect
         let capability = ServerEffect.capability effect
 
@@ -178,11 +177,14 @@ module ServerDemanded =
                     Capabilities = [ capability ] }
 
     /// What one stage demands.
-    let private ofStage (stage: HandlerStage) : DemandedProjection =
+    let private ofStage
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (stage: HandlerStage<'Action, 'Op>)
+        : DemandedProjection =
         match stage with
         | Effect effect -> ofEffect effect
         | Compute action ->
-            let projection = Demanded.ofAction action
+            let projection = Demanded.ofAction witness action
 
             { projection with
                 // The inert call channel, stripped — see the header.
@@ -190,12 +192,18 @@ module ServerDemanded =
                 Server = Some noDemand }
 
     /// What one handler can ever ask for, across both tiers.
-    let ofHandler (handler: Handler) : DemandedProjection =
-        Demanded.union (seed :: (handler.Stages |> List.map ofStage))
+    let ofHandler
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (handler: Handler<'Action, 'Op>)
+        : DemandedProjection =
+        Demanded.union (seed :: (handler.Stages |> List.map (ofStage witness)))
 
     /// What a set of handlers can ever ask for, as one document.
-    let ofHandlers (handlers: Handler seq) : DemandedProjection =
-        Demanded.union (seed :: (handlers |> Seq.map ofHandler |> List.ofSeq))
+    let ofHandlers
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (handlers: Handler<'Action, 'Op> seq)
+        : DemandedProjection =
+        Demanded.union (seed :: (handlers |> Seq.map (ofHandler witness) |> List.ofSeq))
 
     /// **The one call**: what a program tree and the handler registration behind
     /// it can ever ask for, across both placements, as a single document.
@@ -212,14 +220,26 @@ module ServerDemanded =
     /// for exactly the same handler set: two reachability rules would be two
     /// answers to "which handlers is this document about", and the projection
     /// would then describe a set nobody computed.
-    let reachable (handlers: Map<string, Handler>) (root: Node<obj>) : Handler list =
-        Demanded.calledEndpoints (Demanded.ofTree root)
+    let reachable
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (handlers: Map<string, Handler<'Action, 'Op>>)
+        (root: 'Node)
+        : Handler<'Action, 'Op> list =
+        Demanded.calledEndpoints (Demanded.ofTree witness root)
         |> List.choose (fun endpoint -> Map.tryFind endpoint handlers)
 
-    let ofTreeAndHandlers (handlers: Map<string, Handler>) (root: Node<obj>) : DemandedProjection =
-        let tree = Demanded.ofTree root
+    let ofTreeAndHandlers
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (handlers: Map<string, Handler<'Action, 'Op>>)
+        (root: 'Node)
+        : DemandedProjection =
+        let tree = Demanded.ofTree witness root
 
-        Demanded.union (tree :: seed :: (reachable handlers root |> List.map ofHandler))
+        Demanded.union (
+            tree
+            :: seed
+            :: (reachable witness handlers root |> List.map (ofHandler witness))
+        )
 
     /// A server host's coverage, read off the effect registry it was wired with
     /// rather than declared a second time.
@@ -303,11 +323,12 @@ module ServerDemanded =
     /// which is what lets the replay join compose with it in either order — both
     /// write disjoint members of the same tier.
     let ofTreeHandlersAndRegistry
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
         (registry: ServerEffectRegistry)
-        (handlers: Map<string, Handler>)
-        (root: Node<obj>)
+        (handlers: Map<string, Handler<'Action, 'Op>>)
+        (root: 'Node)
         : DemandedProjection =
-        ofTreeAndHandlers handlers root |> withConstraints registry
+        ofTreeAndHandlers witness handlers root |> withConstraints registry
 
     // ─── the signed envelope, at this placement ──────────────────────────────
 
@@ -316,11 +337,12 @@ module ServerDemanded =
     /// `SignedEnvelope.sign` with THIS placement's walk, so the signed envelope
     /// carries a server tier and a verifier using the same walk recomputes it.
     let sign
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
         (sink: Fuaran.Core.IAttestationSink)
-        (handlers: Map<string, Handler>)
-        (root: Node<obj>)
+        (handlers: Map<string, Handler<'Action, 'Op>>)
+        (root: 'Node)
         : Result<SignedEnvelope, SignRefusal> =
-        SignedEnvelope.sign sink (ofTreeAndHandlers handlers) root
+        SignedEnvelope.sign witness.Tree sink (ofTreeAndHandlers witness handlers) root
 
     /// Verify a signed two-tier pair by recomputation against THIS registration.
     ///
@@ -332,13 +354,14 @@ module ServerDemanded =
     /// through the client-tier walk alone reports that tier as shortfall — the
     /// `None`-versus-empty distinction survives, rather than collapsing.
     let verify
-        (crypto: Fuaran.UI.OpStream.Abstractions.IClaimSignatureVerifier)
-        (key: Fuaran.UI.OpStream.Abstractions.KeyDirectoryEntry option)
-        (handlers: Map<string, Handler>)
-        (root: Node<obj>)
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (crypto: ClaimVerifier<'Key>)
+        (key: 'Key option)
+        (handlers: Map<string, Handler<'Action, 'Op>>)
+        (root: 'Node)
         (signed: SignedEnvelope)
         : Async<Result<VerifiedEnvelope, VerifyRefusal>> =
-        SignedEnvelope.verify crypto key (ofTreeAndHandlers handlers) root signed
+        SignedEnvelope.verify witness.Tree crypto key (ofTreeAndHandlers witness handlers) root signed
 
     /// Sign a tree paired with the two-tier document AND the host's declared
     /// argument policy. `sign` with `ofTreeHandlersAndRegistry` as its walk.
@@ -348,12 +371,13 @@ module ServerDemanded =
     /// unconstrained one says "HTTP", so a deployer decides on the bound rather
     /// than on the capability's name.
     let signWithRegistry
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
         (sink: Fuaran.Core.IAttestationSink)
         (registry: ServerEffectRegistry)
-        (handlers: Map<string, Handler>)
-        (root: Node<obj>)
+        (handlers: Map<string, Handler<'Action, 'Op>>)
+        (root: 'Node)
         : Result<SignedEnvelope, SignRefusal> =
-        SignedEnvelope.sign sink (ofTreeHandlersAndRegistry registry handlers) root
+        SignedEnvelope.sign witness.Tree sink (ofTreeHandlersAndRegistry witness registry handlers) root
 
     /// Verify a signed record by recomputation against THIS registration and
     /// THIS registry.
@@ -372,11 +396,12 @@ module ServerDemanded =
     /// same terms the `None`-versus-empty tier distinction survives — so the two
     /// calls cannot be confused for one another by accident.
     let verifyWithRegistry
-        (crypto: Fuaran.UI.OpStream.Abstractions.IClaimSignatureVerifier)
-        (key: Fuaran.UI.OpStream.Abstractions.KeyDirectoryEntry option)
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (crypto: ClaimVerifier<'Key>)
+        (key: 'Key option)
         (registry: ServerEffectRegistry)
-        (handlers: Map<string, Handler>)
-        (root: Node<obj>)
+        (handlers: Map<string, Handler<'Action, 'Op>>)
+        (root: 'Node)
         (signed: SignedEnvelope)
         : Async<Result<VerifiedEnvelope, VerifyRefusal>> =
-        SignedEnvelope.verify crypto key (ofTreeHandlersAndRegistry registry handlers) root signed
+        SignedEnvelope.verify witness.Tree crypto key (ofTreeHandlersAndRegistry witness registry handlers) root signed

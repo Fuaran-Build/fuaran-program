@@ -1,11 +1,5 @@
 namespace Fuaran.Program.Server
 
-open Fuaran.UI.Types
-open Fuaran.UI.Ops.Types
-open Fuaran.UI.OpStream.Replay
-open Fuaran.UI.ServerDriven
-open Fuaran.UI.ServerDriven.Validation
-open Fuaran.UI.Renderer.BindingResolver
 open Fuaran.Program.Bounded
 
 // ============================================================================
@@ -22,9 +16,9 @@ open Fuaran.Program.Bounded
 //  This placement is that arm implemented. The loop is the same one:
 //
 //    inbound event
-//      → G1 validate            (the SAME `Validation.validate`)
+//      → G1 validate            (the transport's — see below)
 //      → G2 budget              (the SAME `Budget` functions)
-//      → interpret              (the SAME `BoundedActions.runBoundedAction`)
+//      → interpret              (the SAME `BoundedActions.run`)
 //      → effects                (this placement's closed vocabulary, gated)
 //      → re-resolve             (the SAME `Resolve.resolveTree`)
 //      → respond
@@ -56,18 +50,30 @@ open Fuaran.Program.Bounded
 //  nothing else, so nothing here fixes a serialised form for a handler, a stage
 //  or a server effect. That cut comes later, informed by this spike and by the
 //  demand census — not by whatever shapes happened to be convenient here.
+//
+//  ── Where the transport stops (K8) ──────────────────────────────────────────
+//  Since Phase 1896 this module is domain-generic (DECISIONS.md D18): it runs
+//  over a domain's witness, held on `ServerServices`. An event is dispatched by
+//  the TRANSPORT, not by the algebra — which event a node accepts, the gate that
+//  admits it, and what the rejection says are the transport's vocabulary — so
+//  this module begins where an action has already been chosen: `dispatchWith`.
+//  A transport's own step validates its event, answers `inert` or `rejected`
+//  itself when there is nothing to dispatch, and otherwise hands the chosen
+//  action here.
 // ============================================================================
 
 /// The host-coupled seams the server-logic loop delegates to. The same posture
 /// as the other placements: this core takes no transport, renderer, store or
 /// data-access dependency; each arrives as an injected value.
-type ServerServices =
+type ServerServices<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect> =
     {
         /// G1 check (d): the dispatch policy gate.
-        CanDispatch: Action<obj> -> bool
+        /// The domain this placement runs (DECISIONS.md D18).
+        Witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>
+        CanDispatch: 'Action -> bool
         /// The closed handler registry, by the endpoint an `Action.Call` names.
         /// A tree can reach only what is in here.
-        Handlers: Map<string, Handler>
+        Handlers: Map<string, Handler<'Action, 'Op>>
         /// The effect gate + host-function performers.
         Effects: ServerEffectRegistry
         /// Resolves a named data source for `ServerEffect.RunQuery`. Defaults to
@@ -81,7 +87,7 @@ type ServerServices =
         SourceSchemas: SourceSchemas
         /// The ops applied this step, for the journal / telemetry sink — the
         /// same seam, by the same name, as the other placements.
-        OnApply: TreeOp<obj> list -> unit
+        OnApply: 'Op list -> unit
         /// G2 — per-interaction resource caps, shared with both other
         /// placements so a breach means the same thing everywhere.
         Budget: InteractionBudget
@@ -97,8 +103,11 @@ module ServerServices =
     /// consequential thing anything in this domain does. `createPermissive` is
     /// the named opt-in, and it opens the gates — it does not conjure handlers,
     /// performers or sources, because those are host acts.
-    let create: ServerServices =
-        { CanDispatch = fun _ -> false
+    let create
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        : ServerServices<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect> =
+        { Witness = witness
+          CanDispatch = fun _ -> false
           Handlers = Map.empty
           Effects = ServerEffectRegistry.denyAll
           Sources = Fuaran.Core.DataFrame.noResolve
@@ -108,13 +117,19 @@ module ServerServices =
 
     /// **The named opt-in back to allow-everything gates** — both of them, the
     /// dispatch gate and the effect gate. Still no handlers and no performers.
-    let createPermissive: ServerServices =
-        { create with
+    let createPermissive
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        : ServerServices<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect> =
+        { create witness with
             CanDispatch = fun _ -> true
             Effects = ServerEffectRegistry.permissive ServerEffectRegistry.denyAll }
 
     /// Register a handler under the endpoint a tree's `Action.Call` will name.
-    let withHandler (endpoint: string) (handler: Handler) (services: ServerServices) : ServerServices =
+    let withHandler
+        (endpoint: string)
+        (handler: Handler<'Action, 'Op>)
+        (services: ServerServices<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        : ServerServices<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect> =
         { services with
             Handlers = Map.add endpoint handler services.Handlers }
 
@@ -125,15 +140,19 @@ module ServerServices =
     /// at request time), and forcing a schema alongside every resolver would
     /// make it invent one. Declaring is what buys the check; not declaring costs
     /// only the check, and says so on the report.
-    let withSourceSchema (name: string) (schema: Fuaran.Core.Schema) (services: ServerServices) : ServerServices =
+    let withSourceSchema
+        (name: string)
+        (schema: Fuaran.Core.Schema)
+        (services: ServerServices<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        : ServerServices<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect> =
         { services with
             SourceSchemas = SourceSchemas.declare name schema services.SourceSchemas }
 
 /// Why the server placement produced no change: a G1 gate rejection or a G2
 /// budget breach — the same two refusal classes the other placements report, by
 /// the same names.
-type ServerReject =
-    | Gate of Validation.RejectReason
+type ServerReject<'Reject> =
+    | Gate of 'Reject
     | BudgetExceeded of detail: string
 
 /// Why a strict construction refused to build a session. Two vocabularies,
@@ -163,35 +182,35 @@ module ServerStrictFinding =
 /// `ApplyOps` may edit — unlike the other placements, where the base tree is
 /// fixed), the binding store, the current resolved tree, the cached render cost
 /// and the injected services.
-type ServerSession =
-    { BaseTree: Node<obj>
-      Store: BoundedStore
-      Resolved: Node<obj>
+type ServerSession<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect> =
+    { BaseTree: 'Node
+      Store: 'Store
+      Resolved: 'Node
       NodeCount: int
-      Services: ServerServices }
+      Services: ServerServices<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect> }
 
 /// The observable result of stepping a server session with one inbound event.
-type ServerStepOutput =
+type ServerStepOutput<'Node, 'Op, 'Effect, 'Reject> =
     {
         /// The resolved tree after this step (unchanged on a refusal).
-        Resolved: Node<obj>
+        Resolved: 'Node
         /// The re-resolve diff — what the host lowers, ships or journals. The
         /// response.
-        Ops: TreeOp<obj> list
+        Ops: 'Op list
         /// Ops a handler explicitly asked to be pushed to the client, distinct
         /// from anything durable.
-        Patches: TreeOp<obj> list
+        Patches: 'Op list
         /// Host-channel messages a handler asked for.
         Notifications: (string * Fuaran.Core.JVal) list
         /// The capabilities a handler performed, in order.
         Performed: string list
         /// Closure-free client effects, from the shared interpreter.
-        ClientEffects: ClientEffect list
+        ClientEffects: 'Effect list
         /// `false` when ANY handler this event reached halted and rolled back.
         /// Always `true` when the event reached no handler, since the shared
         /// fold has nothing to roll back.
         Committed: bool
-        Rejected: ServerReject option
+        Rejected: ServerReject<'Reject> option
         Diagnostics: ServerDiagnostic list
     }
 
@@ -201,10 +220,13 @@ module ServerSession =
     /// ordering matches the other placements: price first, resolve only within
     /// budget, and return an over-budget session unresolved rather than refusing
     /// to construct one.
-    let init (services: ServerServices) (store: BoundedStore) (wire: WireTree) : ServerSession =
-        let tree = WireTree.reify wire
+    let init
+        (services: ServerServices<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (store: 'Store)
+        (tree: 'Node)
+        : ServerSession<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect> =
         let budget = services.Budget.MaxNodes
-        let cost = Budget.treeCost budget tree
+        let cost = Budget.treeCost services.Witness budget tree
 
         { BaseTree = tree
           Store = store
@@ -212,7 +234,7 @@ module ServerSession =
             (if cost > budget then
                  tree
              else
-                 Resolve.resolveTree store tree)
+                 Resolve.resolveTree services.Witness store tree)
           NodeCount = cost
           Services = services }
 
@@ -227,7 +249,7 @@ module ServerSession =
     /// whether or not today's tree happens to call it — the tree decides which
     /// handlers RUN, never which are correct.
     let private declaredQueries
-        (services: ServerServices)
+        (services: ServerServices<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
         : (QueryOrigin * Fuaran.Core.DataSource * Fuaran.Core.Transform list) list =
         services.Handlers
         |> Map.toList
@@ -248,8 +270,11 @@ module ServerSession =
     /// (an undeclared `Ref`, a pivot, a closure-projecting grid) without being
     /// stopped by it, and a host that reads the report and starts anyway is
     /// making a different, legitimate choice from one that never looked.
-    let querySchemaReport (services: ServerServices) (wire: WireTree) : QuerySchemaReport =
-        let readers = QuerySchema.readersOfTree (WireTree.reify wire)
+    let querySchemaReport
+        (services: ServerServices<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (tree: 'Node)
+        : QuerySchemaReport =
+        let readers = QuerySchema.readersOfTree services.Witness tree
 
         declaredQueries services
         |> List.map (fun (origin, source, pipeline) ->
@@ -268,7 +293,10 @@ module ServerSession =
     /// "uncovered" on the caller's behalf would be a claim it cannot make, so it
     /// asks — the same reason the bounded driver's `initStrict` takes coverage
     /// as an argument rather than deriving it.
-    let coverageOf (coverage: HostCoverage) (services: ServerServices) : HostCoverage =
+    let coverageOf
+        (coverage: HostCoverage)
+        (services: ServerServices<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        : HostCoverage =
         coverage
         |> HostCoverage.withServer (ServerDemanded.coverageOfRegistry services.Effects)
 
@@ -298,24 +326,26 @@ module ServerSession =
     /// makes that an iterative guessing game.
     let initStrict
         (coverage: HostCoverage)
-        (services: ServerServices)
-        (store: BoundedStore)
-        (wire: WireTree)
-        : Result<ServerSession, ServerStrictFinding list> =
+        (services: ServerServices<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (store: 'Store)
+        (tree: 'Node)
+        : Result<ServerSession<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>, ServerStrictFinding list> =
         let projection =
-            ServerDemanded.ofTreeAndHandlers services.Handlers (WireTree.reify wire)
+            ServerDemanded.ofTreeAndHandlers services.Witness services.Handlers tree
 
         let findings =
             (Demanded.checkProjection (coverageOf coverage services) projection
              |> List.map ServerStrictFinding.Coverage)
-            @ ((querySchemaReport services wire).Findings
+            @ ((querySchemaReport services tree).Findings
                |> List.map ServerStrictFinding.QuerySchema)
 
         match findings with
-        | [] -> Ok(init services store wire)
+        | [] -> Ok(init services store tree)
         | _ -> Error findings
 
-    let private inert (session: ServerSession) : ServerStepOutput =
+    let inert
+        (session: ServerSession<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        : ServerStepOutput<'Node, 'Op, 'Effect, 'Reject> =
         { Resolved = session.Resolved
           Ops = []
           Patches = []
@@ -326,7 +356,10 @@ module ServerSession =
           Rejected = None
           Diagnostics = [] }
 
-    let private rejected (session: ServerSession) (reject: ServerReject) : ServerStepOutput =
+    let rejected
+        (session: ServerSession<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (reject: ServerReject<'Reject>)
+        : ServerStepOutput<'Node, 'Op, 'Effect, 'Reject> =
         { inert session with
             Rejected = Some reject }
 
@@ -339,26 +372,26 @@ module ServerSession =
     /// carried unresolved and the NEXT event is refused, rather than a mutation
     /// that already succeeded being un-done by a budget check that ran too late.
     let private commit
-        (session: ServerSession)
-        (tree: Node<obj>)
-        (store: BoundedStore)
-        (outcome: HandlerOutcome)
-        : ServerSession * ServerStepOutput =
+        (session: ServerSession<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (tree: 'Node)
+        (store: 'Store)
+        (outcome: HandlerOutcome<'Node, 'Store, 'Op, 'Effect>)
+        : ServerSession<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect> * ServerStepOutput<'Node, 'Op, 'Effect, 'Reject> =
         let budget = session.Services.Budget.MaxNodes
 
         let cost =
             if LanguagePrimitives.PhysicalEquality tree session.BaseTree then
                 session.NodeCount
             else
-                Budget.treeCost budget tree
+                Budget.treeCost session.Services.Witness budget tree
 
         let resolved =
             if cost > budget then
                 tree
             else
-                Resolve.resolveTree store tree
+                Resolve.resolveTree session.Services.Witness store tree
 
-        let ops = TreeOpDiff.diff session.Resolved resolved
+        let ops = session.Services.Witness.Op.Diff session.Resolved resolved
         session.Services.OnApply ops
 
         { session with
@@ -393,7 +426,9 @@ module ServerSession =
     /// re-resolve sequence beside it. A second copy of that sequence would be a
     /// second placement wearing this one's name, which is the thing the whole
     /// arrangement exists to avoid.
-    let directArm (services: ServerServices) : HandlerArm<HandlerTally> =
+    let directArm
+        (services: ServerServices<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        : HandlerArm<'Store, 'Effect, HandlerTally<'Node, 'Op>> =
         { Answer =
             fun nodeId endpoint bindings tally ->
                 match Map.tryFind endpoint services.Handlers with
@@ -411,6 +446,7 @@ module ServerSession =
                 | Some handler ->
                     let outcome =
                         Handler.run
+                            services.Witness
                             services.Effects
                             services.Sources
                             nodeId
@@ -438,71 +474,61 @@ module ServerSession =
                               Notifications = tally.Notifications @ outcome.Notifications
                               Diagnostics = tally.Diagnostics @ outcome.Diagnostics } } }
 
-    /// Step the session with one untrusted inbound event, with `arm` deciding
-    /// what a call action MEANS here.
+    /// Run one ALREADY-CHOSEN action through this placement's loop, with a
+    /// supplied handler-effect arm: the G2 budget, the shared fold, the
+    /// handler's commit, re-resolution and the diff. Where the transport's own
+    /// step hands over once its gate has admitted an event (K8).
     ///
-    /// On a G1 rejection or a G2 budget breach the session is returned UNCHANGED
-    /// with `Rejected = Some _` — default-deny by shape, no hang, no partial
-    /// state, exactly as at the other placements.
-    let stepWith
-        (arm: HandlerArm<HandlerTally>)
-        (session: ServerSession)
-        (ev: LiveEvent)
-        : ServerSession * ServerStepOutput =
-        match Validation.validate session.Services.CanDispatch session.Resolved ev with
-        | Error reason -> session, rejected session (Gate reason)
-        | Ok { Action = None } -> session, inert session
-        | Ok { Action = Some action } ->
-            let budget = session.Services.Budget
-            let cost = Budget.actionCascadeCost action
+    /// `directArm session.Services` is the plain arm; the durable placement
+    /// supplies its own, journaled one. Everything else about the step is
+    /// identical, and the difference lives in the arm rather than in a second
+    /// copy of this function.
+    let dispatchWith
+        (arm: HandlerArm<'Store, 'Effect, HandlerTally<'Node, 'Op>>)
+        (session: ServerSession<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (nodeId: string)
+        (action: 'Action)
+        : ServerSession<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect> * ServerStepOutput<'Node, 'Op, 'Effect, 'Reject> =
+        let budget = session.Services.Budget
+        let cost = Budget.actionCascadeCost session.Services.Witness action
 
-            if cost > budget.MaxActions then
-                session,
-                rejected
-                    session
-                    (BudgetExceeded(sprintf "action cascade cost %d exceeds MaxActions %d" cost budget.MaxActions))
-            elif session.NodeCount > budget.MaxNodes then
-                session,
-                rejected
-                    session
-                    (BudgetExceeded(sprintf "tree cost %d exceeds MaxNodes %d" session.NodeCount budget.MaxNodes))
-            else
-                // ONE path. There is no longer a call case and an everything-else
-                // case: the fold recognises the calls, wherever they are, and
-                // asks the arm below what they mean here.
-                let bounded, tally =
-                    BoundedActions.runBoundedActionWith
-                        arm
-                        ev.NodeId
-                        action
-                        session.Store
-                        (HandlerTally.start session.BaseTree)
+        if cost > budget.MaxActions then
+            session,
+            rejected
+                session
+                (BudgetExceeded(sprintf "action cascade cost %d exceeds MaxActions %d" cost budget.MaxActions))
+        elif session.NodeCount > budget.MaxNodes then
+            session,
+            rejected
+                session
+                (BudgetExceeded(sprintf "tree cost %d exceeds MaxNodes %d" session.NodeCount budget.MaxNodes))
+        else
+            let bounded, tally =
+                BoundedActions.run
+                    session.Services.Witness
+                    arm
+                    nodeId
+                    action
+                    session.Store
+                    (HandlerTally.start session.BaseTree)
 
-                let outcome =
-                    { Store =
-                        { Tree = tally.Tree
-                          Bindings = bounded.Store }
-                      Committed = tally.Committed
-                      Performed = tally.Performed
-                      Patches = tally.Patches
-                      Notifications = tally.Notifications
-                      ClientEffects = bounded.Effects
-                      // Two vocabularies, one list: the shared fold's
-                      // diagnostics, then the handlers' in invocation order. The
-                      // fold has no channel to interleave a foreign diagnostic
-                      // into its own, and inventing one for a debugging surface
-                      // would put a placement's vocabulary in the shared
-                      // package — the exact coupling the arm exists to avoid.
-                      Diagnostics = (bounded.Diagnostics |> List.map ServerDiagnostic.Bounded) @ tally.Diagnostics }
+            let outcome =
+                { Store =
+                    { Tree = tally.Tree
+                      Bindings = bounded.Store }
+                  Committed = tally.Committed
+                  Performed = tally.Performed
+                  Patches = tally.Patches
+                  Notifications = tally.Notifications
+                  ClientEffects = bounded.Effects
+                  Diagnostics = (bounded.Diagnostics |> List.map ServerDiagnostic.Bounded) @ tally.Diagnostics }
 
-                commit session tally.Tree bounded.Store outcome
+            commit session tally.Tree bounded.Store outcome
 
-    /// Step the session with one untrusted inbound event, under THIS placement's
-    /// own interpreter — the direct, two-phase-staging one.
-    ///
-    /// `stepWith directArm`, and it is worth being exactly that rather than a
-    /// separate path: the default interpreter has no privilege over a second
-    /// one, and a difference between them would then have to be a difference in
-    /// the arm, which is the only place a difference belongs.
-    let step (session: ServerSession) (ev: LiveEvent) : ServerSession * ServerStepOutput =
-        stepWith (directArm session.Services) session ev
+    /// `dispatchWith` at the plain handler arm.
+    let dispatch
+        (session: ServerSession<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (nodeId: string)
+        (action: 'Action)
+        : ServerSession<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect> * ServerStepOutput<'Node, 'Op, 'Effect, 'Reject> =
+        dispatchWith (directArm session.Services) session nodeId action

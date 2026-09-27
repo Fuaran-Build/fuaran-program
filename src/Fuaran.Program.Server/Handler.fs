@@ -1,8 +1,5 @@
 namespace Fuaran.Program.Server
 
-open Fuaran.UI.Types
-open Fuaran.UI.Ops.Types
-open Fuaran.UI.ServerDriven
 open Fuaran.Program.Bounded
 
 // ============================================================================
@@ -74,23 +71,21 @@ open Fuaran.Program.Bounded
 /// is the session's binding store, written by the shared fold's `SetState` and
 /// by the query/host-call landing slots. A reader who conflates them will
 /// eventually claim the wrong thing about durability.
-type ServerStore =
-    { Tree: Node<obj>
-      Bindings: BoundedStore }
+type ServerStore<'Node, 'Store> = { Tree: 'Node; Bindings: 'Store }
 
 /// One stage of a handler.
-type HandlerStage =
+type HandlerStage<'Action, 'Op> =
     /// Bounded algebra, run by the SHARED interpreter against `Bindings`.
-    | Compute of Action<obj>
+    | Compute of 'Action
     /// One server effect, run through the gate.
-    | Effect of ServerEffect
+    | Effect of ServerEffect<'Op>
 
 /// A named, host-registered handler: an ordered stage list and nothing else.
 /// No closure, no host reference, no captured state — a handler is data, which
 /// is what lets it be inspected, diffed and (later) given a wire form.
-type Handler =
+type Handler<'Action, 'Op> =
     { Name: string
-      Stages: HandlerStage list }
+      Stages: HandlerStage<'Action, 'Op> list }
 
 /// What a handler run produced, at the level a host cares about. Payload-free
 /// where it is a record of a refusal, payload-bearing where it is work the host
@@ -130,11 +125,11 @@ type ServerDiagnostic =
     | HandlerUnregistered
 
 /// The result of running one handler.
-type HandlerOutcome =
+type HandlerOutcome<'Node, 'Store, 'Op, 'Effect> =
     {
         /// The store after the handler, or the store it started from when the
         /// handler did not commit.
-        Store: ServerStore
+        Store: ServerStore<'Node, 'Store>
         /// Whether the handler ran to completion. `false` means every value
         /// below is the entry state and the handler's declared work did not
         /// happen — except for the host calls `Performed` names, which is the
@@ -155,13 +150,13 @@ type HandlerOutcome =
         Performed: string list
         /// Ops the handler asked to be shipped to the client, in order.
         /// Distinct from anything applied to the domain tree.
-        Patches: TreeOp<obj> list
+        Patches: 'Op list
         /// Host-channel messages the handler asked for, in order.
         Notifications: (string * Fuaran.Core.JVal) list
         /// Closure-free client effects the shared interpreter emitted from a
         /// `Compute` stage — the same values, from the same fold, as at the
         /// other placements.
-        ClientEffects: ClientEffect list
+        ClientEffects: 'Effect list
         Diagnostics: ServerDiagnostic list
     }
 
@@ -174,17 +169,17 @@ type HandlerOutcome =
 /// notifications and the server diagnostics are this placement's business, and
 /// the fold must be able to carry them without knowing what any of them are.
 /// An event that reaches no call action produces the tally it started with.
-type HandlerTally =
+type HandlerTally<'Node, 'Op> =
     {
         /// The domain tree as the last committed handler left it.
-        Tree: Node<obj>
+        Tree: 'Node
         /// `false` once ANY handler this event invoked failed to commit. A
         /// handler is the atomicity unit, so one that halted rolled ITSELF back
         /// and the rest of the fold carried on — this flag is how the event says
         /// that happened rather than implying the whole event was refused.
         Committed: bool
         Performed: string list
-        Patches: TreeOp<obj> list
+        Patches: 'Op list
         Notifications: (string * Fuaran.Core.JVal) list
         Diagnostics: ServerDiagnostic list
     }
@@ -193,7 +188,7 @@ module HandlerTally =
 
     /// The tally an event starts from: this tree, nothing performed, committed
     /// until proven otherwise.
-    let start (tree: Node<obj>) : HandlerTally =
+    let start (tree: 'Node) : HandlerTally<'Node, 'Op> =
         { Tree = tree
           Committed = true
           Performed = []
@@ -217,9 +212,9 @@ module Handler =
     /// The state threaded through the stage fold. Lists accumulate reversed and
     /// are flipped once at the end, so a long handler does not quadratically
     /// re-append.
-    type private Accumulator =
+    type private Accumulator<'Node, 'Store, 'Op, 'Effect> =
         {
-            Store: ServerStore
+            Store: ServerStore<'Node, 'Store>
             Halted: bool
             Performed: string list
             /// The capabilities the PERFORM phase ran. Kept apart from `Performed`
@@ -228,9 +223,9 @@ module Handler =
             /// string prefixes.
             Externally: string list
             Staged: StagedCall list
-            Patches: TreeOp<obj> list
+            Patches: 'Op list
             Notifications: (string * Fuaran.Core.JVal) list
-            ClientEffects: ClientEffect list
+            ClientEffects: 'Effect list
             Diagnostics: ServerDiagnostic list
         }
 
@@ -246,13 +241,22 @@ module Handler =
         | Fuaran.Core.UnresolvedSource _ -> "UnresolvedSource"
         | Fuaran.Core.OverflowError _ -> "OverflowError"
         | Fuaran.Core.UnboundParam _ -> "UnboundParam"
+        // Core-Compute 0.34.0: a clock read with no pinned evaluation instant.
+        | Fuaran.Core.UnpinnedClock _ -> "UnpinnedClock"
 
-    let private halt (capability: string) (reason: string) (acc: Accumulator) : Accumulator =
+    let private halt
+        (capability: string)
+        (reason: string)
+        (acc: Accumulator<'Node, 'Store, 'Op, 'Effect>)
+        : Accumulator<'Node, 'Store, 'Op, 'Effect> =
         { acc with
             Halted = true
             Diagnostics = ServerDiagnostic.Failed(capability, reason) :: acc.Diagnostics }
 
-    let private deny (denial: ServerEffectDenial) (acc: Accumulator) : Accumulator =
+    let private deny
+        (denial: ServerEffectDenial)
+        (acc: Accumulator<'Node, 'Store, 'Op, 'Effect>)
+        : Accumulator<'Node, 'Store, 'Op, 'Effect> =
         { acc with
             Halted = true
             Diagnostics = ServerDiagnostic.Denied denial :: acc.Diagnostics }
@@ -278,11 +282,12 @@ module Handler =
     /// performs after the handler returns. The fifth — `HostCall` — is the only
     /// arm that reaches outside, so it is the only one staged (D8).
     let private runEffect
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
         (registry: ServerEffectRegistry)
         (resolve: string -> Result<Fuaran.Core.Table, Fuaran.Core.EvalError>)
-        (effect: ServerEffect)
-        (acc: Accumulator)
-        : Accumulator =
+        (effect: ServerEffect<'Op>)
+        (acc: Accumulator<'Node, 'Store, 'Op, 'Effect>)
+        : Accumulator<'Node, 'Store, 'Op, 'Effect> =
         let capability = ServerEffect.capability effect
 
         if not (registry.Gate capability) then
@@ -319,13 +324,7 @@ module Handler =
                         { performed with
                             Store =
                                 { performed.Store with
-                                    Bindings =
-                                        { performed.Store.Bindings with
-                                            QueryResults =
-                                                Map.add
-                                                    name
-                                                    (Unchecked.nonNull (box table))
-                                                    performed.Store.Bindings.QueryResults } } }
+                                    Bindings = witness.Store.LandQuery name table performed.Store.Bindings } }
 
                 | ServerEffect.ApplyOps ops ->
                     // The only domain-state mutation. Folded with short-circuit: an
@@ -335,11 +334,11 @@ module Handler =
                     let applied =
                         ops
                         |> List.fold
-                            (fun state op -> state |> Result.bind (Fuaran.UI.Ops.Apply.apply op))
+                            (fun state op -> state |> Result.bind (witness.Op.Stream.Apply op))
                             (Ok performed.Store.Tree)
 
                     match applied with
-                    | Error err -> halt capability (sprintf "%A" err.Code) acc
+                    | Error code -> halt capability code acc
                     | Ok tree ->
                         { performed with
                             Store = { performed.Store with Tree = tree } }
@@ -359,12 +358,12 @@ module Handler =
                         // performer to have run, and refusing here means a handler
                         // with a bad slot never reaches the outside world at all.
                         match into with
-                        | Some key when Fuaran.UI.Renderer.StateKeys.isHostReserved key ->
+                        | Some key when witness.Store.IsReserved key ->
                             halt
                                 capability
                                 (sprintf
                                     "landing slot is under the host-reserved '%s' namespace"
-                                    Fuaran.UI.Renderer.StateKeys.HostReservedPrefix)
+                                    witness.Store.ReservedPrefix)
                                 acc
                         | _ ->
                             // Admitted, not performed. `Performed` is deliberately
@@ -388,12 +387,13 @@ module Handler =
 
     /// Run one stage.
     let private runStage
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
         (registry: ServerEffectRegistry)
         (resolve: string -> Result<Fuaran.Core.Table, Fuaran.Core.EvalError>)
         (nodeId: string)
-        (stage: HandlerStage)
-        (acc: Accumulator)
-        : Accumulator =
+        (stage: HandlerStage<'Action, 'Op>)
+        (acc: Accumulator<'Node, 'Store, 'Op, 'Effect>)
+        : Accumulator<'Node, 'Store, 'Op, 'Effect> =
         match stage with
         | Compute action ->
             // THE shared fold, with the INERT arm — deliberately, and this is
@@ -408,7 +408,7 @@ module Handler =
             // terminate, and totality would rest on a budget rather than on the
             // shape of the thing. A call action in a handler stage is therefore
             // the documented no-op, exactly as at a placement with no registry.
-            let outcome = BoundedActions.runBoundedAction nodeId action acc.Store.Bindings
+            let outcome = BoundedActions.runInert witness nodeId action acc.Store.Bindings
 
             { acc with
                 Store =
@@ -418,14 +418,18 @@ module Handler =
                 Diagnostics =
                     (outcome.Diagnostics |> List.rev |> List.map ServerDiagnostic.Bounded)
                     @ acc.Diagnostics }
-        | Effect effect -> runEffect registry resolve effect acc
+        | Effect effect -> runEffect witness registry resolve effect acc
 
     /// PERFORM the staged host calls, in declaration order, stopping at the
     /// first failure (D8). This is the only code in the handler that reaches
     /// outside, and it runs only after the plan phase completed — so a handler
     /// that was going to fail on its own terms has already failed, silently and
     /// for free, before any of this.
-    let rec private perform (staged: StagedCall list) (acc: Accumulator) : Accumulator =
+    let rec private perform
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (staged: StagedCall list)
+        (acc: Accumulator<'Node, 'Store, 'Op, 'Effect>)
+        : Accumulator<'Node, 'Store, 'Op, 'Effect> =
         match staged with
         | [] -> acc
         | call :: rest ->
@@ -446,23 +450,22 @@ module Handler =
                         { recorded with
                             Store =
                                 { recorded.Store with
-                                    Bindings =
-                                        { recorded.Store.Bindings with
-                                            State = Map.add key (JValObj.toObj result) recorded.Store.Bindings.State } } }
+                                    Bindings = witness.Store.Assign key result recorded.Store.Bindings } }
 
-                perform rest landed
+                perform witness rest landed
 
     /// Run a handler's stages in order against `store`, committing only if every
     /// stage planned and every staged host call then performed. `nodeId` is the
     /// originating event's node, threaded into the shared interpreter exactly as
     /// the other placements thread it.
     let run
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
         (registry: ServerEffectRegistry)
         (resolve: string -> Result<Fuaran.Core.Table, Fuaran.Core.EvalError>)
         (nodeId: string)
-        (handler: Handler)
-        (store: ServerStore)
-        : HandlerOutcome =
+        (handler: Handler<'Action, 'Op>)
+        (store: ServerStore<'Node, 'Store>)
+        : HandlerOutcome<'Node, 'Store, 'Op, 'Effect> =
         let start =
             { Store = store
               Halted = false
@@ -481,7 +484,7 @@ module Handler =
                     if acc.Halted then
                         acc
                     else
-                        runStage registry resolve nodeId stage acc)
+                        runStage witness registry resolve nodeId stage acc)
                 start
 
         // The phase boundary. Nothing external has run above this line, and
@@ -491,7 +494,7 @@ module Handler =
             if planned.Halted then
                 planned
             else
-                perform (List.rev planned.Staged) planned
+                perform witness (List.rev planned.Staged) planned
 
         if final.Halted then
             // Roll back to the entry state. The diagnostics survive: they are

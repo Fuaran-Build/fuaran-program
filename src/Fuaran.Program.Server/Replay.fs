@@ -1,6 +1,5 @@
 namespace Fuaran.Program.Server
 
-open Fuaran.UI.Types
 open Fuaran.Program.Bounded
 
 // ============================================================================
@@ -133,14 +132,19 @@ module Replay =
     ///
     /// Total, allocation-light, and decided entirely from the declared form: no
     /// store is read, no effect is performed, and the handler is not run.
-    let admit (mode: ReplayMode) (policy: ReplayPolicy) (handler: Handler) : ReplayDecision =
+    let admit
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (mode: ReplayMode)
+        (policy: ReplayPolicy)
+        (handler: Handler<'Action, 'Op>)
+        : ReplayDecision =
         match mode with
         // The handler is deliberately NOT consulted — see the header.
         | ReplayMode.Audit ->
             { Admission = ReplayAdmission.OpsOnly
               Record = None }
         | ReplayMode.Resume ->
-            let reasons = HandlerWire.replayReasons handler
+            let reasons = HandlerWire.replayReasons witness handler
             let safety = ProgramWire.verdictOfReasons reasons
 
             match safety with
@@ -166,8 +170,13 @@ module Replay =
     /// The decision for each of a set of handlers, paired with its registration
     /// key — what a host resuming a session asks once, before resuming any of
     /// them.
-    let admitAll (mode: ReplayMode) (policy: ReplayPolicy) (handlers: Handler seq) : (string * ReplayDecision) list =
-        handlers |> Seq.map (fun h -> h.Name, admit mode policy h) |> List.ofSeq
+    let admitAll
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (mode: ReplayMode)
+        (policy: ReplayPolicy)
+        (handlers: Handler<'Action, 'Op> seq)
+        : (string * ReplayDecision) list =
+        handlers |> Seq.map (fun h -> h.Name, admit witness mode policy h) |> List.ofSeq
 
     /// Human-readable, log-safe rendering of a decision.
     ///
@@ -202,8 +211,11 @@ module Replay =
     // ─── the projection join ─────────────────────────────────────────────────
 
     /// One handler's posture, as the demanded-projection document carries it.
-    let postureOf (handler: Handler) : ReplayPosture =
-        let reasons = HandlerWire.replayReasons handler
+    let postureOf
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (handler: Handler<'Action, 'Op>)
+        : ReplayPosture =
+        let reasons = HandlerWire.replayReasons witness handler
 
         { Handler = handler.Name
           Safety = ProgramWire.replaySafetyTag (ProgramWire.verdictOfReasons reasons)
@@ -220,11 +232,15 @@ module Replay =
     /// attaching a posture would turn "not asked" into "asked" — the one reading
     /// the field's own contract forbids. Use `ofTreeAndHandlers` below, which
     /// walks and joins together and so cannot reach that state.
-    let withPostures (handlers: Handler seq) (projection: DemandedProjection) : DemandedProjection =
+    let withPostures
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (handlers: Handler<'Action, 'Op> seq)
+        (projection: DemandedProjection)
+        : DemandedProjection =
         match projection.Server with
         | None -> projection
         | Some server ->
-            let postures = handlers |> Seq.map postureOf |> List.ofSeq
+            let postures = handlers |> Seq.map (postureOf witness) |> List.ofSeq
 
             Demanded.withServer
                 { server with
@@ -238,6 +254,10 @@ module Replay =
     /// The posture set and the demand set are computed from the SAME
     /// reachability, through the same function, so the document cannot describe
     /// one set of handlers in its capabilities and another in its postures.
-    let ofTreeAndHandlers (handlers: Map<string, Handler>) (root: Node<obj>) : DemandedProjection =
-        ServerDemanded.ofTreeAndHandlers handlers root
-        |> withPostures (ServerDemanded.reachable handlers root)
+    let ofTreeAndHandlers
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (handlers: Map<string, Handler<'Action, 'Op>>)
+        (root: 'Node)
+        : DemandedProjection =
+        ServerDemanded.ofTreeAndHandlers witness handlers root
+        |> withPostures witness (ServerDemanded.reachable witness handlers root)
