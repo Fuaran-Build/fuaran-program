@@ -315,6 +315,30 @@ with the evidence that would show it to be wrong.
 `TreeOp`, `ClientEffect`, `LiveEvent`, `DomPatch`, the UI's four-case `Resolution`, `WireTree`, and
 the UI's `KeyDirectoryEntry`.
 
+### 3.9 The contract as built (Phase 1896)
+
+The code (`src/Fuaran.Program.Bounded/Witness.fs`) meets the shapes above with five differences,
+each forced by keeping behaviour where it was rather than chosen:
+
+- **`TreeWitness` gains `Traverse` and `Events`, and has no node-level `Uses`.** The UI tree has two
+  child surfaces and the code walked each where it walked it: the budget and re-resolution use the
+  STRUCTURAL surface (`Nodes`, paired with its `ReplaceChildren`), while the demanded projection and
+  the query readers enumerate the whole traversal surface, structural children and the other
+  positions a node holds (`Traverse`). `Events` is what the demanded projection's opaque-handler
+  list reads (a node that accepts an event but carries no wire-surviving action). Nothing reads a
+  node's own binding uses, so that member was not added.
+- **`ExprWitness` gains `Uses`.** What an `Assign`'s `from` expression reads — a state key, or a
+  query slot — is what the demanded projection states; §3.2 names the `Assign` shape as its input,
+  and its reads are only reachable through the expression.
+- **`ActionWitness` gains `Encode` and `Decode`.** §6 names the action codec as the witness's
+  (`encodeActionJson` / `decodeNodeObj`); the handler codec splices it into a compute stage.
+- **`EffectWitness.Encode` answers a string, not a `JVal`.** The client-effect family is the
+  specification's one envelope exception (a `kind` discriminator, declaration-ordered members), so
+  the shipped bytes are carried as bytes; re-rendering them canonically would change them.
+- **The names:** the resolution is `ExprResolution` and the view `ActionView` (both
+  `RequireQualifiedAccess`), so neither captures the UI tier's own `Resolved` / `Sequence` spellings
+  in code that opens both.
+
 ### 3.8 How D14 applies to this cut
 
 D14 says that when the generic tier is cut, its model comes first. The fold's model already exists:

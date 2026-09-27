@@ -1,10 +1,12 @@
 # proofs/ — the F\* models of the bounded path
 
 `Fuaran.Program.Bounded` ships one interpreter and one budget, and running an untrusted
-generated tree on shared infrastructure needs both. `BoundedActions.runBoundedActionWith`
+generated tree on shared infrastructure needs both. `BoundedActions.run`
 (`src/Fuaran.Program.Bounded/BoundedActions.fs`) is the only place in this domain that
-interprets an `Action`, and every placement runs it: the server driver in this package, the
-browser client in `Fuaran.Program.Runtime`. One algebra, two placements, one fold. `Budget`
+interprets an action — through a domain's witness since Phase 1896 — and every placement runs
+it: the server placement, and at the UI witness the bounded driver and the browser client (the
+UI adapter's `BoundedActions.runBoundedActionWith` is `run` at that witness). One algebra, every
+placement, one fold. `Budget`
 (`src/Fuaran.Program.Bounded/Budget.fs`) is what prices the tree and the cascade, and the
 driver is what refuses them.
 
@@ -33,8 +35,8 @@ The model is `BoundedFold.fst`. It is hand-written, it names its F# counterpart 
 generic tier, the `DECISIONS.md` D18 contract member — above every definition, and since Phase 1898
 it has two layers in one file.
 
-**The generic tier** is a model of the fold the generic core will run (`BoundedActions.run witness`,
-which Phase 1896 writes against this model — D14's "model first"): one `match` over the four shapes
+**The generic tier** is a model of the fold the generic core runs (`BoundedActions.run witness`,
+which Phase 1896 wrote against this model — D14's "model first"): one `match` over the four shapes
 of D18's `ActionView` — `Sequence`, `Assign`, `Call`, `Leaf` — parameterised by a WITNESS record
 holding the fold-read members of `ProgramWitness` (`View`, `Lower`, `Describe`, `Resolve`,
 `IsReserved`, `ReservedPrefix`). Its four theorems are over the view and quantified over every
@@ -202,7 +204,10 @@ differential is what says the discharged instance is the shipped one.
 
 A proof about a model is a claim about the code only if something runs the two side by side.
 `tests/Fuaran.Program.Parity.Tests/ProofOracleTests.fs` is that something: it runs the
-EXTRACTION of `BoundedFold.fst` beside `BoundedActions.runBoundedActionWith` and requires the
+EXTRACTION of `BoundedFold.fst` beside `BoundedActions.runBoundedActionWith` — the generic core
+at the UI witness, through the UI adapter parked under `tests/Fuaran.Program.UI.Parked/` — and,
+since Phase 1896, the extraction's generic `run_action` beside `BoundedActions.run` at a non-UI
+test witness, and requires the
 store, the effect list and the diagnostics to agree — all three at once, because a fold that
 got the store right and the diagnostics wrong is still a fold that disagrees.
 
@@ -269,9 +274,11 @@ that matches nothing prints a green.
 `run_action (ui_witness ax)`, the fourteen arms seen through the view — so the same five cases that
 tied Phase 1715's model to production now tie the view-level model to it, through the UI witness,
 with no change to the host. That is the shape D18 §3.8 names: the oracle runs through the UI
-adapter, which is where the fourteen arms live. Phase 1896 adds a second differential, the generic
-fold through a TEST witness against the ported core; Phase 1897 moves this UI-arm differential with
-the adapter into its package. The host's file citations move with the code in those commits.
+adapter, which is where the fourteen arms live. Phase 1896 added the second differential, the
+generic fold through a TEST witness (`tests/Fuaran.Program.Tests/ToyDomain.fs`, a domain with no UI
+type in it) against the ported core, as a nested list inside the same host list, so step 6's case
+count covers it; Phase 1897 moves the UI-arm differential with the adapter into its package. The
+host's file citations move with the code in those commits.
 
 ### Assumed, and stated
 
@@ -311,7 +318,8 @@ theorem above proves the no-closure half. `Budget.fst` proves the budget half, o
 arithmetic that decides whether a tree is admitted at all.
 
 The subject is `Budget.satAdd` / `satMul`, `Budget.actionCascadeCost`, `Budget.treeCost`, and
-the G2 stage of `BoundedDriver.step` (`BoundedDriver.fs:201-241`) that consumes them. Five
+the G2 stage of `BoundedDriver.step` (`tests/Fuaran.Program.UI.Parked/BoundedDriver.fs:203-242`,
+the UI transport loop, parked there by Phase 1896) that consumes them. Five
 headline lemmas.
 
 ### 1. `sat_monotone` — the saturating arithmetic cannot make a tree look cheap

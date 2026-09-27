@@ -3,6 +3,12 @@
 The **server-logic placement** of the bounded program loop: a generated tree names a handler, and
 the handler runs as data — read, compute, mutate, respond — with no hand-authored update function.
 
+> **Since 0.6.0 (Phase 1896) this package is domain-generic.** The handler loop, the server-effect
+> vocabulary and its codecs, the session and the durable interpreter run over a domain's witness and
+> reference no UI-tier package. An event is dispatched by the transport, not the algebra, so the
+> session starts at `ServerSession.dispatchWith`; the UI event step (and the pre-0.6.0 names as
+> aliases) is the `Fuaran.Program.Server.UI` adapter, released in the same version.
+
 > **The handler now has a wire form** (`HandlerWire`), specified and conformance-tested against a
 > corpus that lives outside this package. A handler is still host-registered: the tree carries only
 > the endpoint that names one, and nothing here makes a received handler runnable — registration

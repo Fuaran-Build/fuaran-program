@@ -29,8 +29,8 @@ safe to run untrusted: bounded code plus bounded cost.
 | Package | What it is |
 |---|---|
 | `Fuaran.Program` | the domain package |
-| `Fuaran.Program.Bounded` | the bounded interpreter, the binding re-resolution pass, the resource budget, the server driver, and the demanded-effect projection — [README](src/Fuaran.Program.Bounded/README.md) |
-| `Fuaran.Program.Runtime` | the **client placement**: run a wire-decoded tree interactively in the browser with no hand-authored update function — [README](src/Fuaran.Program.Runtime/README.md) |
+| `Fuaran.Program.Bounded` | the bounded interpreter, the binding re-resolution pass, the resource budget, and the demanded-effect projection, generic over a domain's witness since 0.6.0 (the server driver is the UI adapter's) — [README](src/Fuaran.Program.Bounded/README.md) |
+| `Fuaran.Program.Runtime` | the **client placement**'s effect seam, generic over a domain's effects since 0.6.0; the browser loop that runs a wire-decoded UI tree is the UI adapter's — [README](src/Fuaran.Program.Runtime/README.md) |
 | `Fuaran.Program.Server` | the **server-logic placement**: handlers as data behind a closed, default-deny server-effect vocabulary, plus a second interpreter of the same algebra under deterministic replay over an effect journal — [README](src/Fuaran.Program.Server/README.md) |
 
 One algebra, several placements — and one *interpreter* shared between them, which is what makes

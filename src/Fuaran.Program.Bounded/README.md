@@ -3,6 +3,14 @@
 The **bounded program interpreter** — a total fold of the wire-representable action set over a
 program's state store — plus the server placement of the program loop that drives it.
 
+> **Since 0.6.0 (Phase 1896) this package is domain-generic.** The interpreter, the budget, the
+> re-resolution pass, the demanded projection, the program wire's referenced positions and the
+> signed envelope are written over a domain's witness (`ProgramWitness`, `Witness.fs`) and reference
+> no UI-tier package. The UI instantiation — the UI witness, the pre-0.6.0 names as aliases
+> (`BoundedActions.runBoundedAction`, `Resolve.resolveTree` over a UI tree, …), and the UI transport
+> loop (`BoundedDriver`, `BoundedConnection`) — is the `Fuaran.Program.UI` adapter, released in the
+> same version. The sections below describe the UI instantiation where they name UI types.
+
 ## What this package is for
 
 A program tree that arrived over the wire is data, not code. This package is what runs it:

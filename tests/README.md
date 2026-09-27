@@ -5,12 +5,15 @@ Five suites, each its own Expecto assembly runner, plus the Fable parity leg.
 
 | Suite | What it pins |
 |---|---|
-| `Fuaran.Program.Tests` | the skeleton package |
+| `Fuaran.Program.Tests` | the skeleton package; the generic core at a NON-UI toy witness (`ToyDomain.fs`), and the boundary test that no core package references the UI tier, declared or resolved — this project's own graph holds no UI-tier package |
 | `Fuaran.Program.Bounded.Tests` | the interpreter's invariants and the server driver's loop |
 | `Fuaran.Program.Runtime.Tests` | the client placement's loop and the effect seam |
 | `Fuaran.Program.Server.Tests` | the server-logic placement: handlers, the server-effect seam, the pre-execution query-schema check, the replay classification's reasons and mode enforcement, and tier-parity leg (d) |
 | `Fuaran.Program.Parity.Tests` | tier parity, .NET legs (a) + (b); and the proof oracle's differential (`ProofOracleTests.fs`) |
 | `Fuaran.Program.Parity.Fable` | tier parity, leg (c) — the same runner under node |
+| `Fuaran.Program.UI.Parked` | NOT a test project: the UI instantiation of the generic core (the UI witness, the pre-0.6.0 names as aliases, the UI transport loop), Fable-clean and non-packable, parked here by Phase 1896 until Phase 1897 ships it as the `Fuaran.Program.UI` package |
+| `Fuaran.Program.Server.UI.Parked` | NOT a test project: the server placement's UI instantiation (aliases, and the UI event step for the session and the durable interpreter), .NET-only and non-packable, parked likewise for `Fuaran.Program.Server.UI` |
+| `Fuaran.Program.Bench` | the `RunQuery` benchmark; a smoke pass under the gate, the measurement under `--full` (`docs/runquery-benchmark.md`) |
 
 ## The tier-parity family
 
