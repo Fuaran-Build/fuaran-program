@@ -15,5 +15,6 @@
     <Project Path="tests/Fuaran.Program.Server.Tests/Fuaran.Program.Server.Tests.fsproj" />
     <Project Path="tests/Fuaran.Program.Parity/Fuaran.Program.Parity.fsproj" />
     <Project Path="tests/Fuaran.Program.Parity.Tests/Fuaran.Program.Parity.Tests.fsproj" />
+    <Project Path="tests/Fuaran.Program.Bench/Fuaran.Program.Bench.fsproj" />
   </Folder>
 </Solution>
