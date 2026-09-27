@@ -1,8 +1,6 @@
 namespace Fuaran.Program.Bounded
 
-open Fuaran.UI.Types
-open Fuaran.UI.Ops.Introspect
-open Fuaran.UI.ServerDriven
+open Fuaran.Core
 
 // ============================================================================
 //  The demanded-effect projection, and the host-coverage validator over it.
@@ -62,22 +60,6 @@ open Fuaran.UI.ServerDriven
 //  through `ofAction` / `union` / `withServer`. That split is why this package
 //  still knows nothing about handlers while the document describes them.
 // ============================================================================
-
-/// One host call a program tree names. Both fields are AUTHOR-DECLARED names,
-/// never payload values — an endpoint path, a capability id, a notification
-/// channel, a tool name, a query slot. The projection is therefore log-safe by
-/// construction, the same posture `EffectDenial.describe` and
-/// `BoundedDiagnostic.describe` take.
-type HostCallDemand =
-    {
-        /// The channel the call goes out on, named by the action arm that makes
-        /// it: `"Call"` (an endpoint), `"Invoke"` (a capability), `"Notify"` (a
-        /// notification channel), `"AiTool"` (a tool), `"Query"` (a query slot
-        /// a result lands in or a dispatch-time binding reads).
-        Channel: string
-        /// The name the tree names within that channel.
-        Name: string
-    }
 
 /// One state namespace a program tree touches — the segment of a state key
 /// before its first `.`, or the whole key when it carries none. Namespaces
@@ -515,213 +497,79 @@ module Demanded =
         let i = key.IndexOf '.'
         if i < 0 then key else key.Substring(0, i)
 
-    /// The `ClientEffect` discriminator an action arm demands, if any.
+    /// What ONE action demands, read through the witness's view: the effect
+    /// kinds, the host calls and the state-namespace touches (namespace,
+    /// written).
     ///
-    /// Named THROUGH `ClientEffect.kind` on a canonical sample rather than as a
-    /// string literal, so a demanded name and a registry key cannot drift apart
-    /// — the registry is keyed on exactly this discriminator, and two
-    /// hand-written spellings of one string is precisely how a coverage check
-    /// silently starts reporting nothing.
+    /// TOTAL over the four view shapes, with no wildcard. The vocabulary's own
+    /// arms reach this function as `Leaf` declarations — the effect kinds and
+    /// host channels each one names — so the enumeration of which arm demands
+    /// what lives in the witness's `View`, where the closed union is matched
+    /// exhaustively and a new arm cannot be added silently. What remains here
+    /// is the control structure every domain shares:
     ///
-    /// The other two effect arms (`PushState` / `Download`) are absent
-    /// deliberately: no `Action` produces them. They reach a host from the
-    /// navigation layer, which is not a program tree's to demand. `Focus` was
-    /// in that list until the tier gave the action union its counterpart, and
-    /// it moved out of it in the same change: an arm is absent here because
-    /// nothing can demand it, never because it is inconvenient to name.
-    /// TOTAL over the closed action union, with every absence stated as an arm
-    /// rather than swept into a wildcard. It was a wildcard until Phase 1678,
-    /// and that is exactly how `Action.Print` became effect-bearing upstream
-    /// while this projection reported NOTHING for it and the compiler said
-    /// nothing either: a host offering no printing passed a coverage check it
-    /// should have failed. The arms below are the statement that each of those
-    /// actions demands no client effect — a claim the next vocabulary growth
-    /// has to re-make deliberately, because the compiler will now refuse the
-    /// file until it does.
-    // `Action.Dispatch` is marked in-process-only upstream, so naming it raises
-    // FS0044. As below, this is a static enumeration of the closed DU rather
-    // than an authoring site; scoped to this one declaration.
-    #nowarn "44"
-
-    let private effectKindOf (action: Action<obj>) : string option =
-        match action with
-        | Action.Navigate _ -> Some(ClientEffect.kind (ClientEffect.Navigate("", NavigateTarget.Self)))
-        | Action.Focus _ -> Some(ClientEffect.kind (ClientEffect.Focus ""))
-        | Action.WriteToClipboard _ -> Some(ClientEffect.kind (ClientEffect.WriteToClipboard ""))
-        | Action.ReadFileBody _ -> Some(ClientEffect.kind (ClientEffect.ReadFileBody("", "")))
-        | Action.Print -> Some(ClientEffect.kind ClientEffect.Print)
-
-        // `Chain` carries no effect of its own: `demandsOfAction` folds over its
-        // members and unions what THEY demand, so answering `Some` here would
-        // double-count and answering for the members would duplicate that fold.
-        | Action.Chain _ -> None
-
-        // `Confirm` demands nothing, including from its continuations — the
-        // bounded interpreter answers it with a documented no-op, so neither
-        // branch is reachable on this path. This arm and the `Confirm` arm of
-        // `demandsOfAction` MOVE TOGETHER: when the placement grows the
-        // confirmation round trip, `Confirm` gains its effect here in the same
-        // change that makes the continuations reachable there.
-        | Action.Confirm _ -> None
-
-        // Store writes, not client effects. `SetState` writes a namespace and
-        // `CommitLocal` flushes a per-node client-side buffer; both are reported
-        // as namespace touches by `demandsOfAction`, which is where a host reads
-        // them.
-        | Action.SetState _
-        | Action.CommitLocal _ -> None
-
-        // Host CALLS, reported on their own channels by `demandsOfAction`. An
-        // endpoint, a capability, a notification channel and a tool name are
-        // each a demand the host answers by name; none of them is a
-        // `ClientEffect`, and reporting one as both would make the effect
-        // coverage check disagree with the call coverage check about the same
-        // action.
-        | Action.Call _
-        | Action.Invoke _
-        | Action.Notify _
-        | Action.AiTool _ -> None
-
-        // In-process only: `Dispatch` has no `update` to reach on this path, so
-        // it reaches no host at all and can demand nothing of one.
-        | Action.Dispatch _ -> None
-
-    #warnon "44"
-
-    /// The host calls a dispatch-time binding source names. A `Binding.Query`
-    /// read asks the host's query channel for a named slot; the other binding
-    /// cases read context the host already supplied.
-    let private hostCallsOfBinding (binding: Binding<Fuaran.Core.JVal>) : HostCallDemand list =
-        Fuaran.UI.BindingWalk.usesOfBinding binding
-        |> List.choose (fun u ->
-            match u with
-            | Fuaran.UI.BindingWalk.BindingUse.Query(name, _) -> Some { Channel = "Query"; Name = name }
-            | _ -> None)
-
-    /// The state namespaces a dispatch-time binding source READS.
-    let private readsOfBinding (binding: Binding<Fuaran.Core.JVal>) : string list =
-        Fuaran.UI.BindingWalk.usesOfBinding binding
-        |> List.choose (fun u ->
-            match u with
-            | Fuaran.UI.BindingWalk.BindingUse.State key -> Some(namespaceOf key)
-            | _ -> None)
-
-    /// What one action arm demands: effect discriminators, host calls, and
-    /// `(namespace, written)` touches. Total over the closed action DU; `Chain`
-    /// recurses.
-    // `Action.Dispatch` is marked in-process-only upstream, so mentioning it
-    // raises FS0044. This is a static enumeration of the closed DU, not an
-    // authoring site: it must name every case, and the arm that names
-    // `Dispatch` is exactly the statement that it demands nothing. Scoped to
-    // the one declaration.
-    #nowarn "44"
-
-    let rec private demandsOfAction (action: Action<obj>) : string list * HostCallDemand list * (string * bool) list =
-        let effects = effectKindOf action |> Option.toList
-
-        match action with
-        | Action.Chain actions ->
+    ///   - `Sequence` demands the union of its members, in order;
+    ///   - `Assign` writes its key's namespace, and its `from` expression reads
+    ///     what the witness's `Expr.Uses` says it reads — a state key is a
+    ///     namespace read, a query slot a `Query` host call;
+    ///   - `Call` names its endpoint on the call channel, whether or not it
+    ///     declares a target (a declared target is refused at dispatch, and a
+    ///     host that cannot serve the endpoint is still worth telling);
+    ///   - `Leaf` demands exactly what it declares.
+    let rec private demandsOfAction
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (action: 'Action)
+        : string list * HostCallDemand list * (string * bool) list =
+        match witness.Action.View action with
+        | ActionView.Sequence actions ->
             actions
             |> List.fold
                 (fun (accE, accH, accN) a ->
-                    let e, h, n = demandsOfAction a
+                    let e, h, n = demandsOfAction witness a
                     accE @ e, accH @ h, accN @ n)
                 ([], [], [])
 
-        | Action.SetState(key, _, valueFrom) ->
-            // The write is the key's namespace. `valueFrom` is
-            // evaluated at DISPATCH time against the store, so what it reads is
-            // a genuine demand of the running program — unlike a display-slot
-            // read, which is only the host reading back what it supplied.
-            let reads =
-                match valueFrom with
-                | Some b -> readsOfBinding b |> List.map (fun ns -> ns, false)
+        | ActionView.Assign(key, _, from) ->
+            let uses =
+                match from with
+                | Some expr -> witness.Expr.Uses expr
                 | None -> []
+
+            let reads =
+                uses
+                |> List.choose (fun u ->
+                    match u with
+                    | BindingUse.State stateKey -> Some(namespaceOf stateKey, false)
+                    | BindingUse.Query _ -> None)
 
             let calls =
-                match valueFrom with
-                | Some b -> hostCallsOfBinding b
-                | None -> []
+                uses
+                |> List.choose (fun u ->
+                    match u with
+                    | BindingUse.Query name -> Some { Channel = "Query"; Name = name }
+                    | BindingUse.State _ -> None)
 
-            effects, calls, (namespaceOf key, true) :: reads
+            [], calls, (namespaceOf key, true) :: reads
 
-        | Action.Call(endpoint, _, _) ->
-            // The endpoint is the demand, and the whole of it. A tree-declared
-            // result target demands nothing, because it IS nothing here: result-
-            // target ownership sits with the handler (DECISIONS.md D9), and the
-            // fold refuses a call that declares one — so a target could only
-            // ever ride on a call that reaches no host at all. Projecting it
-            // would report a demand for a slot no host will ever be asked to
-            // cover.
-            effects,
+        | ActionView.Call(endpoint, _) ->
+            [],
             [ { Channel = CallChannel
                 Name = endpoint } ],
             []
 
-        | Action.Invoke(capabilityId, _) ->
-            effects,
-            [ { Channel = "Invoke"
-                Name = capabilityId } ],
-            []
+        | ActionView.Leaf declaration -> declaration.EffectKinds, declaration.HostCalls, []
 
-        | Action.Notify(channel, _) -> effects, [ { Channel = "Notify"; Name = channel } ], []
-        | Action.AiTool(toolName, _) -> effects, [ { Channel = "AiTool"; Name = toolName } ], []
-
-        // The remaining arms demand no host call and touch no namespace.
-        // `Navigate` / `WriteToClipboard` / `ReadFileBody` / `Print` / `Focus`
-        // contributed their effect above; `Dispatch` has no `update` to reach on
-        // this path and `CommitLocal` flushes a per-node client-side buffer.
-        //
-        // `Print` demands its effect and nothing else: it is payload-free, so
-        // there is no binding to read from and no landing slot to write to, and
-        // it reports nothing back that a namespace could receive. `Focus` is the
-        // same shape over an author-written node id.
-        //
-        // `Confirm` demands NOTHING, INCLUDING FROM ITS CONTINUATIONS, and that
-        // is the arm to read before changing either file. The invariant that
-        // makes this projection worth having is that it reports exactly what the
-        // interpreter beside it will ASK A HOST FOR — over-reporting costs the
-        // check its stated exactness on a decoded tree just as under-reporting
-        // does, and a coverage failure nobody can act on is how a check learns
-        // to be ignored. The bounded interpreter answers `Confirm` with a
-        // documented no-op, so neither continuation is reachable on this path
-        // and nothing inside them is ever demanded of a host. THE TWO ARMS MOVE
-        // TOGETHER: when the placement grows the confirmation round trip, this
-        // one recurses into `onConfirm` and `onCancel` in the same change, and
-        // `Confirm` gains its own effect here at the same moment. Neither edit
-        // is correct alone.
-        | Action.Confirm _
-        | Action.Navigate _
-        | Action.WriteToClipboard _
-        | Action.ReadFileBody _
-        | Action.Print
-        | Action.Focus _
-        | Action.Dispatch _
-        | Action.CommitLocal _ -> effects, [], []
-
-    #warnon "44"
-
-    /// The action slots the WIRE preserves. Every other handler slot is a
-    /// closure the decoder replaces with an inert placeholder, so it can demand
-    /// nothing on a decoded tree — see the header, and `opaqueHandler` below for
-    /// how the hand-authored case is reported rather than assumed away.
-    let private wireSurvivableActions (node: Node<obj>) : Action<obj> list =
-        match node.Kind with
-        | NodeKind.Button spec -> [ spec.OnClick ]
-        | NodeKind.Form spec -> [ spec.OnSubmit ]
-        | NodeKind.Modal spec -> Option.toList spec.OnDismiss
-        | _ -> []
-
-    /// True when the node accepts inbound events but resolves them through
-    /// closure-held handlers, so its demands are invisible to this walk.
-    ///
-    /// Derived from `Validation.legitimateEvents` rather than from a second
-    /// hand-kept list of interactive kinds: that function already decides which
-    /// kinds accept events, and a kind added there without a wire-survivable
-    /// slot is exactly the case this must report.
-    let private opaqueHandler (node: Node<obj>) : bool =
-        not (Set.isEmpty (Validation.legitimateEvents node))
-        && List.isEmpty (wireSurvivableActions node)
+    /// A node that accepts an event but carries no wire-surviving action for it
+    /// — a hand-authored handler the decoder replaced with an inert
+    /// placeholder, reported rather than assumed away. Which events a node
+    /// accepts, and which of its actions survive the wire, are the witness's
+    /// (`Tree.Events`, `Tree.Handlers`).
+    let private opaqueHandler
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (node: 'Node)
+        : bool =
+        not (List.isEmpty (witness.Tree.Events node))
+        && List.isEmpty (witness.Tree.Handlers node)
 
     /// Merge namespace touches into one entry per namespace, its two flags OR'd
     /// across every touch.
@@ -819,8 +667,11 @@ module Demanded =
     /// else. That parity is the point — it is the one algebra claim, read at the
     /// projection rather than at the interpreter — and it is why the walk over
     /// stages calls this rather than matching an `Action` a second time.
-    let ofAction (action: Action<obj>) : DemandedProjection =
-        let effects, hostCalls, namespaces = demandsOfAction action
+    let ofAction
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (action: 'Action)
+        : DemandedProjection =
+        let effects, hostCalls, namespaces = demandsOfAction witness action
 
         normalise
             { empty with
@@ -893,28 +744,37 @@ module Demanded =
     /// Compute a program tree's complete demanded-effect set.
     ///
     /// Total: every tree has a projection, and no input is refused. The walk
-    /// covers the whole traversal surface (`Introspect.descendantNodes` — the
-    /// structural children AND the non-list slots such as a `StateBehaviour`
-    /// branch), so a demand parked in a loading state is not missed.
+    /// covers the whole traversal surface (the witness's `Tree.Traverse` — the
+    /// structural children AND every other position a node holds, such as a
+    /// state-behaviour branch), so a demand parked in a loading state is not
+    /// missed.
     ///
     /// The server tier is `None`: this walk sees a tree, and a handler is not in
     /// the tree. A placement that HAS a handler registration projects it and
     /// attaches the result with `withServer`.
-    let ofTree (root: Node<obj>) : DemandedProjection =
-        let rec walk (node: Node<obj>) =
+    let ofTree
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (root: 'Node)
+        : DemandedProjection =
+        let rec walk (node: 'Node) =
             let own =
-                node
-                |> wireSurvivableActions
+                witness.Tree.Handlers node
+                |> List.map snd
                 |> List.fold
                     (fun (accE, accH, accN) a ->
-                        let e, h, n = demandsOfAction a
+                        let e, h, n = demandsOfAction witness a
                         accE @ e, accH @ h, accN @ n)
                     ([], [], [])
 
             let ownE, ownH, ownN = own
-            let ownO = if opaqueHandler node then [ node.Id ] else []
 
-            descendantNodes node
+            let ownO =
+                if opaqueHandler witness node then
+                    [ witness.Tree.Nodes.Id node ]
+                else
+                    []
+
+            witness.Tree.Traverse node
             |> List.fold
                 (fun (accE, accH, accN, accO) child ->
                     let e, h, n, o = walk child
@@ -1800,5 +1660,9 @@ module Demanded =
     /// Answer, for one tree and one host, every demand the host cannot cover —
     /// BEFORE any event runs. An empty list means the host can serve everything
     /// this program is able to ask for.
-    let check (coverage: HostCoverage) (tree: Node<obj>) : CoverageFinding list =
-        ofTree tree |> checkProjection coverage
+    let check
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (coverage: HostCoverage)
+        (tree: 'Node)
+        : CoverageFinding list =
+        ofTree witness tree |> checkProjection coverage

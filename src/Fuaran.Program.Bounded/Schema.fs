@@ -1,8 +1,6 @@
 namespace Fuaran.Program.Bounded
 
 open Fuaran.Core
-open Fuaran.UI.Types
-open Fuaran.UI.Ops.Introspect
 
 // ============================================================================
 //  The static query-schema walk, and the validator family over it.
@@ -196,6 +194,9 @@ module Schema =
         | ColExpr.Col name -> [ name ]
         | ColExpr.Lit _
         | ColExpr.Param _ -> []
+        // The evaluator's clock (Core-Compute 0.34.0): it reads the pinned
+        // evaluation instant, never a column of the input row.
+        | ColExpr.Now _ -> []
         | ColExpr.Binary(_, a, b) -> readsOfExpr a @ readsOfExpr b
         | ColExpr.Not x -> readsOfExpr x
         | ColExpr.Coalesce xs -> xs |> List.collect readsOfExpr
@@ -437,31 +438,6 @@ module Schema =
 //  The validator family.
 // ============================================================================
 
-/// Which query a finding is about. Both fields are HOST-declared strings: a
-/// handler is registered by the host, so its name and the slot its query lands
-/// in are the host's own vocabulary, not anything a generated tree supplied.
-type QueryOrigin = { Handler: string; Slot: string }
-
-/// A node that reads a query slot, and the columns it needs.
-///
-/// **`NodeId` and `Fields` come OFF THE WIRE**, unlike everything on
-/// `QueryOrigin`. They are carried in full because this family's whole purpose
-/// is to be detailed where the runtime cannot be — but a host that pipes these
-/// findings verbatim into a shared log is echoing a generated tree's strings,
-/// and should know it is choosing to.
-type QueryReader =
-    {
-        /// The reading node.
-        NodeId: string
-        /// The query slot it is bound to.
-        Slot: string
-        /// The columns it names.
-        Fields: string list
-        /// True when the node ALSO projects rows through a closure, so `Fields`
-        /// is a lower bound on what it reads.
-        ClosureHeld: bool
-    }
-
 /// A mismatch the walk could PROVE. Every case names the query, and every case
 /// carries the detail the runtime diagnostic deliberately withholds — this side
 /// runs before the untrusted tree does, so it can.
@@ -510,67 +486,20 @@ module QuerySchema =
 
     // ─── the reader side ─────────────────────────────────────────────────────
 
-    /// The query slot a row source is bound to, when it is bound to one at all.
-    ///
-    /// Only a direct `Binding.Query` is a query read. A `Binding.Transform` over
-    /// a query is a reader that transforms what it reads, and its expectation is
-    /// the composition of this walk with its own pipeline — real, and deliberately
-    /// not attempted here: it is a second question (what does a CLIENT-side
-    /// pipeline need of a server-side one) and answering half of it would be
-    /// worse than saying so.
-    let private slotOf (source: Binding<Fuaran.Core.Row seq>) : string option =
-        match source with
-        | Binding.Query(name, _, _) -> Some name
-        | _ -> None
-
-    /// The columns a node needs of the query slot it reads, where it reads one.
-    ///
-    /// The two reading kinds are the two the wire has: a grid's columns name
-    /// their fields, and a chart names its axes. Both are ordinary wire-carried
-    /// strings, which is the whole reason this check is possible — see D10.
-    ///
-    /// `ClosureHeld` covers only the projections that decide WHICH COLUMNS ARE
-    /// READ: a grid column with no `field` (its content IS a closure) and a
-    /// closure row key. An `onRowClick` / `onPointClick` handler is deliberately
-    /// not counted — it reads a row to build an action rather than to display a
-    /// column, so no addition to the query could satisfy it, and it is already
-    /// reported on the demanded projection's opaque-handler list.
-    let private readerOf (node: Node<obj>) : QueryReader option =
-        let reader slot fields closureHeld =
-            Some
-                { NodeId = node.Id
-                  Slot = slot
-                  Fields = fields |> List.distinct
-                  ClosureHeld = closureHeld }
-
-        match node.Kind with
-        | NodeKind.DataGrid spec ->
-            match slotOf spec.Source with
-            | None -> None
-            | Some slot ->
-                let declared = spec.Columns |> List.choose _.Field
-                let closureHeld = spec.Columns |> List.exists (fun c -> Option.isNone c.Field)
-
-                reader slot (declared @ Option.toList spec.RowKeyField) (closureHeld || Option.isSome spec.RowKey)
-
-        | NodeKind.Chart spec ->
-            match slotOf spec.Source with
-            | None -> None
-            | Some slot -> reader slot (spec.XField :: spec.YFields) false
-
-        // Every other kind reads no table. The catch-all is deliberate and is
-        // the one place the compiler cannot help: a NEW row-reading node kind
-        // lands here silently, and belongs above.
-        | _ -> None
-
     /// Every query-slot reader in a tree, in traversal order.
     ///
-    /// Walks the whole traversal surface (`descendantNodes` — the structural
-    /// children AND the non-list slots such as a state-behaviour branch), so a
-    /// grid parked in a loading state is not missed.
-    let readersOfTree (root: Node<obj>) : QueryReader list =
-        let rec walk (node: Node<obj>) =
-            (readerOf node |> Option.toList) @ (descendantNodes node |> List.collect walk)
+    /// Walks the whole traversal surface (the witness's `Tree.Traverse` — the
+    /// structural children AND every other position a node holds, such as a
+    /// state-behaviour branch), so a reader parked in a loading state is not
+    /// missed. Which nodes read a slot, and which columns they name, is the
+    /// witness's `Tree.QueryReaders`.
+    let readersOfTree
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (root: 'Node)
+        : QueryReader list =
+        let rec walk (node: 'Node) =
+            witness.Tree.QueryReaders node
+            @ (witness.Tree.Traverse node |> List.collect walk)
 
         walk root
 

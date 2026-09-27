@@ -1,9 +1,6 @@
 namespace Fuaran.Program.Bounded
 
 open Fuaran.Core
-open Fuaran.UI.Types
-open Fuaran.UI.Ops.Types
-open Fuaran.UI.ServerDriven
 
 // ============================================================================
 //  The program wire — the shared half.
@@ -11,8 +8,10 @@ open Fuaran.UI.ServerDriven
 //  This file is the placement-neutral part of the codec for the program wire
 //  specification: the canonical-JSON discipline, the refusal vocabulary, the
 //  three REFERENCED positions the specification does not respecify, the
-//  cross-layer reference, the invocation record, the client-effect reader, and
-//  the replay classification of an action.
+//  cross-layer reference, the invocation record, and the replay classification
+//  of an action. The referenced vocabularies themselves — the action, the
+//  tree-op, the client effect — are a DOMAIN's, and reach this file only
+//  through its witness's codecs (DECISIONS.md D18, K6).
 //
 //  The placement-specific half — the handler declared form, the server-effect
 //  vocabulary and the outcome report — lives with the placement that owns those
@@ -30,20 +29,18 @@ open Fuaran.UI.ServerDriven
 //     tabular source and a pipeline are encoded and decoded by their OWN
 //     canonical codecs and spliced. That is not laziness: a second spelling of a
 //     shape is exactly the drift the specification's §3 exists to forbid, and it
-//     is why `decodeAction` reaches the tree codec through the one public entry
-//     point that reaches it rather than reimplementing an action reader.
+//     is why `decodeAction` asks the witness's own action decoder rather than
+//     reimplementing an action reader.
 //
-//  3. THE REPLAY CLASSIFICATION READS THE DOCUMENT, not the value. The
-//     specification derives it "from the declared form", and the declared form
-//     IS the document — so classifying the encoded JSON rather than matching the
-//     action DU keeps this side and the corpus's own emitter running literally
-//     the same rule, and adds no new walk over a closed vocabulary.
+//  3. THE REPLAY CLASSIFICATION READS THE VIEW (since Phase 1896, D18). It read
+//     the encoded document's tags until then — `Call`, `Chain`/`ops`,
+//     `SetState`/`valueFrom` — which are one domain's spellings; the view is
+//     the same four-way distinction without them. For every action an encoder
+//     can produce the two agree: a `Chain` whose `ops` is not an array cannot
+//     be encoded, and the classification only ever ran on encoded output. An
+//     op is classified by the witness's `AbsoluteTarget`, and one that cannot
+//     be encoded at all is its own defect.
 // ============================================================================
-
-/// Why a document was refused. `Class` is the specification's own refusal class
-/// (Appendix A) and is the only part a conformance harness compares; `Detail` is
-/// for a human reading a log.
-type WireRefusal = { Class: string; Detail: string }
 
 /// The refusal classes, as the specification's Appendix A enumerates them. They
 /// are `Literal`s so a caller can match on them and a typo is a compile error
@@ -306,51 +303,30 @@ module ProgramWire =
 
     /// Encode an action for a compute-stage position — through the tree codec's
     /// own encoder, so this file spells no action case.
-    let encodeAction (action: Action<obj>) : JVal =
-        Fuaran.UI.Generated.encodeActionJson action
+    let encodeAction (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>) (action: 'Action) : JVal =
+        witness.Action.Encode action
 
-    /// Decode an action from a compute-stage position.
-    ///
-    /// The tree codec exposes no standalone action reader, so the action is
-    /// decoded THROUGH the tree codec by riding a minimal carrier node. That is
-    /// deliberate rather than a workaround: reimplementing an action reader here
-    /// would put a second spelling of a foreign vocabulary in this repository,
-    /// which is exactly what §3 forbids — and the carrier costs one object
-    /// literal, where a second reader would cost a permanent drift risk.
-    let decodeAction (value: JVal) : Result<Action<obj>, WireRefusal> =
-        refuseResultTarget value
-        |> Result.bind (fun () ->
-            let carrier =
-                JObj
-                    [ "id", JStr "carrier"
-                      "kind",
-                      JObj
-                          [ "$type", JStr "Button"
-                            "label", JStr "carrier"
-                            "onClick", value
-                            "variant", JStr "Primary" ] ]
+    let decodeAction
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (value: JVal)
+        : Result<'Action, WireRefusal> =
+        refuseResultTarget value |> Result.bind (fun () -> witness.Action.Decode value)
 
-            match Fuaran.UI.Ops.JsonDecode.decodeNodeObj (Canon.render carrier) with
-            | Error err ->
-                refuse RefusalClass.MalformedReferencedValue ("the action does not decode: " + string err.Code)
-            | Ok node ->
-                match node.Kind with
-                | NodeKind.Button spec -> Ok spec.OnClick
-                | _ -> refuse RefusalClass.MalformedReferencedValue "the action carrier did not decode as expected")
-
-    // ─── referenced position: the tree-op algebra ────────────────────────────
-
-    let encodeOp (op: TreeOp<obj>) : Result<JVal, WireRefusal> =
-        match Json.parse (Fuaran.UI.OpStream.Abstractions.CanonicalJson.encodeOp op) with
+    let encodeOp
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (op: 'Op)
+        : Result<JVal, WireRefusal> =
+        match Json.parse (witness.Op.Stream.Encode op) with
         | Ok value -> Ok value
         | Error message -> refuse RefusalClass.MalformedReferencedValue message
 
-    let decodeOp (value: JVal) : Result<TreeOp<obj>, WireRefusal> =
-        match Fuaran.UI.Ops.JsonDecode.decodeOp (Canon.render value) with
+    let decodeOp
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (value: JVal)
+        : Result<'Op, WireRefusal> =
+        match witness.Op.Stream.Decode(Canon.render value) with
         | Ok op -> Ok op
-        | Error err -> refuse RefusalClass.MalformedReferencedValue ("the op does not decode: " + string err.Code)
-
-    // ─── referenced position: the tabular source and pipeline ────────────────
+        | Error code -> refuse RefusalClass.MalformedReferencedValue ("the op does not decode: " + code)
 
     let encodeSource (source: DataSource) : JVal = ColumnCodec.encodeJson source
 
@@ -413,50 +389,54 @@ module ProgramWire =
     let verdictOfReasons (reasons: ReplayReason list) : ReplaySafety =
         reasons |> List.map _.Defect |> verdictOfDefects
 
-    /// The defects of an ENCODED action.
+    /// The defects of an action, read through the witness's view.
     ///
     ///   Call      — inert inside a handler stage, so re-running it changes
     ///               nothing. That is not a property of the action; it is D7's
     ///               deliberate boundary, and the classification reads it.
-    ///   Chain     — the defects of its parts.
-    ///   SetState  — a literal write is re-runnable; one taking its value from a
-    ///               binding is resolved at dispatch against a store that has
-    ///               moved, so it is undecidable rather than unsafe.
-    ///   otherwise — undecidable, and reported as such.
-    let rec replayDefectsOfAction (action: JVal) : ReplayDefect list =
-        match tag action with
-        | Some "Call" -> []
-        | Some "Chain" ->
-            match tryMember "ops" action with
-            | Some(JArr items) -> items |> List.collect replayDefectsOfAction |> List.distinct
-            | _ -> [ ReplayDefect.UndecidableAction ]
-        | Some "SetState" ->
-            match tryMember "valueFrom" action with
-            | Some _ -> [ ReplayDefect.NonLiteralWrite ]
-            | None -> []
-        | _ -> [ ReplayDefect.UndecidableAction ]
+    ///   Sequence  — the distinct union of the defects of its parts.
+    ///   Assign    — a literal write is re-runnable; one taking its value from
+    ///               an expression is resolved at dispatch against a store that
+    ///               has moved, so it is undecidable rather than unsafe.
+    ///   Leaf      — undecidable, and reported as such.
+    let rec replayDefectsOfAction
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (action: 'Action)
+        : ReplayDefect list =
+        match witness.Action.View action with
+        | ActionView.Call _ -> []
+        | ActionView.Sequence items -> items |> List.collect (replayDefectsOfAction witness) |> List.distinct
+        | ActionView.Assign(_, _, Some _) -> [ ReplayDefect.NonLiteralWrite ]
+        | ActionView.Assign(_, _, None) -> []
+        | ActionView.Leaf _ -> [ ReplayDefect.UndecidableAction ]
 
-    /// The defects of an ENCODED tree-op: an op naming a target node addresses
-    /// it absolutely, and anything else this walk cannot decide.
-    let replayDefectsOfOp (op: JVal) : ReplayDefect list =
-        match tryString "target" op with
-        | Some target when target <> "" -> []
-        | _ -> [ ReplayDefect.RelativeAddressing ]
+    /// The defects of an op: one that names its target absolutely re-runs
+    /// against the same node; one addressed relative to where a previous op
+    /// left things does not; and one the op codec cannot encode cannot be
+    /// classified at all.
+    let replayDefectsOfOp
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (op: 'Op)
+        : ReplayDefect list =
+        match encodeOp witness op with
+        | Error _ -> [ ReplayDefect.UnencodableOp ]
+        | Ok _ ->
+            match witness.Op.AbsoluteTarget op with
+            | Some target when target <> "" -> []
+            | _ -> [ ReplayDefect.RelativeAddressing ]
 
-    /// The classification of an ENCODED action — the verdict its defects carry.
-    ///
-    /// Defined THROUGH the defect walk rather than beside it. A second walk
-    /// producing the verdict directly would be a second copy of the rule, free
-    /// to drift from the reasons that are supposed to explain it, and a reason
-    /// that disagrees with its own verdict is worse than no reason at all.
-    let replaySafetyOfAction (action: JVal) : ReplaySafety =
-        replayDefectsOfAction action |> verdictOfDefects
+    let replaySafetyOfAction
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (action: 'Action)
+        : ReplaySafety =
+        replayDefectsOfAction witness action |> verdictOfDefects
 
-    /// The classification of an ENCODED tree-op — the verdict its defects carry.
-    let replaySafetyOfOp (op: JVal) : ReplaySafety =
-        replayDefectsOfOp op |> verdictOfDefects
+    let replaySafetyOfOp
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (op: 'Op)
+        : ReplaySafety =
+        replayDefectsOfOp witness op |> verdictOfDefects
 
-    /// The wire spelling of a classification, as a manifest declares it.
     let replaySafetyTag (safety: ReplaySafety) : string =
         match safety with
         | ReplaySafety.Safe -> "safe"
@@ -606,7 +586,7 @@ module ProgramWire =
 
     // ─── the client-effect vocabulary ────────────────────────────────────────
 
-    /// Encoded by the SHIPPED emitter, never re-spelled here.
+    /// Encoded by the witness's SHIPPED emitter, never re-spelled here.
     ///
     /// That emitter is the reason this family is the specification's one
     /// envelope exception — a `kind` discriminator, declaration-ordered members,
@@ -614,107 +594,15 @@ module ProgramWire =
     /// right side of that: the exception is pinned by the corpus against the
     /// bytes something actually ships, not against a second implementation of
     /// them here.
-    let encodeClientEffect (effect: ClientEffect) : string = ClientEffect.encode effect
+    let encodeClientEffect
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (effect: 'Effect)
+        : string =
+        witness.Effect.Encode effect
 
-    /// The reader the shipped emitter never had. A rendering surface decodes
-    /// these in its own runtime; nothing on this side did, which is why a
-    /// round-trip of this family was uncertifiable before the wire cut.
-    let decodeClientEffect (value: JVal) : Result<ClientEffect, WireRefusal> =
-        let kind =
-            match tryString "kind" value with
-            | Some k -> Ok k
-            | None -> refuse RefusalClass.MissingMember "required member 'kind' is absent"
-
-        kind
-        |> Result.bind (fun kind ->
-            let one name ctor =
-                declaredOnly [ "kind"; name ] value
-                |> Result.bind (fun () -> requireString name value)
-                |> Result.map ctor
-
-            match kind with
-            // Phase 1601 — the specification declares `target`, so this arm
-            // reads it. Until it did, the tier could emit a `Blank` document
-            // that this decoder refused: `declaredOnly` correctly rejected a
-            // member the specification did not name, and the host was therefore
-            // producing bytes its own conformance codec would not take back.
-            // Closing that was a specification act performed in one change-set
-            // across both repositories — normative text (§5.2), schema, the two
-            // fixtures, the manifest, and then this arm — which is the forward
-            // coupling this family always carried.
-            //
-            // `Self` is the identity and §5.2 says it is NOT written, so
-            // absence restores it. The explicit spelling is still ACCEPTED — it
-            // is a declared member holding a declared value — but nothing emits
-            // it, which is why it is not a round-trip vector: it would not
-            // re-encode to its own bytes. A third value is refused as
-            // `undeclared-member`, on the same footing as `ReadFileBody`'s
-            // `encoding` below: the member is declared, the value it carries is
-            // not, and passing one through would hand a rendering surface a
-            // browsing context it has no rule for.
-            | "Navigate" ->
-                declaredOnly [ "kind"; "route"; "target" ] value
-                |> Result.bind (fun () -> requireString "route" value)
-                |> Result.bind (fun route ->
-                    // `tryMember`, not `tryString`: the latter reads a present
-                    // non-string member as absence, which would silently
-                    // decode `{"target":7}` to `Self` rather than refusing it.
-                    match tryMember "target" value with
-                    | None
-                    | Some(JStr "Self") -> Ok(ClientEffect.Navigate(route, NavigateTarget.Self))
-                    | Some(JStr "Blank") -> Ok(ClientEffect.Navigate(route, NavigateTarget.Blank))
-                    | Some(JStr other) ->
-                        refuse RefusalClass.UndeclaredMember ("target '" + other + "' is neither 'Self' nor 'Blank'")
-                    | Some _ -> refuse RefusalClass.UndeclaredMember "member 'target' is not a string")
-            | "PushState" -> one "route" ClientEffect.PushState
-            | "WriteToClipboard" -> one "text" ClientEffect.WriteToClipboard
-            | "Focus" -> one "nodeId" ClientEffect.Focus
-            | "Download" ->
-                declaredOnly [ "kind"; "url"; "name" ] value
-                |> Result.bind (fun () -> requireString "url" value)
-                |> Result.bind (fun url -> requireString "name" value |> Result.map (fun name -> url, name))
-                |> Result.map ClientEffect.Download
-            | "ReadFileBody" ->
-                declaredOnly [ "kind"; "nodeId"; "encoding" ] value
-                |> Result.bind (fun () -> requireString "nodeId" value)
-                |> Result.bind (fun nodeId ->
-                    requireString "encoding" value
-                    |> Result.bind (fun encoding ->
-                        if List.contains encoding [ "Text"; "Base64"; "DataUrl" ] then
-                            Ok(nodeId, encoding)
-                        else
-                            refuse
-                                RefusalClass.UndeclaredMember
-                                ("encoding '" + encoding + "' is not one of the three")))
-                |> Result.map ClientEffect.ReadFileBody
-            // Phase 1689 — arms seven and eight, at specification format
-            // version 2. The vocabulary was closed at six while a conformant
-            // emitter already shipped these two, so a rendering surface was
-            // receiving documents the text declared ill-formed; §11.1's rule
-            // makes widening a closed vocabulary breaking, which is why they
-            // arrive together with a version rather than one at a time.
-            //
-            // `Print` carries NO members, and `declaredOnly [ "kind" ]` is
-            // therefore the WHOLE decoder — there is nothing to read, and a
-            // member that is present is refused rather than ignored. That
-            // refusal is the arm's only real rule: every parameter of a
-            // printing belongs to the reader's own dialogue, so a document
-            // constraining one would leave its emitter believing it had
-            // constrained something it had not.
-            | "Print" -> declaredOnly [ "kind" ] value |> Result.map (fun () -> ClientEffect.Print)
-            // `Confirm` carries both members required. What a yes will DO is
-            // deliberately absent: the continuations stay with whoever holds
-            // the tree, the gate and the egress policy, and a surface handed
-            // them is a surface that can perform them without ever asking.
-            //
-            // `token` says WHICH confirmation in the originating gesture is
-            // being answered, so a chain raising two of them is unambiguous —
-            // and it is untrusted payload like every other value here. It
-            // addresses a question; it never authorises an answer, which is
-            // the reader's own continuation meeting the gate on its own.
-            | "Confirm" ->
-                declaredOnly [ "kind"; "prompt"; "token" ] value
-                |> Result.bind (fun () -> requireString "prompt" value)
-                |> Result.bind (fun prompt -> requireString "token" value |> Result.map (fun token -> prompt, token))
-                |> Result.map ClientEffect.Confirm
-            | other -> refuse RefusalClass.UnknownEffectArm ("'" + other + "' is not an arm of the closed vocabulary"))
+    /// The witness's reader for the same family.
+    let decodeClientEffect
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (value: JVal)
+        : Result<'Effect, WireRefusal> =
+        witness.Effect.Decode value

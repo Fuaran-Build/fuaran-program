@@ -1,7 +1,6 @@
 namespace Fuaran.Program.Bounded
 
-open Fuaran.UI.Types
-open Fuaran.UI.OpStream.Abstractions
+open Fuaran.Core
 
 // ============================================================================
 //  The signed effect envelope — proof-carrying data an operator verifies before
@@ -48,13 +47,14 @@ open Fuaran.UI.OpStream.Abstractions
 //  Signing goes through `Fuaran.Core.IAttestationSink`, the synchronous
 //  attestation seam the substrate already carries: it signs an opaque string
 //  and answers with a key id and a signature, or `None` for the no-op posture.
-//  The key never crosses it. Verification takes the PUBLIC key as a
-//  `KeyDirectoryEntry` and the crypto as `IClaimSignatureVerifier`, both from
-//  the UI tier's attestation seam — a host supplies the pair, exactly as it
-//  supplies an effect performer. This package holds no cryptography and takes
-//  no new dependency: the tree hash is the tier's Fable-clean SHA-256 over the
-//  tier's canonical encoding, so the same preimage is computed on every runtime
-//  the interpreter runs on.
+//  The key never crosses it. Verification takes the PUBLIC key as a value of
+//  the host's own key type and the crypto as a `ClaimVerifier` over that type
+//  (DECISIONS.md D18 §3.6) — a host supplies the pair, exactly as it supplies
+//  an effect performer, and the verifier reads nothing from a key but its id.
+//  This package holds no cryptography: the tree hash is Core's Fable-clean
+//  SHA-256 (`Fuaran.Core.Hash.sha256Hex`) over the domain's canonical tree
+//  encoding (the witness's `Tree.Canonical`), so the same preimage is computed
+//  on every runtime the interpreter runs on.
 //
 //  ── What this deliberately is not ───────────────────────────────────────────
 //  A new envelope shape. `Demanded.encode` / `decode` are unchanged and the
@@ -160,9 +160,8 @@ module SignedEnvelope =
     /// canonical encoding, rendered in the `sha256:` form `ProgramWire` pins.
     /// Fable-clean on both counts, so the preimage is the same bytes on every
     /// runtime the interpreter runs on.
-    let treeHash (root: Node<obj>) : string =
-        ProgramWire.ContentAddressPrefix
-        + Fuaran.UI.Hashing.sha256Hex (CanonicalJson.encodeNode root)
+    let treeHash (tree: TreeWitness<'Node, 'Action, 'Store>) (root: 'Node) : string =
+        ProgramWire.ContentAddressPrefix + Hash.sha256Hex (tree.Canonical root)
 
     /// The members the signature covers, rendered once so the preimage and the
     /// record it sits in cannot spell them differently.
@@ -188,11 +187,12 @@ module SignedEnvelope =
     /// for the client tier, or a placement's own two-tier walk — so the same
     /// function serves every placement and the walk is named at the call site.
     let sign
+        (tree: TreeWitness<'Node, 'Action, 'Store>)
         (sink: Fuaran.Core.IAttestationSink)
-        (project: Node<obj> -> DemandedProjection)
-        (root: Node<obj>)
+        (project: 'Node -> DemandedProjection)
+        (root: 'Node)
         : Result<SignedEnvelope, SignRefusal> =
-        let hash = treeHash root
+        let hash = treeHash tree root
         let envelope = Demanded.encode (project root)
         let head = preimage hash envelope
 
@@ -272,18 +272,20 @@ module SignedEnvelope =
     /// signature. Asynchronous because the crypto seam is — browser crypto is —
     /// and a synchronous host adapts trivially.
     let verify
-        (crypto: IClaimSignatureVerifier)
-        (key: KeyDirectoryEntry option)
-        (project: Node<obj> -> DemandedProjection)
-        (root: Node<obj>)
+        (tree: TreeWitness<'Node, 'Action, 'Store>)
+        (crypto: ClaimVerifier<'Key>)
+        (key: 'Key option)
+        (project: 'Node -> DemandedProjection)
+        (root: 'Node)
         (signed: SignedEnvelope)
         : Async<Result<VerifiedEnvelope, VerifyRefusal>> =
         async {
             match key with
             | None -> return Error VerifyRefusal.NoKey
-            | Some key when key.KeyId <> signed.KeyId -> return Error(VerifyRefusal.ForeignKey(signed.KeyId, key.KeyId))
+            | Some key when crypto.KeyId key <> signed.KeyId ->
+                return Error(VerifyRefusal.ForeignKey(signed.KeyId, crypto.KeyId key))
             | Some key ->
-                let hash = treeHash root
+                let hash = treeHash tree root
                 let projection = project root
 
                 match driftOf projection signed.Envelope with
@@ -292,14 +294,14 @@ module SignedEnvelope =
                     // Over the RECOMPUTED preimage — the carried tree hash and
                     // envelope bytes have no say in what is checked.
                     let head = preimage hash (Demanded.encode projection)
-                    let! verified = crypto.VerifyClaim head signed.Signature key
+                    let! verified = crypto.Verify head signed.Signature key
 
                     if verified then
                         return
                             Ok
                                 { TreeHash = hash
                                   Projection = projection
-                                  KeyId = key.KeyId }
+                                  KeyId = crypto.KeyId key }
                     else
                         return Error(VerifyRefusal.BadSignature(signed.TreeHash, hash))
         }

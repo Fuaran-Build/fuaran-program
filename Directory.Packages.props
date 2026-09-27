@@ -7,6 +7,30 @@
     <PackageVersion Include="Fable.Core" Version="5.0" />
     <PackageVersion Include="Feliz" Version="3.3.3" />
     <PackageVersion Include="Fuaran.UI.Renderer" Version="0.78.1" />
+    <!-- The substrate, pinned DIRECTLY (Phase 1896). The core packages reference
+         no UI-tier package, so what they use of the substrate they name
+         themselves: the JSON value and canonical form, the columnar table, the
+         evaluator a server read runs, the node witness and hash, and the stream
+         witness and signing sink. Until Phase 1896 every one of these arrived
+         only transitively, through the UI tier, at whatever version that tier
+         had been built against.
+
+         The evaluator is pinned at the current Core-Compute release, 0.34.0,
+         and Column and Wire at the 0.32.0 it declares; Tree and OpStream move
+         with them to 0.32.0, the substrate's current release, so the five are
+         one cohort. Every version here is one the PUBLIC restore path serves
+         exactly — `tools/check-pins.ps1` refuses anything else.
+
+         The UI-tier adapter projects under tests/ still reference the UI tier
+         at the pin below, which was built against 0.21.0 of this substrate, so
+         THEIR graph resolves the UI tier beside these newer versions. What that
+         costs is recorded in docs/dataframe-0.34-surface-diff.md, and one
+         consequence is pinned as a test there. -->
+    <PackageVersion Include="Fuaran.Core.Wire" Version="0.32.0" />
+    <PackageVersion Include="Fuaran.Core.Column" Version="0.32.0" />
+    <PackageVersion Include="Fuaran.Core.DataFrame" Version="0.34.0" />
+    <PackageVersion Include="Fuaran.Core.Tree" Version="0.32.0" />
+    <PackageVersion Include="Fuaran.Core.OpStream" Version="0.32.0" />
     <!-- The UI tier — the first host instantiation consumes its types by
          PackageReference off the local feed / nuget.org (DECISIONS.md D4). The
          dependency runs ONE WAY: nothing in the UI tier references back, which

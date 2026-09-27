@@ -1,8 +1,5 @@
 namespace Fuaran.Program.Bounded
 
-open Fuaran.UI.Types
-open Fuaran.UI.Ops.Introspect
-
 // ============================================================================
 //  Resource bounds — the other half of "safe to run untrusted".
 //
@@ -52,42 +49,48 @@ module InteractionBudget =
 
 module Budget =
 
-    /// The leaf-action count of one bounded-action cascade. A `Chain` flattens;
-    /// every other arm costs 1.
-    let rec actionCascadeCost (a: Action<obj>) : int =
-        match a with
-        | Action.Chain xs -> xs |> List.sumBy actionCascadeCost
-        | _ -> 1
+    /// The leaf-action count of one bounded-action cascade. A `Sequence`
+    /// flattens; every other shape costs 1. Read through the witness's view,
+    /// so what counts as composition is the fold's own notion of it.
+    let rec actionCascadeCost
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (a: 'Action)
+        : int =
+        match witness.Action.View a with
+        | ActionView.Sequence xs -> xs |> List.sumBy (actionCascadeCost witness)
+        | ActionView.Assign _
+        | ActionView.Call _
+        | ActionView.Leaf _ -> 1
 
-    // ─── Per-kind render cost ────────────────────────────────────────────────
+    // ─── Per-node render cost ────────────────────────────────────────────────
     //
     // Most nodes cost 1: one node's worth of re-resolve and render. A
     // DATA-BEARING node is different — its render cost scales with data it
-    // carries INSIDE one node, which a node count cannot see. A `Chart` is a
-    // single node whose render emits geometry per (point × series); a
-    // `DataGrid` is a single node whose render emits a cell per (row × column).
-    // Counting those as 1 is what lets a single node carry unbounded work
-    // behind a bounded-looking tree, and weighting them is what stops the shape
-    // reappearing on the next data-bearing kind: a new kind that carries its
-    // own data joins this function, and the existing `MaxNodes` budget then
-    // sees it with no host-side change.
+    // carries INSIDE one node, which a node count cannot see. A chart is a
+    // single node whose render emits geometry per (point × series); a grid is
+    // a single node whose render emits a cell per (row × column). Counting
+    // those as 1 is what lets a single node carry unbounded work behind a
+    // bounded-looking tree, and weighting them is what stops the shape
+    // reappearing on the next data-bearing kind.
     //
-    // Only a `Binding.Static` payload is counted. A `Query` / `State` /
-    // `Transform` binding resolves at render time from the host's own store, so
-    // its size is not a property of the untrusted tree and is not this budget's
-    // business.
+    // Which kinds are data-bearing, and by what they are weighted, is the
+    // domain's: the witness's `Tree.Cost` answers a node's OWN data cost, and
+    // the walk below adds the node itself. The arithmetic and the walk are
+    // this module's, and they are what proofs/Budget.fst proves.
 
     /// Ceiling on rows counted for cost. Reading a possibly-lazy payload to
     /// exhaustion just to price it would itself be the unbounded work; a count
     /// this far past any sane budget is already "refuse", so the exact figure
-    /// past it carries no decision.
+    /// past it carries no decision. Public so a witness pricing its own
+    /// payloads applies the same cap.
     [<Literal>]
-    let private maxCountedRows = 100_000
+    let maxCountedRows = 100_000
 
     /// Saturating `int` arithmetic — a cost is a budget comparand, and an
     /// overflow that wrapped NEGATIVE would read as "cheap" and admit the very
-    /// tree the budget exists to refuse.
-    let private satAdd (a: int) (b: int) : int =
+    /// tree the budget exists to refuse. Public so a witness's `Tree.Cost`
+    /// composes its weights with the same arithmetic.
+    let satAdd (a: int) (b: int) : int =
         let sum = int64 a + int64 b
 
         if sum > int64 System.Int32.MaxValue then
@@ -95,7 +98,7 @@ module Budget =
         else
             int sum
 
-    let private satMul (a: int) (b: int) : int =
+    let satMul (a: int) (b: int) : int =
         let product = int64 a * int64 b
 
         if product > int64 System.Int32.MaxValue then
@@ -103,28 +106,15 @@ module Budget =
         else
             int product
 
-    let private staticSeqCount (binding: Binding<'t seq>) : int =
-        match binding with
-        | Binding.Static(Some items) -> items |> Seq.truncate maxCountedRows |> Seq.length
-        | _ -> 0
-
-    let private staticListCount (binding: Binding<'t list>) : int =
-        match binding with
-        | Binding.Static(Some items) -> min maxCountedRows (List.length items)
-        | _ -> 0
-
-    /// The render cost of ONE node, excluding its children.
-    let private nodeCost (node: Node<'a>) : int =
-        match node.Kind with
-        | NodeKind.Chart spec -> satAdd 1 (satMul (staticSeqCount spec.Source) (max 1 (List.length spec.YFields)))
-        | NodeKind.DataGrid spec -> satAdd 1 (satMul (staticSeqCount spec.Source) (max 1 (List.length spec.Columns)))
-        | NodeKind.Map spec -> satAdd 1 (staticListCount spec.Source)
-        | NodeKind.Sparkline spec -> satAdd 1 (staticListCount spec.Source)
-        | _ -> 1
+    /// The render cost of ONE node, excluding its children: the node itself,
+    /// plus whatever data it carries.
+    let private nodeCost (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>) (node: 'Node) : int =
+        satAdd 1 (witness.Tree.Cost node)
 
     /// The tree's total render cost — the node count, with data-bearing nodes
     /// weighted by the data they carry. For every non-data-bearing tree this is
-    /// exactly the node count.
+    /// exactly the node count. Walked over the STRUCTURAL child surface
+    /// (the witness's `Tree.Nodes`), in the order it enumerates.
     ///
     /// ITERATIVE, with an explicit stack, and it STOPS as soon as the cost
     /// passes `ceiling`. Both properties matter:
@@ -141,19 +131,20 @@ module Budget =
     /// The returned value is exact when it is at or below `ceiling`, and is
     /// "greater than `ceiling`" otherwise — all a budget comparand needs, since
     /// every use of it past that point is a refusal.
-    let treeCost (ceiling: int) (node: Node<'a>) : int =
-        let pending = System.Collections.Generic.Stack<Node<'a>>()
+    let treeCost
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (ceiling: int)
+        (node: 'Node)
+        : int =
+        let pending = System.Collections.Generic.Stack<'Node>()
         pending.Push node
         let mutable total = 0
 
         while pending.Count > 0 && total <= ceiling do
             let current = pending.Pop()
-            total <- satAdd total (nodeCost current)
+            total <- satAdd total (nodeCost witness current)
 
-            match getChildren current.Kind with
-            | Some kids ->
-                for kid in kids do
-                    pending.Push kid
-            | None -> ()
+            for kid in witness.Tree.Nodes.Children current do
+                pending.Push kid
 
         total

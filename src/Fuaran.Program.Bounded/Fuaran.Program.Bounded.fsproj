@@ -18,6 +18,9 @@
     <Content Include="**\*.fsproj;**\*.fs" Exclude="**\*.fs.js;**\bin\**;**\obj\**" PackagePath="fable\" />
   </ItemGroup>
   <ItemGroup>
+    <!-- The witness contract (DECISIONS.md D18) comes first: every file after it
+         is written over a domain's witness rather than over one domain's types. -->
+    <Compile Include="Witness.fs" />
     <Compile Include="BoundedActions.fs" />
     <Compile Include="Budget.fs" />
     <Compile Include="Resolve.fs" />
@@ -26,8 +29,8 @@
          it, which is why it sits beside the demanded projection rather than
          inside it. -->
     <Compile Include="Schema.fs" />
-    <!-- Demanded must precede BoundedDriver: the driver's strict construction
-         path consults the projection before it builds a session. -->
+    <!-- Demanded precedes every placement's loop: a strict construction path
+         consults the projection before it builds a session. -->
     <Compile Include="Demanded.fs" />
     <!-- The program wire's shared half: the canonical discipline, the refusal
          vocabulary, the referenced positions and the replay classification of an
@@ -37,23 +40,21 @@
          in the content-address form ProgramWire pins, and reads it back through
          the same well-formedness rule rather than a second spelling of it. -->
     <Compile Include="SignedEnvelope.fs" />
-    <Compile Include="BoundedDriver.fs" />
-    <!-- The channel glue over the driver — it binds a session to the UI tier's
-         transport seam, so it follows the driver whose steps it sequences. -->
-    <Compile Include="BoundedConnection.fs" />
   </ItemGroup>
-  <!-- The UI-typed first instantiation (DECISIONS.md D4): this package consumes
-       the UI tier's published packages, and the dependency runs one way only.
-       Nothing in the UI tier references back — see D5 for why the reverse
-       direction was refused. -->
+  <!-- Domain-generic since Phase 1896 (DECISIONS.md D18): this package references
+       NO UI-tier package, and a test reads this file, its sources and the
+       resolved graph to keep it that way. What it needs of the substrate it
+       names directly — the JSON value and canonical form (Wire), the columnar
+       table (Column), the evaluator a server read runs (DataFrame), the node
+       witness and hash (Tree), and the stream witness and signing sink
+       (OpStream). The UI instantiation is an adapter that references this
+       package, never the reverse. -->
   <ItemGroup>
     <PackageReference Include="FSharp.Core" />
-    <PackageReference Include="Fuaran.UI" />
-    <PackageReference Include="Fuaran.UI.Ops.Abstractions" />
-    <PackageReference Include="Fuaran.UI.Ops" />
-    <PackageReference Include="Fuaran.UI.Renderer.Core" />
-    <PackageReference Include="Fuaran.UI.OpStream.Abstractions" />
-    <PackageReference Include="Fuaran.UI.OpStream.Replay" />
-    <PackageReference Include="Fuaran.UI.ServerDriven" />
+    <PackageReference Include="Fuaran.Core.Wire" />
+    <PackageReference Include="Fuaran.Core.Column" />
+    <PackageReference Include="Fuaran.Core.DataFrame" />
+    <PackageReference Include="Fuaran.Core.Tree" />
+    <PackageReference Include="Fuaran.Core.OpStream" />
   </ItemGroup>
 </Project>
