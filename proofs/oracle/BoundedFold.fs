@@ -70,6 +70,475 @@ if (Prims.op_Equals k' k) then begin
      end
      end))
 
+type resolution<'v> =
+| Resolved of 'v
+| NotResolved
+| Errored of Prims.string
+
+
+let uu___is_Resolved = (fun ( projectee  :  resolution<'v> ) -> (match (projectee) with
+| Resolved (value) -> begin
+     true
+     end
+| uu___ -> begin
+     false
+     end))
+
+
+let __proj__Resolved__item__value = (fun ( projectee  :  resolution<'v> ) -> (match (projectee) with
+| Resolved (value) -> begin
+     value
+     end))
+
+
+let uu___is_NotResolved = (fun ( projectee  :  resolution<'v> ) -> (match (projectee) with
+| NotResolved -> begin
+     true
+     end
+| uu___ -> begin
+     false
+     end))
+
+
+let uu___is_Errored = (fun ( projectee  :  resolution<'v> ) -> (match (projectee) with
+| Errored (message) -> begin
+     true
+     end
+| uu___ -> begin
+     false
+     end))
+
+
+let __proj__Errored__item__message = (fun ( projectee  :  resolution<'v> ) -> (match (projectee) with
+| Errored (message) -> begin
+     message
+     end))
+
+type action_view<'a, 'e, 'v> =
+| VSequence of 'a * Prims.list<action_view<'a, 'e, 'v>>
+| VAssign of 'a * key * opt<'v> * opt<'e>
+| VCall of 'a * Prims.string * Prims.bool
+| VLeaf of 'a
+
+
+let uu___is_VSequence = (fun ( projectee  :  action_view<'a, 'e, 'v> ) -> (match (projectee) with
+| VSequence (act, ops) -> begin
+     true
+     end
+| uu___ -> begin
+     false
+     end))
+
+
+let __proj__VSequence__item__act = (fun ( projectee  :  action_view<'a, 'e, 'v> ) -> (match (projectee) with
+| VSequence (act, ops) -> begin
+     act
+     end))
+
+
+let __proj__VSequence__item__ops = (fun ( projectee  :  action_view<'a, 'e, 'v> ) -> (match (projectee) with
+| VSequence (act, ops) -> begin
+     ops
+     end))
+
+
+let uu___is_VAssign = (fun ( projectee  :  action_view<'a, 'e, 'v> ) -> (match (projectee) with
+| VAssign (act, state_key, value, value_from) -> begin
+     true
+     end
+| uu___ -> begin
+     false
+     end))
+
+
+let __proj__VAssign__item__act = (fun ( projectee  :  action_view<'a, 'e, 'v> ) -> (match (projectee) with
+| VAssign (act, state_key, value, value_from) -> begin
+     act
+     end))
+
+
+let __proj__VAssign__item__state_key = (fun ( projectee  :  action_view<'a, 'e, 'v> ) -> (match (projectee) with
+| VAssign (act, state_key, value, value_from) -> begin
+     state_key
+     end))
+
+
+let __proj__VAssign__item__value = (fun ( projectee  :  action_view<'a, 'e, 'v> ) -> (match (projectee) with
+| VAssign (act, state_key, value, value_from) -> begin
+     value
+     end))
+
+
+let __proj__VAssign__item__value_from = (fun ( projectee  :  action_view<'a, 'e, 'v> ) -> (match (projectee) with
+| VAssign (act, state_key, value, value_from) -> begin
+     value_from
+     end))
+
+
+let uu___is_VCall = (fun ( projectee  :  action_view<'a, 'e, 'v> ) -> (match (projectee) with
+| VCall (act, endpoint, declares_target) -> begin
+     true
+     end
+| uu___ -> begin
+     false
+     end))
+
+
+let __proj__VCall__item__act = (fun ( projectee  :  action_view<'a, 'e, 'v> ) -> (match (projectee) with
+| VCall (act, endpoint, declares_target) -> begin
+     act
+     end))
+
+
+let __proj__VCall__item__endpoint = (fun ( projectee  :  action_view<'a, 'e, 'v> ) -> (match (projectee) with
+| VCall (act, endpoint, declares_target) -> begin
+     endpoint
+     end))
+
+
+let __proj__VCall__item__declares_target = (fun ( projectee  :  action_view<'a, 'e, 'v> ) -> (match (projectee) with
+| VCall (act, endpoint, declares_target) -> begin
+     declares_target
+     end))
+
+
+let uu___is_VLeaf = (fun ( projectee  :  action_view<'a, 'e, 'v> ) -> (match (projectee) with
+| VLeaf (act) -> begin
+     true
+     end
+| uu___ -> begin
+     false
+     end))
+
+
+let __proj__VLeaf__item__act = (fun ( projectee  :  action_view<'a, 'e, 'v> ) -> (match (projectee) with
+| VLeaf (act) -> begin
+     act
+     end))
+
+type leaf_outcome<'eff> =
+| Emit of 'eff
+| Refuse of Prims.string
+| Decline
+
+
+let uu___is_Emit = (fun ( projectee  :  leaf_outcome<'eff> ) -> (match (projectee) with
+| Emit (emitted) -> begin
+     true
+     end
+| uu___ -> begin
+     false
+     end))
+
+
+let __proj__Emit__item__emitted = (fun ( projectee  :  leaf_outcome<'eff> ) -> (match (projectee) with
+| Emit (emitted) -> begin
+     emitted
+     end))
+
+
+let uu___is_Refuse = (fun ( projectee  :  leaf_outcome<'eff> ) -> (match (projectee) with
+| Refuse (reason) -> begin
+     true
+     end
+| uu___ -> begin
+     false
+     end))
+
+
+let __proj__Refuse__item__reason = (fun ( projectee  :  leaf_outcome<'eff> ) -> (match (projectee) with
+| Refuse (reason) -> begin
+     reason
+     end))
+
+
+let uu___is_Decline = (fun ( projectee  :  leaf_outcome<'eff> ) -> (match (projectee) with
+| Decline -> begin
+     true
+     end
+| uu___ -> begin
+     false
+     end))
+
+type witness<'a, 'e, 'v, 'eff> = {w_view : 'a  ->  action_view<'a, 'e, 'v>; w_lower : Prims.string  ->  'a  ->  store<'v>  ->  leaf_outcome<'eff>; w_describe : 'a  ->  Prims.string; w_resolve : store<'v>  ->  'e  ->  resolution<'v>; w_is_reserved : key  ->  Prims.bool; w_reserved_prefix : Prims.string}
+
+
+let __proj__Mkwitness__item__w_view = (fun ( projectee  :  witness<'a, 'e, 'v, 'eff> ) -> (match (projectee) with
+| {w_view = w_view; w_lower = w_lower; w_describe = w_describe; w_resolve = w_resolve; w_is_reserved = w_is_reserved; w_reserved_prefix = w_reserved_prefix} -> begin
+     w_view
+     end))
+
+
+let __proj__Mkwitness__item__w_lower = (fun ( projectee  :  witness<'a, 'e, 'v, 'eff> ) -> (match (projectee) with
+| {w_view = w_view; w_lower = w_lower; w_describe = w_describe; w_resolve = w_resolve; w_is_reserved = w_is_reserved; w_reserved_prefix = w_reserved_prefix} -> begin
+     w_lower
+     end))
+
+
+let __proj__Mkwitness__item__w_describe = (fun ( projectee  :  witness<'a, 'e, 'v, 'eff> ) -> (match (projectee) with
+| {w_view = w_view; w_lower = w_lower; w_describe = w_describe; w_resolve = w_resolve; w_is_reserved = w_is_reserved; w_reserved_prefix = w_reserved_prefix} -> begin
+     w_describe
+     end))
+
+
+let __proj__Mkwitness__item__w_resolve = (fun ( projectee  :  witness<'a, 'e, 'v, 'eff> ) -> (match (projectee) with
+| {w_view = w_view; w_lower = w_lower; w_describe = w_describe; w_resolve = w_resolve; w_is_reserved = w_is_reserved; w_reserved_prefix = w_reserved_prefix} -> begin
+     w_resolve
+     end))
+
+
+let __proj__Mkwitness__item__w_is_reserved = (fun ( projectee  :  witness<'a, 'e, 'v, 'eff> ) -> (match (projectee) with
+| {w_view = w_view; w_lower = w_lower; w_describe = w_describe; w_resolve = w_resolve; w_is_reserved = w_is_reserved; w_reserved_prefix = w_reserved_prefix} -> begin
+     w_is_reserved
+     end))
+
+
+let __proj__Mkwitness__item__w_reserved_prefix = (fun ( projectee  :  witness<'a, 'e, 'v, 'eff> ) -> (match (projectee) with
+| {w_view = w_view; w_lower = w_lower; w_describe = w_describe; w_resolve = w_resolve; w_is_reserved = w_is_reserved; w_reserved_prefix = w_reserved_prefix} -> begin
+     w_reserved_prefix
+     end))
+
+type diagnostic =
+| DUnsupported of Prims.string * Prims.string
+| DRefused of Prims.string * Prims.string * Prims.string
+
+
+let uu___is_DUnsupported : diagnostic  ->  Prims.bool = (fun ( projectee  :  diagnostic ) -> (match (projectee) with
+| DUnsupported (node_id, action_name) -> begin
+     true
+     end
+| uu___ -> begin
+     false
+     end))
+
+
+let __proj__DUnsupported__item__node_id : diagnostic  ->  Prims.string = (fun ( projectee  :  diagnostic ) -> (match (projectee) with
+| DUnsupported (node_id, action_name) -> begin
+     node_id
+     end))
+
+
+let __proj__DUnsupported__item__action_name : diagnostic  ->  Prims.string = (fun ( projectee  :  diagnostic ) -> (match (projectee) with
+| DUnsupported (node_id, action_name) -> begin
+     action_name
+     end))
+
+
+let uu___is_DRefused : diagnostic  ->  Prims.bool = (fun ( projectee  :  diagnostic ) -> (match (projectee) with
+| DRefused (node_id, action_name, reason) -> begin
+     true
+     end
+| uu___ -> begin
+     false
+     end))
+
+
+let __proj__DRefused__item__node_id : diagnostic  ->  Prims.string = (fun ( projectee  :  diagnostic ) -> (match (projectee) with
+| DRefused (node_id, action_name, reason) -> begin
+     node_id
+     end))
+
+
+let __proj__DRefused__item__action_name : diagnostic  ->  Prims.string = (fun ( projectee  :  diagnostic ) -> (match (projectee) with
+| DRefused (node_id, action_name, reason) -> begin
+     action_name
+     end))
+
+
+let __proj__DRefused__item__reason : diagnostic  ->  Prims.string = (fun ( projectee  :  diagnostic ) -> (match (projectee) with
+| DRefused (node_id, action_name, reason) -> begin
+     reason
+     end))
+
+type bounded_outcome<'v, 'eff> = {o_store : store<'v>; o_effects : Prims.list<'eff>; o_diagnostics : Prims.list<diagnostic>}
+
+
+let __proj__Mkbounded_outcome__item__o_store = (fun ( projectee  :  bounded_outcome<'v, 'eff> ) -> (match (projectee) with
+| {o_store = o_store; o_effects = o_effects; o_diagnostics = o_diagnostics} -> begin
+     o_store
+     end))
+
+
+let __proj__Mkbounded_outcome__item__o_effects = (fun ( projectee  :  bounded_outcome<'v, 'eff> ) -> (match (projectee) with
+| {o_store = o_store; o_effects = o_effects; o_diagnostics = o_diagnostics} -> begin
+     o_effects
+     end))
+
+
+let __proj__Mkbounded_outcome__item__o_diagnostics = (fun ( projectee  :  bounded_outcome<'v, 'eff> ) -> (match (projectee) with
+| {o_store = o_store; o_effects = o_effects; o_diagnostics = o_diagnostics} -> begin
+     o_diagnostics
+     end))
+
+type handler_answer<'v, 'eff, 'p> = {h_store : store<'v>; h_effects : Prims.list<'eff>; h_diagnostics : Prims.list<diagnostic>; h_placement : 'p}
+
+
+let __proj__Mkhandler_answer__item__h_store = (fun ( projectee  :  handler_answer<'v, 'eff, 'p> ) -> (match (projectee) with
+| {h_store = h_store; h_effects = h_effects; h_diagnostics = h_diagnostics; h_placement = h_placement} -> begin
+     h_store
+     end))
+
+
+let __proj__Mkhandler_answer__item__h_effects = (fun ( projectee  :  handler_answer<'v, 'eff, 'p> ) -> (match (projectee) with
+| {h_store = h_store; h_effects = h_effects; h_diagnostics = h_diagnostics; h_placement = h_placement} -> begin
+     h_effects
+     end))
+
+
+let __proj__Mkhandler_answer__item__h_diagnostics = (fun ( projectee  :  handler_answer<'v, 'eff, 'p> ) -> (match (projectee) with
+| {h_store = h_store; h_effects = h_effects; h_diagnostics = h_diagnostics; h_placement = h_placement} -> begin
+     h_diagnostics
+     end))
+
+
+let __proj__Mkhandler_answer__item__h_placement = (fun ( projectee  :  handler_answer<'v, 'eff, 'p> ) -> (match (projectee) with
+| {h_store = h_store; h_effects = h_effects; h_diagnostics = h_diagnostics; h_placement = h_placement} -> begin
+     h_placement
+     end))
+
+type handler_arm<'v, 'eff, 'p> = {answer : Prims.string  ->  Prims.string  ->  store<'v>  ->  'p  ->  opt<handler_answer<'v, 'eff, 'p>>}
+
+
+let __proj__Mkhandler_arm__item__answer = (fun ( projectee  :  handler_arm<'v, 'eff, 'p> ) -> (match (projectee) with
+| {answer = answer} -> begin
+     answer
+     end))
+
+
+let inert_arm = (fun ( uu___  :  unit ) -> {answer = (fun ( uu___1  :  Prims.string ) ( uu___2  :  Prims.string ) ( uu___3  :  store<'v> ) ( uu___4  :  'p ) -> ONone)})
+
+
+let store_only = (fun ( s  :  store<'v> ) -> {o_store = s; o_effects = []; o_diagnostics = []})
+
+
+let declined = (fun ( node_id  :  Prims.string ) ( description  :  Prims.string ) ( s  :  store<'v> ) -> {o_store = s; o_effects = []; o_diagnostics = (DUnsupported (node_id, description))::[]})
+
+
+let refused = (fun ( node_id  :  Prims.string ) ( description  :  Prims.string ) ( reason  :  Prims.string ) ( s  :  store<'v> ) -> {o_store = s; o_effects = []; o_diagnostics = (DRefused (node_id, description, reason))::[]})
+
+type jval_payload<'v> =
+| POk of opt<'v>
+| PErr of Prims.string
+
+
+let uu___is_POk = (fun ( projectee  :  jval_payload<'v> ) -> (match (projectee) with
+| POk (value) -> begin
+     true
+     end
+| uu___ -> begin
+     false
+     end))
+
+
+let __proj__POk__item__value = (fun ( projectee  :  jval_payload<'v> ) -> (match (projectee) with
+| POk (value) -> begin
+     value
+     end))
+
+
+let uu___is_PErr = (fun ( projectee  :  jval_payload<'v> ) -> (match (projectee) with
+| PErr (message) -> begin
+     true
+     end
+| uu___ -> begin
+     false
+     end))
+
+
+let __proj__PErr__item__message = (fun ( projectee  :  jval_payload<'v> ) -> (match (projectee) with
+| PErr (message) -> begin
+     message
+     end))
+
+
+let rec fold = (fun ( w  :  witness<'a, 'e, 'v, 'eff> ) ( ar  :  handler_arm<'v, 'eff, 'p> ) ( node_id  :  Prims.string ) ( x  :  action_view<'a, 'e, 'v> ) ( s  :  store<'v> ) ( pl  :  'p ) -> (match (x) with
+| VAssign (act, state_key, value, value_from) -> begin
+     (( 
+if (w.w_is_reserved state_key) then begin
+     (refused node_id (w.w_describe act) (Prims.strcat "State key \'" (Prims.strcat state_key (Prims.strcat "\' is under the host-reserved \'" (Prims.strcat w.w_reserved_prefix "\' namespace")))) s)
+     end else begin
+     (
+
+let payload = (match (value_from) with
+| OSome (expr) -> begin
+     (match ((w.w_resolve s expr)) with
+| Resolved (jv) -> begin
+     POk (OSome (jv))
+     end
+| NotResolved -> begin
+     POk (ONone)
+     end
+| Errored (m) -> begin
+     PErr (m)
+     end)
+     end
+| ONone -> begin
+     POk (value)
+     end)
+in (match (payload) with
+| POk (OSome (jv)) -> begin
+     (store_only (write s state_key jv))
+     end
+| POk (ONone) -> begin
+     (refused node_id (w.w_describe act) "valueFrom did not resolve to a value — no write performed" s)
+     end
+| PErr (m) -> begin
+     (refused node_id (w.w_describe act) (Prims.strcat "valueFrom errored: " (Prims.strcat m " — no write performed")) s)
+     end))
+     end), (pl))
+     end
+| VCall (act, endpoint, declares_target) -> begin
+      
+if declares_target then begin
+     (((refused node_id (w.w_describe act) "the call declares a result target; a handler declares where its own results land" s)), (pl))
+     end else begin
+     (match ((ar.answer node_id endpoint s pl)) with
+| ONone -> begin
+     (((declined node_id (w.w_describe act) s)), (pl))
+     end
+| OSome (ans) -> begin
+     (({o_store = ans.h_store; o_effects = ans.h_effects; o_diagnostics = ans.h_diagnostics}), (ans.h_placement))
+     end)
+     end
+     end
+| VLeaf (act) -> begin
+     (((match ((w.w_lower node_id act s)) with
+| Emit (emitted) -> begin
+     {o_store = s; o_effects = (emitted)::[]; o_diagnostics = []}
+     end
+| Refuse (reason) -> begin
+     (refused node_id (w.w_describe act) reason s)
+     end
+| Decline -> begin
+     (declined node_id (w.w_describe act) s)
+     end)), (pl))
+     end
+| VSequence (uu___, ops) -> begin
+     (fold_many w ar node_id ops s pl)
+     end))
+and fold_many = (fun ( w  :  witness<'a, 'e, 'v, 'eff> ) ( ar  :  handler_arm<'v, 'eff, 'p> ) ( node_id  :  Prims.string ) ( ops  :  Prims.list<action_view<'a, 'e, 'v>> ) ( s  :  store<'v> ) ( pl  :  'p ) -> (match (ops) with
+| [] -> begin
+     (((store_only s)), (pl))
+     end
+| (x)::rest -> begin
+     (
+
+let uu___ = (fold w ar node_id x s pl)
+in (match (uu___) with
+| (o1, p1) -> begin
+     (
+
+let uu___1 = (fold_many w ar node_id rest o1.o_store p1)
+in (match (uu___1) with
+| (o2, p2) -> begin
+     (({o_store = o2.o_store; o_effects = (app o1.o_effects o2.o_effects); o_diagnostics = (app o1.o_diagnostics o2.o_diagnostics)}), (p2))
+     end))
+     end))
+     end))
+
+
+let run_action = (fun ( w  :  witness<'a, 'e, 'v, 'eff> ) ( ar  :  handler_arm<'v, 'eff, 'p> ) ( node_id  :  Prims.string ) ( act  :  'a ) ( s  :  store<'v> ) ( pl  :  'p ) -> (fold w ar node_id (w.w_view act) s pl))
+
 type res<'v> =
 | JResolved of 'v
 | JNotResolved
@@ -422,58 +891,6 @@ let __proj__EReadFileBody__item__encoding : client_effect  ->  Prims.string = (f
      encoding
      end))
 
-type diagnostic =
-| DUnsupported of Prims.string * Prims.string
-| DRefused of Prims.string * Prims.string * Prims.string
-
-
-let uu___is_DUnsupported : diagnostic  ->  Prims.bool = (fun ( projectee  :  diagnostic ) -> (match (projectee) with
-| DUnsupported (node_id, action_name) -> begin
-     true
-     end
-| uu___ -> begin
-     false
-     end))
-
-
-let __proj__DUnsupported__item__node_id : diagnostic  ->  Prims.string = (fun ( projectee  :  diagnostic ) -> (match (projectee) with
-| DUnsupported (node_id, action_name) -> begin
-     node_id
-     end))
-
-
-let __proj__DUnsupported__item__action_name : diagnostic  ->  Prims.string = (fun ( projectee  :  diagnostic ) -> (match (projectee) with
-| DUnsupported (node_id, action_name) -> begin
-     action_name
-     end))
-
-
-let uu___is_DRefused : diagnostic  ->  Prims.bool = (fun ( projectee  :  diagnostic ) -> (match (projectee) with
-| DRefused (node_id, action_name, reason) -> begin
-     true
-     end
-| uu___ -> begin
-     false
-     end))
-
-
-let __proj__DRefused__item__node_id : diagnostic  ->  Prims.string = (fun ( projectee  :  diagnostic ) -> (match (projectee) with
-| DRefused (node_id, action_name, reason) -> begin
-     node_id
-     end))
-
-
-let __proj__DRefused__item__action_name : diagnostic  ->  Prims.string = (fun ( projectee  :  diagnostic ) -> (match (projectee) with
-| DRefused (node_id, action_name, reason) -> begin
-     action_name
-     end))
-
-
-let __proj__DRefused__item__reason : diagnostic  ->  Prims.string = (fun ( projectee  :  diagnostic ) -> (match (projectee) with
-| DRefused (node_id, action_name, reason) -> begin
-     reason
-     end))
-
 type action<'v, 'b, 'k> =
 | AChain of Prims.list<action<'v, 'b, 'k>>
 | AWriteToClipboard of text_source<'b>
@@ -772,62 +1189,11 @@ let __proj__AFocus__item__node_id = (fun ( projectee  :  action<'v, 'b, 'k> ) ->
      node_id
      end))
 
-type outcome<'v> = {o_store : store<'v>; o_effects : Prims.list<client_effect>; o_diagnostics : Prims.list<diagnostic>}
+
+type outcome<'v> = bounded_outcome<'v, client_effect>
 
 
-let __proj__Mkoutcome__item__o_store = (fun ( projectee  :  outcome<'v> ) -> (match (projectee) with
-| {o_store = o_store; o_effects = o_effects; o_diagnostics = o_diagnostics} -> begin
-     o_store
-     end))
-
-
-let __proj__Mkoutcome__item__o_effects = (fun ( projectee  :  outcome<'v> ) -> (match (projectee) with
-| {o_store = o_store; o_effects = o_effects; o_diagnostics = o_diagnostics} -> begin
-     o_effects
-     end))
-
-
-let __proj__Mkoutcome__item__o_diagnostics = (fun ( projectee  :  outcome<'v> ) -> (match (projectee) with
-| {o_store = o_store; o_effects = o_effects; o_diagnostics = o_diagnostics} -> begin
-     o_diagnostics
-     end))
-
-type handler_answer<'v, 'p> = {h_store : store<'v>; h_effects : Prims.list<client_effect>; h_diagnostics : Prims.list<diagnostic>; h_placement : 'p}
-
-
-let __proj__Mkhandler_answer__item__h_store = (fun ( projectee  :  handler_answer<'v, 'p> ) -> (match (projectee) with
-| {h_store = h_store; h_effects = h_effects; h_diagnostics = h_diagnostics; h_placement = h_placement} -> begin
-     h_store
-     end))
-
-
-let __proj__Mkhandler_answer__item__h_effects = (fun ( projectee  :  handler_answer<'v, 'p> ) -> (match (projectee) with
-| {h_store = h_store; h_effects = h_effects; h_diagnostics = h_diagnostics; h_placement = h_placement} -> begin
-     h_effects
-     end))
-
-
-let __proj__Mkhandler_answer__item__h_diagnostics = (fun ( projectee  :  handler_answer<'v, 'p> ) -> (match (projectee) with
-| {h_store = h_store; h_effects = h_effects; h_diagnostics = h_diagnostics; h_placement = h_placement} -> begin
-     h_diagnostics
-     end))
-
-
-let __proj__Mkhandler_answer__item__h_placement = (fun ( projectee  :  handler_answer<'v, 'p> ) -> (match (projectee) with
-| {h_store = h_store; h_effects = h_effects; h_diagnostics = h_diagnostics; h_placement = h_placement} -> begin
-     h_placement
-     end))
-
-type arm<'v, 'p> = {answer : Prims.string  ->  Prims.string  ->  store<'v>  ->  'p  ->  opt<handler_answer<'v, 'p>>}
-
-
-let __proj__Mkarm__item__answer = (fun ( projectee  :  arm<'v, 'p> ) -> (match (projectee) with
-| {answer = answer} -> begin
-     answer
-     end))
-
-
-let inert_arm = (fun ( uu___  :  unit ) -> {answer = (fun ( uu___1  :  Prims.string ) ( uu___2  :  Prims.string ) ( uu___3  :  store<'v> ) ( uu___4  :  'p ) -> ONone)})
+type arm<'v, 'p> = handler_arm<'v, client_effect, 'p>
 
 type axioms<'v, 'b> = {is_reserved : key  ->  Prims.bool; reserved_prefix : Prims.string; resolve_jval : store<'v>  ->  'b  ->  res<'v>; resolve_scalar : store<'v>  ->  'b  ->  res_text; i18n_has : store<'v>  ->  Prims.string  ->  Prims.bool; resolve_text : store<'v>  ->  text_source<'b>  ->  Prims.string; sanitize_url : Prims.string  ->  opt<Prims.string>; route_path : Prims.string  ->  Prims.string}
 
@@ -930,49 +1296,6 @@ let describe = (fun ( ax  :  axioms<'v, 'b> ) ( a  :  action<'v, 'b, 'k> ) -> (m
      (Prims.strcat "Invoke(" (Prims.strcat capability_id ")"))
      end))
 
-
-let store_only = (fun ( s  :  store<'v> ) -> {o_store = s; o_effects = []; o_diagnostics = []})
-
-
-let no_op = (fun ( ax  :  axioms<'v, 'b> ) ( node_id  :  Prims.string ) ( a  :  action<'v, 'b, 'k> ) ( s  :  store<'v> ) -> {o_store = s; o_effects = []; o_diagnostics = (DUnsupported (node_id, (describe ax a)))::[]})
-
-
-let refused = (fun ( ax  :  axioms<'v, 'b> ) ( node_id  :  Prims.string ) ( a  :  action<'v, 'b, 'k> ) ( reason  :  Prims.string ) ( s  :  store<'v> ) -> {o_store = s; o_effects = []; o_diagnostics = (DRefused (node_id, (describe ax a), reason))::[]})
-
-type jval_payload<'v> =
-| POk of opt<'v>
-| PErr of Prims.string
-
-
-let uu___is_POk = (fun ( projectee  :  jval_payload<'v> ) -> (match (projectee) with
-| POk (value) -> begin
-     true
-     end
-| uu___ -> begin
-     false
-     end))
-
-
-let __proj__POk__item__value = (fun ( projectee  :  jval_payload<'v> ) -> (match (projectee) with
-| POk (value) -> begin
-     value
-     end))
-
-
-let uu___is_PErr = (fun ( projectee  :  jval_payload<'v> ) -> (match (projectee) with
-| PErr (message) -> begin
-     true
-     end
-| uu___ -> begin
-     false
-     end))
-
-
-let __proj__PErr__item__message = (fun ( projectee  :  jval_payload<'v> ) -> (match (projectee) with
-| PErr (message) -> begin
-     message
-     end))
-
 type text_result =
 | ROk of Prims.string
 | RErr of Prims.string
@@ -1011,45 +1334,65 @@ let __proj__RErr__item__message : text_result  ->  Prims.string = (fun ( project
 let unresolved_i18n : Prims.string  ->  Prims.string = (fun ( k  :  Prims.string ) -> (Prims.strcat "unresolved i18n key \'" (Prims.strcat k "\'")))
 
 
-let rec run = (fun ( ax  :  axioms<'v, 'b> ) ( ar  :  arm<'v, 'p> ) ( node_id  :  Prims.string ) ( a  :  action<'v, 'b, 'k> ) ( s  :  store<'v> ) ( pl  :  'p ) -> (match (a) with
+let rec ui_view = (fun ( a  :  action<'v, 'b, 'k> ) -> (match (a) with
+| AChain (ops) -> begin
+     VSequence (a, (ui_view_list ops))
+     end
 | ASetState (state_key, value, value_from) -> begin
-     (( 
-if (ax.is_reserved state_key) then begin
-     (refused ax node_id a (Prims.strcat "State key \'" (Prims.strcat state_key (Prims.strcat "\' is under the host-reserved \'" (Prims.strcat ax.reserved_prefix "\' namespace")))) s)
-     end else begin
-     (
-
-let payload = (match (value_from) with
-| OSome (binding) -> begin
-     (match ((ax.resolve_jval s binding)) with
-| JResolved (jv) -> begin
-     POk (OSome (jv))
+     VAssign (a, state_key, value, value_from)
      end
-| JNotResolved -> begin
-     POk (ONone)
+| ACall (endpoint, uu___, into) -> begin
+     VCall (a, endpoint, (match (into) with
+| OSome (item) -> begin
+     true
      end
-| JErrored (m) -> begin
-     PErr (m)
-     end
-| JI18nUnresolved (kk) -> begin
-     PErr ((unresolved_i18n kk))
-     end)
-     end
-| ONone -> begin
-     POk (value)
-     end)
-in (match (payload) with
-| POk (OSome (jv)) -> begin
-     (store_only (write s state_key jv))
-     end
-| POk (ONone) -> begin
-     (refused ax node_id a "valueFrom did not resolve to a value — no write performed" s)
-     end
-| PErr (m) -> begin
-     (refused ax node_id a (Prims.strcat "valueFrom errored: " (Prims.strcat m " — no write performed")) s)
+| uu___1 -> begin
+     false
      end))
-     end), (pl))
      end
+| AWriteToClipboard (uu___) -> begin
+     VLeaf (a)
+     end
+| ADispatch (uu___) -> begin
+     VLeaf (a)
+     end
+| AInvoke (uu___, uu___1) -> begin
+     VLeaf (a)
+     end
+| AReadFileBody (uu___, uu___1, uu___2, uu___3) -> begin
+     VLeaf (a)
+     end
+| ANavigate (uu___, uu___1) -> begin
+     VLeaf (a)
+     end
+| ACommitLocal (uu___) -> begin
+     VLeaf (a)
+     end
+| ANotify (uu___, uu___1) -> begin
+     VLeaf (a)
+     end
+| AAiTool (uu___, uu___1) -> begin
+     VLeaf (a)
+     end
+| APrint -> begin
+     VLeaf (a)
+     end
+| AConfirm (uu___, uu___1, uu___2) -> begin
+     VLeaf (a)
+     end
+| AFocus (uu___) -> begin
+     VLeaf (a)
+     end))
+and ui_view_list = (fun ( ops  :  Prims.list<action<'v, 'b, 'k>> ) -> (match (ops) with
+| [] -> begin
+     []
+     end
+| (x)::rest -> begin
+     ((ui_view x))::(ui_view_list rest)
+     end))
+
+
+let ui_lower = (fun ( ax  :  axioms<'v, 'b> ) ( node_id  :  Prims.string ) ( a  :  action<'v, 'b, 'k> ) ( s  :  store<'v> ) -> (match (a) with
 | ANavigate (route, target) -> begin
      (
 
@@ -1083,19 +1426,19 @@ if (ax.i18n_has s kk) then begin
      RErr ((unresolved_i18n kk))
      end
      end)
-in (((match (resolved) with
+in (match (resolved) with
 | RErr (reason) -> begin
-     (refused ax node_id a (Prims.strcat reason " — nothing was navigated to") s)
+     Refuse ((Prims.strcat reason " — nothing was navigated to"))
      end
 | ROk (r) -> begin
      (match ((ax.sanitize_url r)) with
 | OSome (safe) -> begin
-     {o_store = s; o_effects = (ENavigate (safe, target))::[]; o_diagnostics = []}
+     Emit (ENavigate (safe, target))
      end
 | ONone -> begin
-     (refused ax node_id a "route is not a safe URL" s)
+     Refuse ("route is not a safe URL")
      end)
-     end)), (pl)))
+     end))
      end
 | AWriteToClipboard (text) -> begin
      (
@@ -1130,19 +1473,19 @@ if (ax.i18n_has s kk) then begin
      RErr ((unresolved_i18n kk))
      end
      end)
-in (((match (payload) with
+in (match (payload) with
 | ROk (value) -> begin
-     {o_store = s; o_effects = (EClipboard (value))::[]; o_diagnostics = []}
+     Emit (EClipboard (value))
      end
 | RErr (reason) -> begin
-     (refused ax node_id a (Prims.strcat reason " — nothing was written to the clipboard") s)
-     end)), (pl)))
+     Refuse ((Prims.strcat reason " — nothing was written to the clipboard"))
+     end))
      end
 | APrint -> begin
-     (({o_store = s; o_effects = (EPrint)::[]; o_diagnostics = []}), (pl))
+     Emit (EPrint)
      end
 | AFocus (target_node_id) -> begin
-     (({o_store = s; o_effects = (EFocus (target_node_id))::[]; o_diagnostics = []}), (pl))
+     Emit (EFocus (target_node_id))
      end
 | AReadFileBody (uu___, uu___1, encoding, uu___2) -> begin
      (
@@ -1157,60 +1500,56 @@ let enc = (match (encoding) with
 | FDataUrl -> begin
      "DataUrl"
      end)
-in (({o_store = s; o_effects = (EReadFileBody (node_id, enc))::[]; o_diagnostics = []}), (pl)))
-     end
-| AChain (ops) -> begin
-     (run_many ax ar node_id ops s pl)
+in Emit (EReadFileBody (node_id, enc)))
      end
 | AConfirm (uu___, uu___1, uu___2) -> begin
-     (((no_op ax node_id a s)), (pl))
+     Decline
      end
 | ANotify (uu___, uu___1) -> begin
-     (((no_op ax node_id a s)), (pl))
+     Decline
      end
 | AAiTool (uu___, uu___1) -> begin
-     (((no_op ax node_id a s)), (pl))
+     Decline
      end
 | AInvoke (uu___, uu___1) -> begin
-     (((no_op ax node_id a s)), (pl))
+     Decline
      end
 | ADispatch (uu___) -> begin
-     (((no_op ax node_id a s)), (pl))
+     Decline
      end
 | ACommitLocal (uu___) -> begin
-     (((no_op ax node_id a s)), (pl))
+     Decline
      end
-| ACall (uu___, uu___1, OSome (uu___2)) -> begin
-     (((refused ax node_id a "the call declares a result target; a handler declares where its own results land" s)), (pl))
+| AChain (uu___) -> begin
+     Decline
      end
-| ACall (endpoint, uu___, ONone) -> begin
-     (match ((ar.answer node_id endpoint s pl)) with
-| ONone -> begin
-     (((no_op ax node_id a s)), (pl))
+| ASetState (uu___, uu___1, uu___2) -> begin
+     Decline
      end
-| OSome (ans) -> begin
-     (({o_store = ans.h_store; o_effects = ans.h_effects; o_diagnostics = ans.h_diagnostics}), (ans.h_placement))
-     end)
+| ACall (uu___, uu___1, uu___2) -> begin
+     Decline
      end))
-and run_many = (fun ( ax  :  axioms<'v, 'b> ) ( ar  :  arm<'v, 'p> ) ( node_id  :  Prims.string ) ( ops  :  Prims.list<action<'v, 'b, 'k>> ) ( s  :  store<'v> ) ( pl  :  'p ) -> (match (ops) with
-| [] -> begin
-     (((store_only s)), (pl))
-     end
-| (x)::rest -> begin
-     (
 
-let uu___ = (run ax ar node_id x s pl)
-in (match (uu___) with
-| (o1, p1) -> begin
-     (
 
-let uu___1 = (run_many ax ar node_id rest o1.o_store p1)
-in (match (uu___1) with
-| (o2, p2) -> begin
-     (({o_store = o2.o_store; o_effects = (app o1.o_effects o2.o_effects); o_diagnostics = (app o1.o_diagnostics o2.o_diagnostics)}), (p2))
+let ui_resolve = (fun ( ax  :  axioms<'v, 'b> ) ( s  :  store<'v> ) ( binding  :  'b ) -> (match ((ax.resolve_jval s binding)) with
+| JResolved (jv) -> begin
+     Resolved (jv)
+     end
+| JNotResolved -> begin
+     NotResolved
+     end
+| JErrored (m) -> begin
+     Errored (m)
+     end
+| JI18nUnresolved (kk) -> begin
+     Errored ((unresolved_i18n kk))
      end))
-     end))
-     end))
+
+
+let ui_witness = (fun ( ax  :  axioms<'v, 'b> ) -> {w_view = ui_view; w_lower = (ui_lower ax); w_describe = (describe ax); w_resolve = (ui_resolve ax); w_is_reserved = ax.is_reserved; w_reserved_prefix = ax.reserved_prefix})
+
+
+let run = (fun ( ax  :  axioms<'v, 'b> ) ( ar  :  arm<'v, 'p> ) ( node_id  :  Prims.string ) ( a  :  action<'v, 'b, 'k> ) ( s  :  store<'v> ) ( pl  :  'p ) -> (run_action (ui_witness ax) ar node_id a s pl))
 
 
 

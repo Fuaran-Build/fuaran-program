@@ -26,7 +26,7 @@
   "kind": "proofs",
   "version": 1,
   "subject": "Fuaran-Program",
-  "$scope": "the proved models under proofs/: the shared bounded fold — BoundedActions.runBoundedActionWith, the one interpreter every placement runs, over the closed Action union, its State store, its closure-free client effects and its diagnostics (Phase 1715); and the interaction budget — Budget.satAdd/satMul, Budget.actionCascadeCost, Budget.treeCost and the G2 stage of BoundedDriver.step that refuses on them (Phase 1716). Bounded code and bounded cost, the two halves of running an untrusted generated tree on shared infrastructure.",
+  "$scope": "the proved models under proofs/: the shared bounded fold — BoundedActions.runBoundedActionWith, the one interpreter every placement runs, over the closed Action union, its State store, its closure-free client effects and its diagnostics (Phase 1715), restated over the generic tier's ActionView and the fold-read members of the ProgramWitness contract (DECISIONS.md D18) and re-proved there before the generic core is written, with the fourteen-arm union kept as the UI witness seen through the view (Phase 1898); and the interaction budget — Budget.satAdd/satMul, Budget.actionCascadeCost, Budget.treeCost and the G2 stage of BoundedDriver.step that refuses on them (Phase 1716). Bounded code and bounded cost, the two halves of running an untrusted generated tree on shared infrastructure.",
   "claims": [
     {
       "id": "fold-totality",
@@ -37,12 +37,38 @@
         "theorem": "run_total",
         "model": "proofs/BoundedFold.fst",
         "prover": "proofs/fstar-pin.json",
+        "supporting": [
+          "fold_total"
+        ],
         "definitions": [
           "run",
-          "run_many",
+          "run_action",
+          "ui_witness",
+          "ui_view",
           "handled"
         ],
-        "note": "termination is structural on the action, carried by the decreases clause on `run`/`run_many` rather than by a depth counter; `handled` names every constructor a second time without a wildcard, so a fifteenth arm fails to compile here exactly as it fails to compile in the fold"
+        "note": "since Phase 1898 a corollary of `fold_total` at the UI witness: `run` is the generic fold applied to `ui_view`, and `ui_view` names every constructor with no wildcard exactly as `handled` does, so a fifteenth arm fails to compile in the adapter's View exactly as it fails in the fold — the exhaustiveness check D18 moves into the adapter, checked here by the same means"
+      }
+    },
+    {
+      "id": "view-fold-totality",
+      "level": "proved",
+      "phase": "Phase 1898",
+      "claim": "The generic fold is defined on every shape of the action view — Sequence, Assign, Call, Leaf — with no wildcard, no partial match and no throw, for every witness; and one step that is neither Sequence nor a call the placement answered is characterised structurally: the placement accumulation is untouched, the store is either unchanged or written at exactly one key the witness's reserved predicate rejects, and at most one effect and at most one diagnostic are emitted. For a leaf that is the kept assumption K3 made a theorem: whatever the witness's Lower answers, this is the most it can do.",
+      "evidence": {
+        "theorem": "fold_total",
+        "model": "proofs/BoundedFold.fst",
+        "prover": "proofs/fstar-pin.json",
+        "definitions": [
+          "fold",
+          "fold_many",
+          "action_view",
+          "leaf_outcome",
+          "witness",
+          "handled_view",
+          "answered_view"
+        ],
+        "note": "unconditional. Termination is structural on the view, carried by the decreases clause on `fold`/`fold_many`; the view is taken to exhaustion (a tree), so the obligation that a witness's View unfolds finitely is carried by the TYPE of the witness's `w_view` field — a Tot arrow — rather than by a fuel; `ui_view` discharges it for the UI witness by being accepted as Tot"
       }
     },
     {
@@ -55,10 +81,75 @@
         "model": "proofs/BoundedFold.fst",
         "prover": "proofs/fstar-pin.json",
         "supporting": [
-          "run_no_closure_list",
-          "describe_ignores_closures"
+          "run_action_blind",
+          "ui_blind_to_closures",
+          "ui_view_same_shape",
+          "ui_view_same_shape_list",
+          "describe_ignores_closures",
+          "ui_lower_ignores_closures"
         ],
-        "note": "the closure slots have an abstract type parameter with no elimination form, so in the model a fold that DID invoke one cannot be written at all; the lemma is what makes that absence a statement rather than an accident of how the model was written"
+        "note": "since Phase 1898 this is `run_action_blind` — the generic theorem, conditional on the witness obligation `blind_to` — at the UI witness, with `ui_blind_to_closures` discharging that obligation under `same_but_closures`; so the UI statement is unconditional again. The closure slots have an abstract type parameter with no elimination form, so in the model a fold that DID invoke one cannot be written at all; the lemma is what makes that absence a statement rather than an accident of how the model was written"
+      }
+    },
+    {
+      "id": "view-fold-blind",
+      "level": "proved",
+      "phase": "Phase 1898",
+      "claim": "The core's half of no-closure-invocation, held unconditionally: two views of the same shape — the same constructors at every node, the same keys, values, expressions, endpoints and target flags, the carried actions describing alike and, at a leaf, lowering alike at every node id and store — fold to identical outcomes and identical placements, for every witness and every arm. The generic fold reads an action only through the witness's Describe and Lower and the shape its View gave it, so it cannot have applied anything the witness did not surface.",
+      "evidence": {
+        "theorem": "fold_blind",
+        "model": "proofs/BoundedFold.fst",
+        "prover": "proofs/fstar-pin.json",
+        "supporting": [
+          "fold_blind_list"
+        ],
+        "definitions": [
+          "same_shape",
+          "same_shape_list"
+        ],
+        "note": "unconditional. This is the half D18 keeps in the core: the view carries no closure and the action type parameter has no elimination form, so there is nothing for the fold to invoke"
+      }
+    },
+    {
+      "id": "view-no-closure-conditional",
+      "level": "proved",
+      "phase": "Phase 1898",
+      "claim": "No-closure-invocation for the generic core, CONDITIONAL on the witness: under any relation on actions the witness is blind to — its View sends related actions to same-shaped views — related actions run to identical outcomes and placements. This is the obligation D18 places on the witness (only a View or a Lower could reach a closure), stated as a precondition; the UI witness discharges it (ui-witness-blind-to-closures) and any other domain inherits it as its own.",
+      "conditional_on": "blind_to rel w — the witness's View sends rel-related actions to same-shaped views (same_shape); the differential test through a test witness (Phase 1896) is the sampled form of this for a domain that does not prove it",
+      "evidence": {
+        "theorem": "run_action_blind",
+        "model": "proofs/BoundedFold.fst",
+        "prover": "proofs/fstar-pin.json",
+        "supporting": [
+          "fold_blind"
+        ],
+        "definitions": [
+          "blind_to",
+          "run_action"
+        ]
+      }
+    },
+    {
+      "id": "ui-witness-blind-to-closures",
+      "level": "proved",
+      "phase": "Phase 1898",
+      "claim": "The UI witness meets the no-closure obligation: under same_but_closures — two actions differing only in the closures they carry — ui_view produces same-shaped views. Describe and Lower read the constructor, the route, the payload, the encoding and the node id, never a closure slot; composition needs one induction. This is what makes run_no_closure unconditional at the UI witness rather than a conditional nobody has met.",
+      "evidence": {
+        "theorem": "ui_blind_to_closures",
+        "model": "proofs/BoundedFold.fst",
+        "prover": "proofs/fstar-pin.json",
+        "supporting": [
+          "ui_view_same_shape",
+          "ui_view_same_shape_list",
+          "describe_ignores_closures",
+          "ui_lower_ignores_closures"
+        ],
+        "definitions": [
+          "ui_view",
+          "ui_view_list",
+          "ui_lower",
+          "same_but_closures"
+        ]
       }
     },
     {
@@ -71,8 +162,27 @@
         "model": "proofs/BoundedFold.fst",
         "prover": "proofs/fstar-pin.json",
         "supporting": [
-          "chain_action_homomorphism"
-        ]
+          "sequence_homomorphism",
+          "ui_view_list_app"
+        ],
+        "note": "since Phase 1898 the action-level statement (Phase 1715's `chain_action_homomorphism`, now under the headline name) — `sequence_homomorphism` at the UI witness, through `ui_view_list_app`: viewing a concatenation is concatenating the views"
+      }
+    },
+    {
+      "id": "view-sequence-homomorphism",
+      "level": "proved",
+      "phase": "Phase 1898",
+      "claim": "Over the view, for every witness: running the concatenation of two operation lists equals running the first and then the second against the store the first left, with the effect lists and the diagnostic lists concatenated in order and the placement threaded through. DECISIONS.md D7's splice property as an equation, now the generic tier's — what makes Sequence a composition rather than a fifth special case.",
+      "evidence": {
+        "theorem": "sequence_homomorphism",
+        "model": "proofs/BoundedFold.fst",
+        "prover": "proofs/fstar-pin.json",
+        "supporting": [
+          "sequence_action_homomorphism",
+          "app_assoc",
+          "app_nil"
+        ],
+        "note": "unconditional"
       }
     },
     {
@@ -80,26 +190,84 @@
       "level": "proved",
       "phase": "Phase 1715",
       "claim": "The store the fold returns agrees with the store it was given at every host-reserved State key, for any handler arm that preserves them. The only write the fold performs is the SetState arm's, and that arm refuses a reserved key before reaching it.",
+      "conditional_on": "arm_preserves_reserved ax.is_reserved ar — the placement seam preserves every host-reserved key; discharged by inert_preserves_reserved for the placements that run no handlers",
       "evidence": {
         "theorem": "reserved_untouched",
         "model": "proofs/BoundedFold.fst",
         "prover": "proofs/fstar-pin.json",
         "supporting": [
-          "reserved_untouched_list"
+          "fold_reserved_untouched"
         ],
-        "note": "the side condition is about the placement SEAM, which returns a store of its own and which the fold therefore cannot bound; `inert_preserves_reserved` discharges it for the two placements that run no handlers, which is what keeps the theorem from being a conditional nobody has met"
+        "note": "since Phase 1898 a corollary of `fold_reserved_untouched` at the UI witness, whose reserved predicate is the host's `isHostReserved`. The side condition is about the placement SEAM, which returns a store of its own and which the fold therefore cannot bound; `inert_preserves_reserved` discharges it for the two placements that run no handlers, which is what keeps the theorem from being a conditional nobody has met"
+      }
+    },
+    {
+      "id": "view-reserved-untouched",
+      "level": "proved",
+      "phase": "Phase 1898",
+      "claim": "Over the view, for every witness and every reserved predicate: the store the fold returns agrees with the store it was given at every key the predicate reserves, for any placement arm that preserves them. The only write the fold performs is the Assign shape's, which refuses a reserved key before reaching it; a leaf has no store to return.",
+      "conditional_on": "arm_preserves_reserved w.w_is_reserved ar — discharged for every predicate by inert_preserves_reserved for the arm that declines every call",
+      "evidence": {
+        "theorem": "fold_reserved_untouched",
+        "model": "proofs/BoundedFold.fst",
+        "prover": "proofs/fstar-pin.json",
+        "supporting": [
+          "fold_reserved_untouched_list",
+          "write_preserves_other"
+        ],
+        "definitions": [
+          "arm_preserves_reserved",
+          "write",
+          "lookup"
+        ],
+        "note": "the store is modelled CONCRETELY as a keyed association list — D18's StoreWitness.Assign is `write` — because this theorem is about what is written, and a theorem about writes to an abstract store would be a theorem about an obligation nobody had stated; see store-keyed-channel-assumed"
       }
     },
     {
       "id": "inert-placements-preserve-reserved",
       "level": "proved",
       "phase": "Phase 1715",
-      "claim": "The two placements that run no handlers meet `host-reserved-keys-untouched`'s side condition: their handler arm preserves every host-reserved State key. This is what keeps that theorem from being a conditional nobody has met.",
+      "claim": "The two placements that run no handlers meet `host-reserved-keys-untouched`'s side condition: their handler arm preserves every host-reserved State key. This is what keeps that theorem from being a conditional nobody has met. Since Phase 1898 it is quantified over EVERY reserved predicate, so it discharges `view-reserved-untouched`'s condition for any domain whose placement declines every call.",
       "evidence": {
         "theorem": "inert_preserves_reserved",
         "model": "proofs/BoundedFold.fst",
-        "prover": "proofs/fstar-pin.json"
+        "prover": "proofs/fstar-pin.json",
+        "definitions": [
+          "inert_arm"
+        ]
       }
+    },
+    {
+      "id": "witness-members-assumed",
+      "level": "assumed",
+      "phase": "Phase 1898",
+      "claim": "Every member of the generic witness is a total arrow the model takes as a parameter, and each is an assumption the theorems lean on: View is total and, applied to exhaustion, finite (its field type is a Tot arrow onto a tree, so a View that put an action inside its own Sequence cannot be written); Lower answers a leaf outcome — at most one effect, or a refusal, or a decline, and never a store (K3, by type); Describe and Resolve are total and pure, the same answer for the same store; IsReserved is a total predicate and ReservedPrefix a constant (K5). Nothing proved depends on WHAT any of them answers.",
+      "class": "domain-obligation",
+      "evidence": {
+        "assumption": "a domain's ProgramWitness members are total arrows of the shapes the witness record declares: View unfolds every action to a finite view, Lower returns a leaf outcome, Describe and Resolve are pure, IsReserved is a predicate"
+      },
+      "mitigation": "the UI witness discharges every row in the model itself (ui_view is accepted as Tot, ui_lower returns leaf_outcome by type, describe and ui_resolve are pure definitions over the eight axioms), and the differential host is what says that discharged instance is the shipped one; Phase 1896's test witness carries the same obligations for the ported core"
+    },
+    {
+      "id": "store-keyed-channel-assumed",
+      "level": "assumed",
+      "phase": "Phase 1898",
+      "claim": "The store is modelled concretely as one keyed state channel — an association list where StoreWitness.Assign is `write` — rather than abstractly behind the witness (D18 s3.4), because view-reserved-untouched is a theorem about what is written. What is assumed of a domain is therefore K4: its Assign writes exactly one key of one state channel. A store whose Assign did something else is outside the model.",
+      "class": "domain-obligation",
+      "evidence": {
+        "assumption": "a domain store's Assign writes exactly one key of one keyed state channel, and lookup after Assign agrees with Map semantics (replace in place, append otherwise)"
+      },
+      "mitigation": "the differential host projects the domain store onto the channel (today BindingSources.State as a key-ordered list) and compares it key by key after every step, so an Assign that wrote elsewhere diverges on the first action that writes"
+    },
+    {
+      "id": "leaf-declaration-not-modelled",
+      "level": "policy",
+      "phase": "Phase 1898",
+      "claim": "The Leaf shape's LeafDeclaration — the effect kinds and host calls a leaf may demand — is OUT of the fold theorem.",
+      "evidence": {
+        "document": "proofs/README.md"
+      },
+      "reason": "it is the DEMANDED projection's input, read by Demanded and never by the fold; the fold does with a leaf exactly what Lower says, so a model of the fold that carried the declaration would be modelling a static projection and calling the result a property of the interpreter. The view carries the action instead, which is what Describe and Lower need."
     },
     {
       "id": "model-agrees-with-shipped-code",

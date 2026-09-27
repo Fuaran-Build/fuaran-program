@@ -11,88 +11,164 @@ driver is what refuses them.
 This directory holds a model of each, written in [F\*](https://www.fstar-lang.org/), together
 with the leg that checks them and the seam that ties each model back to the code that ships.
 
-- **[The bounded fold](#the-fold-theorem)** — `BoundedFold.fst`, four theorems (Phase 1715).
-  Bounded CODE: a generated tree running through this fold has no arbitrary-code surface.
+- **[The bounded fold](#the-fold-theorem)** — `BoundedFold.fst`, four theorems (Phase 1715),
+  restated over the generic tier's ACTION VIEW and re-proved there before the generic core is
+  written (Phase 1898; `DECISIONS.md` D14 and D18). Bounded CODE: a generated tree running through
+  this fold has no arbitrary-code surface.
 - **[The interaction budget](#the-budget-theorem)** — `Budget.fst`, five theorems (Phase 1716).
   Bounded COST: a generated tree cannot be priced cheaper than it is, and a breach changes
   nothing.
 
 **"Formally verified" appears in this repository in exactly one place — the ladders below — and
-it is spent on nine laws and nothing else.** What is proved is narrow and stated precisely;
+it is spent on the laws in the two ladders and nothing else** — the fold's four, each stated over
+the generic view and again at the UI witness, and the budget's five. What is proved is narrow and
+stated precisely;
 what is not is stated just as precisely, because an unstated exclusion reads, to whoever finds
 it later, as a claim that failed. `proofs.json` at the repository root is the same ladders as
 data, for a reader that is a program.
 
 ## The fold theorem
 
-The model is `BoundedFold.fst`. It is hand-written, it names its F# counterpart above every
-definition, and it has four headline lemmas.
+The model is `BoundedFold.fst`. It is hand-written, it names its F# counterpart — or, for the
+generic tier, the `DECISIONS.md` D18 contract member — above every definition, and since Phase 1898
+it has two layers in one file.
 
-### 1. `run_total` — the fold is defined on every arm, and one step is characterised
+**The generic tier** is a model of the fold the generic core will run (`BoundedActions.run witness`,
+which Phase 1896 writes against this model — D14's "model first"): one `match` over the four shapes
+of D18's `ActionView` — `Sequence`, `Assign`, `Call`, `Leaf` — parameterised by a WITNESS record
+holding the fold-read members of `ProgramWitness` (`View`, `Lower`, `Describe`, `Resolve`,
+`IsReserved`, `ReservedPrefix`). Its four theorems are over the view and quantified over every
+witness. **The UI witness** is today's fourteen-arm `Action` union seen through that view — `ui_view`
+is the adapter's total `View`, `ui_lower` its `Lower` — and `run` is the generic fold at that witness
+with the exact signature Phase 1715 gave it. Phase 1715's five theorems are re-proved there, each as a
+corollary of the generic one, keeping their names and their statements. The differential host runs
+`run`, unchanged; the claim that carries is that the fourteen arms seen through the view are the
+fourteen arms.
 
-The `Action` union is closed and has fourteen arms. The fold names all fourteen, with no
-wildcard arm, no partial match and no throw; termination is structural on the action, carried
-by the `decreases` clause rather than by a depth counter. In F\* that much is the `Tot` effect,
-and `handled` states it a second time by naming every constructor again — so a fifteenth arm
-fails to compile here exactly as it fails to compile in the fold, which is the property worth
-having.
+### Every parameter of the model is an assumption
 
-The lemma adds the part typing does not give. For one step that is neither the composition arm
-nor a call the placement ANSWERED: the placement's own accumulation comes back untouched, the
-store is either unchanged or written at exactly one key the host-reserved predicate rejects,
-and at most one client effect and at most one diagnostic are emitted.
+The generic fold takes one witness and one placement arm, and each arrow is something the theorems
+assume rather than prove. Stated once here, because a parameter nobody wrote down is the defect D4
+warned about.
 
-The two exclusions are the interesting part of the statement rather than fine print.
-Composition is excluded because it is characterised by law 3 instead. An answered call is
-excluded because its outcome is the PLACEMENT's — see "the placement seam" below.
+| Witness member | D18 | Assumed to be | Leaned on by |
+|---|---|---|---|
+| `w_view` | `ActionWitness.View` | a TOTAL arrow, taken to exhaustion. The model's view is a tree, so the obligation that the F# `View`, applied repeatedly, unfolds a finite tree is carried by this field's type: a witness whose `View` put an action inside its own `Sequence` cannot be written here. `ui_view` discharges it by being accepted as `Tot`. | every theorem — each is about `fold` over a finite view |
+| `w_lower` | `ActionWitness.Lower` | a total arrow whose RESULT TYPE is K3: at most one effect, or a refusal, or a decline, and no store. A leaf that wrote the store or emitted a list cannot be expressed. | `fold_total`, `fold_reserved_untouched` |
+| `w_describe` | `ActionWitness.Describe` | a total arrow; the diagnostics carry its answer verbatim | the no-closure half, through `same_shape` |
+| `w_resolve` | `ExprWitness.Resolve` | a total pure arrow, the same answer for the same store; nothing depends on WHAT it answers | `fold_total`, `fold_reserved_untouched` |
+| `w_is_reserved`, `w_reserved_prefix` | `StoreWitness.IsReserved` / `ReservedPrefix` | a total predicate and a constant (K5); `fold_reserved_untouched` is quantified over every such predicate | `fold_total`, `fold_reserved_untouched` |
+| `answer` | `HandlerArm.Answer` | what a call MEANS at this placement; opaque, and its store, effects and diagnostics are its own | `fold_total` names the answered case and excludes it; `fold_reserved_untouched` carries `arm_preserves_reserved` as a hypothesis |
 
-### 2. `run_no_closure` — no closure a carried action holds is ever invoked
+**The store is modelled concretely, on purpose.** D18 §3.4 makes the store abstract behind
+`StoreWitness.Assign`; the model keeps a keyed association list and `write`, because
+`fold_reserved_untouched` is a theorem ABOUT what is written, and a theorem about writes to an
+abstract store would be a theorem about an obligation nobody had stated. What the model claims of a
+domain's `Assign` is therefore K4 — one keyed state channel where an assignment writes one key — and
+the differential host's projection of the domain store onto that channel is where it is checked.
 
-Two actions that differ ONLY in the closures they carry produce identical outcomes and
-identical placement accumulations.
+### 1. `fold_total` / `run_total` — the fold is defined on every shape, and one step is characterised
 
-This is the safety property `BoundedActions.fs` states at the top of its own file, turned into
-a theorem. Emitted trees are bounded: the wire format cannot carry arbitrary closures, and the
-decoder substitutes an inert placeholder for every closure slot. That is half the property.
-The other half is that the interpreter never invokes one — and a fold that did could not
-satisfy this lemma, because its answer would depend on what the closure was.
+The view has four shapes and the fold names all four, with no wildcard arm, no partial match and no
+throw; termination is structural on the view, carried by the `decreases` clause rather than by a
+depth counter. In F\* that much is the `Tot` effect, and `handled_view` states it a second time by
+naming every constructor again — so a fifth shape fails to compile here exactly as it fails to
+compile in the fold. At the UI witness the same holds of the fourteen arms: `ui_view` names each
+with no wildcard, and `handled` names them once more. This is the exhaustiveness check D18 moves
+into the adapter's `View`, checked here by the same means.
 
-In the model the closure slots have an abstract type parameter with no elimination form, so a
-fold that invoked one cannot be written here at all. That is stronger than it sounds and
-weaker than it sounds: stronger, because the absence is structural rather than an omission
-somebody has to keep noticing; weaker, because it is a property of the MODEL, and carrying it
-back to the code is the differential host's job, not the prover's. The go-red case below is
-what says that carry actually happens.
+The lemma adds the part typing does not give. For one step that is neither `Sequence` nor a call
+the placement ANSWERED: the placement's own accumulation comes back untouched, the store is either
+unchanged or written at exactly one key the reserved predicate rejects, and at most one effect and
+at most one diagnostic are emitted. For a leaf that is K3 made a theorem: whatever `Lower` answers,
+this is the most it can do. `run_total` is `fold_total` at the UI witness, with Phase 1715's
+statement word for word.
 
-### 3. `chain_homomorphism` — `Chain` is a composition, not a fifteenth special case
+The two exclusions are the interesting part of the statement rather than fine print. Composition is
+excluded because it is characterised by law 3 instead. An answered call is excluded because its
+outcome is the PLACEMENT's — see "the placement seam" below.
+
+### 2. `fold_blind` / `run_action_blind` / `run_no_closure` — no closure a carried action holds is ever invoked
+
+D18 makes this an OBLIGATION ON THE WITNESS: the core holds no closures, and only a witness's `View`
+or `Lower` could reach one. The model states it in exactly that shape, in three steps.
+
+- **The core's half, held unconditionally — `fold_blind`.** Two views of the SAME SHAPE — the same
+  constructors at every node, the same keys, values, expressions, endpoints and target flags, the
+  carried actions describing alike and, at a leaf, lowering alike at every node id and store — fold
+  to IDENTICAL outcomes and placements. The fold reads an action only through the witness and the
+  shape the witness gave it, so it cannot have applied anything the witness did not; and in this
+  model there is nothing to apply, since the view carries no closure and the action type has no
+  elimination form the fold could reach for.
+- **The witness's half, as a precondition — `blind_to`.** A witness is blind to a relation on
+  actions when its `View` sends related actions to same-shaped views. `run_action_blind` is the
+  theorem conditional on it: under any relation the witness is blind to, related actions run to
+  identical outcomes. **This is the conditional theorem**, and the condition is the adapter's to
+  meet.
+- **The obligation discharged for the UI witness — `ui_blind_to_closures`.** Under
+  `same_but_closures` (two actions differing ONLY in the closures they carry), `ui_view` produces
+  same-shaped views: `describe_ignores_closures` and `ui_lower_ignores_closures` do the leaves, and
+  one induction does `Chain`. So `run_no_closure` — Phase 1715's statement, word for word — is
+  `run_action_blind` at a witness whose obligation is met, and is again unconditional.
+
+The rest of Phase 1715's reading still holds. Emitted trees are bounded: the wire format cannot carry
+arbitrary closures, and the decoder substitutes an inert placeholder for every closure slot. That is
+half the property; the other half is that the interpreter never invokes one, and a fold that did
+could not satisfy this lemma. It is a property of the MODEL, and carrying it back to the code is the
+differential host's job, not the prover's — the go-red case below is what says that carry happens.
+
+### 3. `sequence_homomorphism` / `chain_homomorphism` — `Sequence` is a composition, not a fifth special case
 
 Running the concatenation of two operation lists equals running the first and then the second
-against the store the first left, with the effect lists and the diagnostic lists concatenated
-in order and the placement threaded through.
+against the store the first left, with the effect lists and the diagnostic lists concatenated in
+order and the placement threaded through — now over `VSequence`, for every witness.
 
-This is `DECISIONS.md` D7's splice property — a nested call sees the writes before it and is
-seen by the writes after it — stated as an equation instead of as a sentence. It is why an
-answer is folded IN PLACE rather than reported for later, and it is the law that would break
-first if the `Chain` arm ever stopped threading the store.
+This is `DECISIONS.md` D7's splice property — a nested call sees the writes before it and is seen by
+the writes after it — stated as an equation instead of as a sentence. It is why an answer is folded
+IN PLACE rather than reported for later, and it is the law that would break first if the `Sequence`
+arm ever stopped threading the store. `sequence_action_homomorphism` is the same statement at the
+view level; `chain_homomorphism` is the action-level statement at the UI witness (Phase 1715's
+`chain_action_homomorphism`, renamed to the headline), through `ui_view_list_app` — viewing a
+concatenation is concatenating the views.
 
-`chain_action_homomorphism` is the same statement at the action level, which is the form the
-`Chain` arm is read in.
+### 4. `fold_reserved_untouched` / `reserved_untouched` — reserved keys are not writable from a tree
 
-### 4. `reserved_untouched` — host-reserved keys are not writable from a tree
+The store the fold returns agrees with the store it was given at every reserved key. The only write
+the fold performs is the `Assign` shape's, and that shape refuses a reserved key before reaching it;
+a leaf has no store to return.
 
-The store the fold returns agrees with the store it was given at every host-reserved `State`
-key. The only write the fold performs is the `SetState` arm's, and that arm refuses a reserved
-key before reaching it.
+This is the property multi-tenant hosting of an untrusted tree rests on, alongside law 2: bounded
+code plus a closed host namespace. It carries one side condition, about the placement seam
+(`arm_preserves_reserved`, now over the witness's own predicate), and `inert_preserves_reserved`
+discharges it — under EVERY predicate — for the placements that run no handlers, which is what keeps
+the theorem from being a conditional nobody has met. `reserved_untouched` is the UI corollary, at
+the host's `isHostReserved`.
 
-This is the property multi-tenant hosting of an untrusted tree rests on, alongside law 2:
-bounded code plus a closed host namespace. It carries one side condition, about the placement
-seam, and `inert_preserves_reserved` discharges it for the two placements that run no
-handlers — which is what keeps the theorem from being a conditional nobody has met.
+### Phase 1715's lemmas, one by one
+
+Nothing is dropped silently. Each Phase-1715 name is either kept with its statement, or restated
+under a new name with the old one kept as its corollary.
+
+| Phase 1715 | Phase 1898 |
+|---|---|
+| `run_total` | kept; a corollary of `fold_total` at `ui_witness` |
+| `run_no_closure` | kept; `run_action_blind` at `ui_witness` with `ui_blind_to_closures` discharging the obligation |
+| `run_no_closure_list` | restated as `fold_blind_list` (the generic list half); the UI list induction is `ui_view_same_shape_list` |
+| `describe_ignores_closures` | kept; now one of the two lemmas that discharge the leaf cases of the obligation |
+| `chain_homomorphism` (list level) | restated as `sequence_homomorphism` over the view |
+| `chain_action_homomorphism` | restated as `chain_homomorphism` — the action-level statement is the headline at the UI witness |
+| `reserved_untouched` | kept; a corollary of `fold_reserved_untouched` at `ui_witness` |
+| `reserved_untouched_list` | restated as `fold_reserved_untouched_list` |
+| `arm_preserves_reserved` | kept, now taking the reserved predicate rather than the UI axioms |
+| `inert_preserves_reserved` | kept, now quantified over every predicate |
+| `handled`, `answered`, `at_most_one`, `same_but_closures` (+ `_opt`, `_list`), `write_preserves_other`, `app_assoc`, `app_nil` | kept unchanged |
+
+Retired: none.
 
 ## What the model does NOT own
 
-Eight host-supplied pure functions are AXIOMS: total arrows the model takes as parameters
-rather than definitions it writes.
+Eight host-supplied pure functions are AXIOMS of the UI witness: total arrows the model takes as
+parameters rather than definitions it writes.
 
 | Axiom | Production |
 |---|---|
@@ -113,9 +189,14 @@ so the only thing that can disagree in the comparison is the fold.
 one.** `HandlerArm.Answer` decides what a call action MEANS at a placement; the model proves
 only that WHERE a call is recognised is the fold, at every depth, and that an answer is
 threaded in place. An arm returns a store, effects and diagnostics of its own, and the fold
-neither constrains nor inspects them — which is why `run_total` names the answered case and
-excludes it rather than quietly covering it, and why `reserved_untouched` carries the seam's
+neither constrains nor inspects them — which is why `fold_total` names the answered case and
+excludes it rather than quietly covering it, and why `fold_reserved_untouched` carries the seam's
 obligation as a stated hypothesis.
+
+**And the generic witness is the sixth**, stated member by member in the table above. What the
+generic theorems say of a domain is conditional on its witness being what that table assumes; the
+UI witness is the one instance where every row is discharged in the model itself, and the
+differential is what says the discharged instance is the shipped one.
 
 ## The gap between model and production — the claims ladder
 
@@ -129,12 +210,35 @@ Four rungs, and the distance between them is the point.
 
 ### Proved
 
-1. **Totality over the closed union** — `run_total`, plus the `Tot` effect and the structural
-   `decreases`.
-2. **No closure invocation** — `run_no_closure`.
-3. **`Chain` is the fold's homomorphism** — `chain_homomorphism`.
-4. **Host-reserved keys untouched** — `reserved_untouched`, with `inert_preserves_reserved`
-   discharging its hypothesis for the handler-free placements.
+Over the generic tier's view, for every witness (Phase 1898):
+
+1. **Totality over the view** — `fold_total`, plus the `Tot` effect and the structural
+   `decreases`. Unconditional.
+2. **The fold is blind to everything but the view** — `fold_blind`, the core's half of
+   no-closure-invocation. Unconditional.
+3. **`Sequence` is the fold's homomorphism** — `sequence_homomorphism`. Unconditional.
+4. **Reserved keys untouched** — `fold_reserved_untouched`. **Conditional** on the placement seam's
+   `arm_preserves_reserved`, which `inert_preserves_reserved` discharges for every predicate for the
+   handler-free placements.
+5. **No closure invocation, for any witness that meets its obligation** — `run_action_blind`.
+   **Conditional** on `blind_to`: the witness's `View` sends related actions to same-shaped views.
+
+At the UI witness (Phase 1715's five, each a corollary of the generic theorem above it):
+
+6. **Totality over the closed union** — `run_total`.
+7. **No closure invocation** — `run_no_closure`, with `ui_blind_to_closures` discharging the
+   obligation, so the theorem is unconditional again.
+8. **`Chain` is the fold's homomorphism** — `chain_homomorphism`.
+9. **Host-reserved keys untouched** — `reserved_untouched`, conditional on the same seam
+   hypothesis as 4, discharged the same way.
+
+**The conditional theorems, named:** `fold_reserved_untouched` and `reserved_untouched` (on the
+placement seam); `run_action_blind` (on the witness's blindness). Every other theorem is quantified
+over the witness's members as total arrows — the table under "Every parameter of the model is an
+assumption" — and on nothing else. A domain instantiating the generic tier inherits 1–3
+outright, 4 once its arm preserves its reserved keys, and 5 once it proves — or differentially
+tests, which is what Phase 1896's test witness does — that its `View` and `Lower` are blind to the
+closures its actions carry.
 
 No `admit`, no `assume`. `check.ps1` passes `--report_assumes error`, so either would fail the
 leg rather than quietly weaken a theorem, and that flag is not a strictness preference to be
@@ -161,10 +265,26 @@ evidence of anything.
 `check.ps1` step 6 asserts a CASE COUNT and not only an exit code, because an Expecto filter
 that matches nothing prints a green.
 
+**What the differential runs since Phase 1898 is the generic fold at the UI witness** — `run` is
+`run_action (ui_witness ax)`, the fourteen arms seen through the view — so the same five cases that
+tied Phase 1715's model to production now tie the view-level model to it, through the UI witness,
+with no change to the host. That is the shape D18 §3.8 names: the oracle runs through the UI
+adapter, which is where the fourteen arms live. Phase 1896 adds a second differential, the generic
+fold through a TEST witness against the ported core; Phase 1897 moves this UI-arm differential with
+the adapter into its package. The host's file citations move with the code in those commits.
+
 ### Assumed, and stated
 
 - **The eight axioms above.** Total, pure, and the same answer for the same store. Mitigated
   by the differential wiring them to production's own implementations.
+- **The generic witness's members** — `View` total and finite, `Lower` a leaf outcome, `Describe`
+  and `Resolve` total and pure, `IsReserved` a total predicate — per the table under "Every
+  parameter of the model is an assumption". Discharged in the model for the UI witness; for any
+  other domain they are that domain's obligations.
+- **The store is a keyed channel** (K4). `StoreWitness.Assign` is modelled as `write` on an
+  association list, because `fold_reserved_untouched` is about what is written. A domain whose
+  `Assign` did something other than write one key is outside the model. Mitigated by the
+  differential host projecting the domain store onto that channel and comparing it key by key.
 - **The placement seam.** An arm's store, effects and diagnostics are its own.
 - **The toolchain.** The extractor and the F# compiler are trusted. The theorem is about the
   model; what runs in the differential is the extraction, and nothing verifies that extraction
