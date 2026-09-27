@@ -17,7 +17,9 @@ module Fuaran.Program.Server.Tests.ServerEffectTests
 // than by reading the code.
 
 open Expecto
+open Fuaran.Program.UI
 open Fuaran.Program.Server
+open Fuaran.Program.Server.UI
 
 /// A payload string chosen so a leak is unmistakable in an assertion message.
 [<Literal>]

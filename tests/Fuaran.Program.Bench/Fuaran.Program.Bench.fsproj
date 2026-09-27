@@ -17,7 +17,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Fuaran.Program.Server\Fuaran.Program.Server.fsproj" />
+    <ProjectReference Include="..\Fuaran.Program.Server.UI.Parked\Fuaran.Program.Server.UI.Parked.fsproj" />
   </ItemGroup>
 
   <ItemGroup>

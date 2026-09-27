@@ -13,6 +13,8 @@
     <Project Path="tests/Fuaran.Program.Bounded.Tests/Fuaran.Program.Bounded.Tests.fsproj" />
     <Project Path="tests/Fuaran.Program.Runtime.Tests/Fuaran.Program.Runtime.Tests.fsproj" />
     <Project Path="tests/Fuaran.Program.Server.Tests/Fuaran.Program.Server.Tests.fsproj" />
+    <Project Path="tests/Fuaran.Program.UI.Parked/Fuaran.Program.UI.Parked.fsproj" />
+    <Project Path="tests/Fuaran.Program.Server.UI.Parked/Fuaran.Program.Server.UI.Parked.fsproj" />
     <Project Path="tests/Fuaran.Program.Parity/Fuaran.Program.Parity.fsproj" />
     <Project Path="tests/Fuaran.Program.Parity.Tests/Fuaran.Program.Parity.Tests.fsproj" />
     <Project Path="tests/Fuaran.Program.Bench/Fuaran.Program.Bench.fsproj" />

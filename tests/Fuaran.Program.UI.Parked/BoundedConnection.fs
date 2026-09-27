@@ -1,4 +1,4 @@
-namespace Fuaran.Program.Bounded
+namespace Fuaran.Program.UI
 
 open Fuaran.UI.Types
 open Fuaran.UI.Ops
@@ -6,7 +6,9 @@ open Fuaran.UI.Ops.Types
 open Fuaran.UI.OpStream.Replay
 open Fuaran.UI.ServerDriven
 open Fuaran.UI.ServerDriven.Validation
-open Fuaran.Program.Bounded.BoundedDriver
+open Fuaran.Program.Bounded
+open Fuaran.Program.UI
+open Fuaran.Program.UI.BoundedDriver
 
 // ============================================================================
 //  BoundedConnection — the bounded placement's channel glue.

@@ -9,6 +9,7 @@ open System
 open System.IO
 open System.Text.Json
 open Fuaran.Program.Runtime
+open Fuaran.Program.UI
 open Fuaran.Program.Parity.Runner
 
 // ============================================================================

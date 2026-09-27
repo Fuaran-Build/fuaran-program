@@ -23,6 +23,7 @@ open Expecto
 open Fuaran.UI.Types
 open Fuaran.UI.ServerDriven
 open Fuaran.Program.Runtime
+open Fuaran.Program.UI
 
 /// A registry that records what it performed and why it refused.
 let private probe (build: EffectRegistry -> EffectRegistry) =

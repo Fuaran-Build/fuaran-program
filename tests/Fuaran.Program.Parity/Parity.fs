@@ -7,8 +7,9 @@ open Fuaran.UI.ServerDriven
 open Fuaran.UI.ServerDriven.Validation
 open Fuaran.UI.Renderer.BindingResolver
 open Fuaran.Program.Bounded
-open Fuaran.Program.Bounded.BoundedDriver
+open Fuaran.Program.UI.BoundedDriver
 open Fuaran.Program.Runtime
+open Fuaran.Program.UI
 
 // ============================================================================
 //  Tier parity — one tree, one event script, identical everywhere.

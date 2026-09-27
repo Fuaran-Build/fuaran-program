@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- PARKED, NOT PACKED (Phase 1896). The server placement's UI
+       instantiation: the pre-generic server names as aliases over the UI
+       witness, and the UI EVENT STEP (the tier's G1 gate in front of the
+       generic core's dispatch) for the session, the durable interpreter and
+       the operator controls. .NET only, like the server placement itself —
+       the Fable-clean half is Fuaran.Program.UI.Parked.
+
+       Laid out file for file as the `Fuaran.Program.Server.UI` adapter package
+       Phase 1897 ships: that phase promotes these files by moving them, and
+       flips IsPackable there. Namespace `Fuaran.Program.Server.UI` already. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="ServerAliases.fs" />
+    <Compile Include="ServerSteps.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Fuaran.Program.Server\Fuaran.Program.Server.fsproj" />
+    <ProjectReference Include="..\Fuaran.Program.UI.Parked\Fuaran.Program.UI.Parked.fsproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="FSharp.Core" />
+    <PackageReference Include="Fuaran.UI" />
+    <PackageReference Include="Fuaran.UI.Ops.Abstractions" />
+    <PackageReference Include="Fuaran.UI.Ops" />
+    <PackageReference Include="Fuaran.UI.OpStream.Abstractions" />
+    <PackageReference Include="Fuaran.UI.OpStream.Replay" />
+    <PackageReference Include="Fuaran.UI.Renderer.Core" />
+    <PackageReference Include="Fuaran.UI.ServerDriven" />
+  </ItemGroup>
+
+</Project>

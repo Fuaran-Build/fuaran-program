@@ -39,7 +39,9 @@ open Expecto
 open Fuaran.UI
 open Fuaran.UI.Renderer.BindingResolver
 open Fuaran.Program.Bounded
+open Fuaran.Program.UI
 open Fuaran.Program.Server
+open Fuaran.Program.Server.UI
 
 // ─── fixtures ────────────────────────────────────────────────────────────────
 

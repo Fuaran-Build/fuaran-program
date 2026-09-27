@@ -26,7 +26,8 @@ open Fuaran.UI.Ops.Types
 open Fuaran.UI.ServerDriven
 open Fuaran.UI.Renderer.BindingResolver
 open Fuaran.Program.Bounded
-open Fuaran.Program.Bounded.BoundedDriver
+open Fuaran.Program.UI
+open Fuaran.Program.UI.BoundedDriver
 
 // ─── fixtures ───────────────────────────────────────────────────────
 

@@ -16,6 +16,7 @@ open Fuaran.UI.Types
 open Fuaran.UI.ServerDriven
 open Fuaran.UI.Renderer.BindingResolver
 open Fuaran.Program.Bounded
+open Fuaran.Program.UI
 
 /// Non-null box (F# 10 nullness: `box` yields `objnull`;
 /// `Map<string, obj>` wants non-null — same `boxNN` posture as TreeOpDiff).

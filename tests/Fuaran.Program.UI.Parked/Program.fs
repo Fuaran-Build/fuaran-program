@@ -1,4 +1,4 @@
-namespace Fuaran.Program.Runtime
+namespace Fuaran.Program.UI
 
 open Fuaran.UI.Types
 open Fuaran.UI.Ops.Types
@@ -7,6 +7,8 @@ open Fuaran.UI.ServerDriven
 open Fuaran.UI.ServerDriven.Validation
 open Fuaran.UI.Renderer.BindingResolver
 open Fuaran.Program.Bounded
+open Fuaran.Program.Runtime
+open Fuaran.Program.UI
 
 // ============================================================================
 //  The CLIENT placement of the bounded program loop.

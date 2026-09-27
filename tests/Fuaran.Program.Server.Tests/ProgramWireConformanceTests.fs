@@ -59,7 +59,9 @@ open Fuaran.Core
 open Fuaran.UI.Types
 open Fuaran.UI.Ops.Types
 open Fuaran.Program.Bounded
+open Fuaran.Program.UI
 open Fuaran.Program.Server
+open Fuaran.Program.Server.UI
 
 /// Where the corpus is. Resolved from THIS source file rather than the working
 /// directory, for the same reason the parity leg's fixture root is: a test's

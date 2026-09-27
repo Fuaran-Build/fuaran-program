@@ -18,7 +18,8 @@ open Fuaran.UI.Ops.Introspect
 open Fuaran.UI.ServerDriven
 open Fuaran.UI.ServerDriven.Validation
 open Fuaran.Program.Bounded
-open Fuaran.Program.Bounded.BoundedDriver
+open Fuaran.Program.UI
+open Fuaran.Program.UI.BoundedDriver
 open Fuaran.UI.Ops
 open Fuaran.UI.OpStream.Abstractions
 open Fuaran.UI.Renderer.BindingResolver

@@ -51,6 +51,7 @@ open Fuaran.UI.ServerDriven
 open Fuaran.UI.ServerDriven.Validation
 open Fuaran.UI.Renderer.BindingResolver
 open Fuaran.Program.Bounded
+open Fuaran.Program.UI
 open Fuaran.Program.Parity
 
 /// Non-null box (F# 10 nullness: `box` yields `objnull`; the store's

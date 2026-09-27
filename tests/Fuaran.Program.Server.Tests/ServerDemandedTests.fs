@@ -29,7 +29,9 @@ open Fuaran.UI.ServerDriven
 open Fuaran.UI.OpStream.Replay
 open Fuaran.UI.Renderer.BindingResolver
 open Fuaran.Program.Bounded
+open Fuaran.Program.UI
 open Fuaran.Program.Server
+open Fuaran.Program.Server.UI
 
 // ─── fixtures ────────────────────────────────────────────────────────
 
@@ -52,7 +54,7 @@ let private treeCalling (target: string) : Node<obj> =
 let private handlerOf (stages: HandlerStage list) : Handler = { Name = "work"; Stages = stages }
 
 /// The five arms, each with a recognisable name, for the drift check.
-let private samples: ServerEffect list =
+let private samples: ServerEffect<Fuaran.UI.Ops.Types.TreeOp<obj>> list =
     [ ServerEffect.RunQuery("slot", Fuaran.Core.Embedded({ Schema = []; Columns = [] }: Fuaran.Core.Table), [])
       ServerEffect.ApplyOps []
       ServerEffect.HostCall("sendMail", jstr "x", None)

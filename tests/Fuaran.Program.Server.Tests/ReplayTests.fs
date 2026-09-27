@@ -33,7 +33,9 @@ open Fuaran.UI.Types
 open Fuaran.UI.Ops.Types
 open Fuaran.UI.ServerDriven
 open Fuaran.Program.Bounded
+open Fuaran.Program.UI
 open Fuaran.Program.Server
+open Fuaran.Program.Server.UI
 
 // ─── fixtures ────────────────────────────────────────────────────────────────
 

@@ -24,7 +24,10 @@
     <Compile Include="Main.fs" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Fuaran.Program.Runtime\Fuaran.Program.Runtime.fsproj" />
+    <!-- Phase 1896: the core packages are domain-generic, so a UI-tree sample
+         runs through the UI adapter — parked under tests/ until Phase 1897
+         ships it as a package. -->
+    <ProjectReference Include="..\..\tests\Fuaran.Program.UI.Parked\Fuaran.Program.UI.Parked.fsproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Fable.Core" />

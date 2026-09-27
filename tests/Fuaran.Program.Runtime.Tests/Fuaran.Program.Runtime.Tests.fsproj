@@ -13,7 +13,7 @@
     <Compile Include="Program.fs" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Fuaran.Program.Runtime\Fuaran.Program.Runtime.fsproj" />
+    <ProjectReference Include="..\Fuaran.Program.UI.Parked\Fuaran.Program.UI.Parked.fsproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Expecto" />

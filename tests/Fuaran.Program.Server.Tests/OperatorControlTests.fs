@@ -46,7 +46,9 @@ open Fuaran.UI.OpStream.Abstractions
 open Fuaran.UI.OpStream.Replay
 open Fuaran.UI.Renderer.BindingResolver
 open Fuaran.Program.Bounded
+open Fuaran.Program.UI
 open Fuaran.Program.Server
+open Fuaran.Program.Server.UI
 
 // ─── fixtures ────────────────────────────────────────────────────────────────
 

@@ -16,6 +16,7 @@ open Fuaran.UI.ServerDriven
 open Fuaran.UI.Renderer.BindingResolver
 open Fuaran.Program.Bounded
 open Fuaran.Program.Runtime
+open Fuaran.Program.UI
 
 let private btn (id: string) (action: Action<obj>) : Node<obj> =
     Fuaran.button

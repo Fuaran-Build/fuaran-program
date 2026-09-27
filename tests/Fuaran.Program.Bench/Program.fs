@@ -21,6 +21,7 @@ open System
 open System.Diagnostics
 open Fuaran.Core
 open Fuaran.Program.Server
+open Fuaran.Program.Server.UI
 
 let private table (rows: int) : Table =
     { Schema = [ "n", IntType; "g", StringType; "x", FloatType ]

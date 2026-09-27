@@ -1,4 +1,4 @@
-module Fuaran.Program.Bounded.BoundedDriver
+module Fuaran.Program.UI.BoundedDriver
 
 open Fuaran.UI.Types
 open Fuaran.UI.Ops.Types
@@ -8,6 +8,8 @@ open Fuaran.UI.ServerDriven
 open Fuaran.UI.ServerDriven.Validation
 open Fuaran.UI.Renderer
 open Fuaran.UI.Renderer.BindingResolver
+open Fuaran.Program.Bounded
+open Fuaran.Program.UI
 
 // ============================================================================
 //  The no-`'Msg` server placement of the bounded program loop.

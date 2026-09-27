@@ -35,6 +35,7 @@ open Fuaran.UI
 open Fuaran.UI.Types
 open Fuaran.UI.OpStream.Abstractions
 open Fuaran.Program.Bounded
+open Fuaran.Program.UI
 
 // ─── fixtures ───────────────────────────────────────────────────────
 

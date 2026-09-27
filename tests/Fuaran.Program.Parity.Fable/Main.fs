@@ -3,6 +3,7 @@ module Fuaran.Program.Parity.Fable.Main
 open Fable.Core
 open Fable.Core.JsInterop
 open Fuaran.Program.Runtime
+open Fuaran.Program.UI
 open Fuaran.Program.Parity.Runner
 open Fuaran.Program.Parity
 

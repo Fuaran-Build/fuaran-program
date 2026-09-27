@@ -12,6 +12,7 @@ open Fuaran.UI.Renderer
 open Fuaran.UI.Renderer.BindingResolver
 open Fuaran.Program.Bounded
 open Fuaran.Program.Runtime
+open Fuaran.Program.UI
 
 // ============================================================================
 //  A generated app running CLIENT-ONLY under the bounded program loop.

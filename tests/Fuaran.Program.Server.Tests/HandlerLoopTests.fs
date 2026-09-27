@@ -26,7 +26,9 @@ open Fuaran.UI.ServerDriven.Validation
 open Fuaran.UI.OpStream.Replay
 open Fuaran.UI.Renderer.BindingResolver
 open Fuaran.Program.Bounded
+open Fuaran.Program.UI
 open Fuaran.Program.Server
+open Fuaran.Program.Server.UI
 
 // ─── fixtures ────────────────────────────────────────────────────────
 
@@ -745,7 +747,12 @@ let tests =
                   |> Array.collect (fun path ->
                       System.IO.File.ReadAllLines path
                       |> Array.indexed
-                      |> Array.filter (fun (_, line) -> line.TrimStart().StartsWith "| Action.")
+                      // Since Phase 1896 the fold reads an action through the
+                      // witness's VIEW, so an evaluating arm is a view arm as
+                      // readily as a UI-action arm; both count.
+                      |> Array.filter (fun (_, line) ->
+                          let arm = line.TrimStart()
+                          arm.StartsWith "| Action." || arm.StartsWith "| ActionView.")
                       |> Array.map (fun (i, line) ->
                           sprintf "%s:%d %s" (System.IO.Path.GetFileName path) (i + 1) (line.Trim())))
 
