@@ -36,6 +36,11 @@ program's reach extends only after registration.
 
 ## D5 — The dependency runs one way: this domain consumes the UI tier, never the reverse (2026-08-15)
 
+> **Amended by D18 (2026-09-27) — the direction clause.** Only the closing sentence, "the direction
+> is re-examined at the D4 generic-tier cut", is superseded; D18 is that re-examination. Everything
+> else in this entry stands as written, including "no `Fuaran.UI.*` package references
+> `Fuaran.Program.*`".
+
 The bounded interpreter moved here **whole**: the interpreter, the binding re-resolution pass, and
 the server placement of the loop that drives them all live in `Fuaran.Program.Bounded`. The
 alternative — leaving the server loop in the UI tier's server-driven package and having that package
@@ -60,6 +65,10 @@ direction is re-examined at the D4 generic-tier cut, when the witness-generic co
 UI-type dependency altogether.
 
 ## D4 — First instantiation is UI-typed; the generic tier waits for a second domain (2026-07-31)
+
+> **Amended by D18 (2026-09-27) — the timing clause.** "cut only when a second domain instantiation
+> materialises" is superseded: the cut is taken now, as a design decision. Everything else in this
+> entry stands, including its warning, which D18 answers by naming each assumption it keeps.
 
 The domain is chartered now, as a design decision — its identity, name, wire-family destiny, and
 package surface are sovereign from birth. Its **first instantiation is UI-typed**: the bounded
@@ -615,3 +624,110 @@ that names the two it does not cover.
 reading rather than a lenient one: a bound says what may be reached under that name, and an effect
 naming nothing there reaches nothing there. A host wanting the argument to be mandatory is asking for
 a clause it did not declare.
+
+## D18 — The generic tier is cut now, as a decision; the core is parameterised by a witness whose centre is an ACTION VIEW; the UI binding becomes an adapter (2026-09-27)
+
+**2026-09-27. Amends D4 (the timing clause) and D5 (the direction clause). Both entries stand
+otherwise.** The evidence is in [`docs/generic-tier.md`](docs/generic-tier.md): the per-member
+inventory, the contract written out as types, the two adapter homes, and the consumer measurement.
+This entry records only what binds.
+
+**The cut is taken without waiting for its trigger.** D4 said the generic tier would wait for a
+second domain to instantiate the algebra. That has not happened. The dependency is being cut anyway,
+because this domain and the UI tier are separate sovereignties, and D4's own opening paragraph
+already made them so "from birth". A trigger that has not fired does not make the coupling right; it
+only makes it cheaper to leave in place. D4's warning still holds: an abstraction with one witness
+bakes that witness's assumptions in. The answer is not to wait. It is to **name every assumption the
+contract keeps, with the evidence that would falsify it** (K1–K8 in the note), so none of them ends
+up in the contract without a record.
+
+**The contract.** `Fuaran.Program.Bounded`, `.Runtime` and `.Server` are parameterised by one record
+of functions, `ProgramWitness`, in the style Core already uses for `NodeWitness` and `StreamWitness`.
+It has six parts:
+
+1. **tree**: Core's `NodeWitness<'Node, string>`, reused unchanged, plus per-node handlers,
+   re-resolution, cost, query readers, binding uses, and a canonical encoding.
+2. **action**: a total `View` onto four shapes: `Sequence`, `Assign`, `Call`, and `Leaf`.
+3. **expression**: resolution against the store, with three outcomes.
+4. **store**: assign a state key, land a query result, and a reserved-namespace predicate.
+5. **op**: Core's `StreamWitness<'Op, 'Node, _>`, reused unchanged, plus `Diff` and `AbsoluteTarget`.
+6. **effect and claim**: the effect's kind, destination and codec, and a claim verifier that is
+   generic in the key.
+
+Nothing is added to `Fuaran.Core.*`. Each of the three things Core lacks (a state store, expression
+resolution, a claim verifier) has exactly one witness today. Promoting any of them into Core would
+repeat D4's error one layer down.
+
+**The fold interprets the view, and only the view.** It owns sequencing, the one store write, the
+reserved-namespace refusal, D9's refusal of a declared result target, and D7's handler-effect arm. It
+never recurses into a `Leaf`. A leaf lowers to **at most one** effect, or is refused, or is declined,
+and it **never writes the store**. That is D1 exactly: control structure is the evaluator's, and
+vocabulary lowers to it. Those constraints also keep `run_total`'s "at most one effect, at most one
+key" true as stated. The budget, the demanded projection and the replay classification move from wire
+tags onto the view, which removes their string coupling to `"Call"`, `"Chain"` and `"SetState"`. The
+UI's fourteen-case totality check, together with its `#nowarn "44"` scope, moves into the adapter's
+`View`, where the compiler still checks it.
+
+**D14 applies to the new part.** The cut re-types an evaluator that already exists, so the model that
+has to come first is the model of the view. Phase 1896 re-states `BoundedFold.fst` over the four view
+shapes and re-proves totality, no-closure-invocation and the `Chain` homomorphism **before** it ports
+`BoundedActions.fs`. No-closure-invocation becomes an obligation on the witness: the core holds no
+closures, so only a witness's `View` or `Lower` could reach one. The differential oracle runs through
+the UI adapter.
+
+**D5's direction clause is resolved: no core package references `Fuaran.UI.*`, and a test enforces
+that.** The three core packages take direct `Fuaran.Core.*` references in its place. They currently
+reach `Fuaran.Core.Wire`, `.Column`, `.DataFrame` and `.OpStream` only transitively, through the UI
+packages. The remainder of D5 holds unchanged: **no `Fuaran.UI.*` package references
+`Fuaran.Program.*`.** An application in the UI tier that consumes this domain is a consumer, not a
+package, and D5 never ruled that out.
+
+**The adapter's home — PROPOSED, pending operator ratification.** The adapter is two packages, split
+along the core's own Fable/.NET line. One is Fable-clean and holds the UI witness plus the UI
+transport loop (event validation, `DomPatch` lowering, the live connection, the client runtime). The
+other is .NET-only and holds the server placement's UI event step. There are two candidate homes:
+
+- **A, this repository** (`Fuaran.Program.UI`, `Fuaran.Program.Server.UI`). This keeps D5's direction.
+  It releases core and adapter as one version in one commit. The existing suite and the scenario
+  corpus stay here, run by project reference, so no skew is possible.
+- **B, the UI tier** (an adapter package there that references this repository's core). This
+  repository then names no UI package at all. But it reverses the surviving half of D5, ties the UI
+  tier's lockstep releases to this domain's cadence, and forces the UI-typed half of this
+  repository's suite and the client-effect family's certification to move out of the repository
+  that owns the behaviour. Keeping them here beside a UI-tier adapter would compile the core twice,
+  which is D5's skew class.
+
+**Recommended: A.** It is the smaller correct change, and moving later from A to B moves two leaf
+packages, while moving from B back to A would move tests and a certified wire family. The
+recommendation flips to B if "separate" means this repository names no UI package *at all*, rather
+than only that its core does not. That is the operator's judgement, and it is why this clause is
+proposed rather than decided. **Phase 1896 does not depend on the choice.** It needs only a test
+witness. Phase 1897 builds the adapter wherever this clause lands.
+
+**Consequences.**
+
+- **Version.** All packages move to `0.6.0`, a pre-1.0 minor. It is breaking for the three core
+  packages, whose public types gain type parameters. The adapter packages are new, and core and
+  adapter release together. The adapter re-exposes today's names as closed aliases and partially
+  applied modules, so for most consumers migration means changing one reference and one `open`.
+- **Migration set.** It was measured across the consumers, not taken from the plan, and it is
+  **five, not three**:
+  - a composition consumer's effect-envelope verifier and its generated-application template
+    (`Bounded`, and `Server` for the template). Its verifier opens UI namespaces it never declares,
+    and this contract lets that verifier go UI-free, since the claim verifier is generic in the key
+    and the tree walk arrives as a witness. Its composition root then declares the adapter;
+  - the out-of-repository evaluation suite (D11) (`Bounded`, `Server`). It opens no UI namespace and
+    needs the server adapter only because its corpus is UI trees;
+  - a downstream application with a server placement (`Bounded`, `Server`). It raises as its own act;
+  - two applications in the UI tier (`Runtime`; `Bounded` and `Runtime`).
+
+  The consumers' current pins already disagree (`0.1.0-alpha.1`, `0.4.0`, `0.5.0`). Raising each one
+  is that consumer's own act.
+- **The program wire specification does not change.** No schema, fixture byte or rule changes. Its
+  §3 already treats the action and tree-op algebras as referenced vocabularies "specified elsewhere",
+  spliced byte-stably by their own canonical encoders. The envelopes around them are this domain's own
+  and are UI-free today. The UI witness fills each referenced position with the same encoder as today.
+  The evidence is the codec families passing byte-identically through the core and the adapter, and
+  the twelve driver scenarios passing through the adapter's loop. **Any difference in a fixture byte
+  falsifies this clause**, and it means the refactor changed behaviour, not only where the types
+  live.
