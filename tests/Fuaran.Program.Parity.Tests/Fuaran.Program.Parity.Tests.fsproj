@@ -11,6 +11,10 @@
          references the oracle project, which holds the F* extraction; that
          project is NOT in the solution, and deliberately so: nothing packs it
          and nothing but this suite consumes it. -->
+    <!-- The non-UI toy witness (Phase 1896), shared with Fuaran.Program.Tests
+         so the generic differential below and the genericity tests there run
+         the SAME domain. -->
+    <Compile Include="..\Fuaran.Program.Tests\ToyDomain.fs" Link="ToyDomain.fs" />
     <Compile Include="ProofOracleTests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>

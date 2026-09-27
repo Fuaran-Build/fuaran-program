@@ -495,6 +495,193 @@ let private closureInvoking: Fold =
 
 // ─── The tests ──────────────────────────────────────────────────────────────
 
+// ============================================================================
+//  Phase 1896 — the GENERIC fold, through a NON-UI test witness.
+//
+//  Everything above compares the extraction's `run` — the generic fold at the
+//  model's UI witness — with production at the parked UI adapter. That ties
+//  the fourteen arms to the model; it does not, on its own, tie the GENERIC
+//  core to the generic model, because both sides of it are one witness. This
+//  comparison does: the extraction's generic `run_action` at a toy witness,
+//  against the ported core's `BoundedActions.run` at the same toy witness
+//  (`tests/Fuaran.Program.Tests/ToyDomain.fs`, a domain with its own node,
+//  action, expression, store, op and effect types).
+//
+//  The model's witness is DERIVED from the production one rather than written
+//  beside it: its view is the production `View` applied to exhaustion, and its
+//  `Lower` / `Describe` / `Resolve` / reserved predicate are the production
+//  members over the model's association-list store. So the only thing that can
+//  disagree is the fold.
+// ============================================================================
+
+open Fuaran.Program.Tests.ToyDomain
+
+let private toyWitness = Fuaran.Program.Tests.ToyDomain.witness
+
+let private toyLookup (s: BoundedFold.store<Fuaran.Core.JVal>) (key: string) : Fuaran.Core.JVal option =
+    match BoundedFold.lookup s key with
+    | BoundedFold.OSome value -> Some value
+    | BoundedFold.ONone -> None
+
+/// The production `View`, taken to exhaustion — the model's `w_view`.
+let rec private toyModelView (a: ToyAction) : BoundedFold.action_view<ToyAction, ToyExpr, Fuaran.Core.JVal> =
+    match toyWitness.Action.View a with
+    | ActionView.Sequence items -> BoundedFold.VSequence(a, items |> List.map toyModelView)
+    | ActionView.Assign(key, value, from) -> BoundedFold.VAssign(a, key, modelOpt value, modelOpt from)
+    | ActionView.Call(endpoint, declaresTarget) -> BoundedFold.VCall(a, endpoint, declaresTarget)
+    | ActionView.Leaf _ -> BoundedFold.VLeaf a
+
+let private toyModelWitness: BoundedFold.witness<ToyAction, ToyExpr, Fuaran.Core.JVal, ToyEffect> =
+    { w_view = toyModelView
+      w_lower =
+        fun nodeId action s ->
+            match lowerWith (toyLookup s) nodeId action with
+            | LeafOutcome.Emit effect -> BoundedFold.Emit effect
+            | LeafOutcome.Refuse reason -> BoundedFold.Refuse reason
+            | LeafOutcome.Decline -> BoundedFold.Decline
+      w_describe = toyWitness.Action.Describe
+      w_resolve =
+        fun s expr ->
+            match resolveWith (toyLookup s) expr with
+            | ExprResolution.Resolved value -> BoundedFold.Resolved value
+            | ExprResolution.NotResolved -> BoundedFold.NotResolved
+            | ExprResolution.Errored message -> BoundedFold.Errored message
+      w_is_reserved = toyWitness.Store.IsReserved
+      w_reserved_prefix = toyWitness.Store.ReservedPrefix }
+
+let private toyNoCall = fun () -> failwith "a carried closure was invoked"
+
+/// Every view shape, every refusal the fold owns and every leaf outcome: a
+/// literal and a derived write, a write reading a key an earlier step wrote,
+/// the reserved namespace, an unresolved and an errored expression, a call
+/// declined, a call declaring a target, a leaf emitted / refused / declined,
+/// a leaf reading the store, and all of it nested.
+let private toyCorpus: (string * ToyAction) list =
+    [ "literal write", Put("a", Some(JStr "one"), None)
+      "derived write", Put("b", None, Some(Read "a"))
+      "reserved key", Put("sys.x", Some(JStr "no"), None)
+      "unresolved", Put("c", None, Some Missing)
+      "errored", Put("d", None, Some(Fail "boom"))
+      "neither value nor expression", Put("e", None, None)
+      "declined call", Ring("/nowhere", false, toyNoCall)
+      "targeted call", Ring("/answer", true, toyNoCall)
+      "emitted leaf", Beep 4
+      "refused leaf", Beep 12
+      "declined leaf", Hush
+      "muting", Put("muted", Some(JBool true), None)
+      "muted leaf", Beep 4
+      "nested",
+      Seq
+          [ Put("muted", Some(JBool false), None)
+            Seq [ Beep 2; Put("f", None, Some(Read "b")) ]
+            Ring("/answer", false, toyNoCall)
+            Put("g", None, Some(Read "answered"))
+            Seq [] ] ]
+
+/// A placement that answers `/answer` — writing the store, emitting an effect,
+/// reporting a diagnostic and counting — and declines everything else.
+let private toyArm: HandlerArm<ToyStore, ToyEffect, int> =
+    { Answer =
+        fun nodeId endpoint s count ->
+            if endpoint = "/answer" then
+                Some
+                    { Store = Map.add "answered" (JStr endpoint) s
+                      Effects = [ Sound(nodeId, 7) ]
+                      Diagnostics = [ BoundedDiagnostic.Refused(nodeId, "arm", "noted") ]
+                      Placement = count + 1 }
+            else
+                None }
+
+let private toyModelArm: BoundedFold.handler_arm<Fuaran.Core.JVal, ToyEffect, int> =
+    { answer =
+        fun nodeId endpoint s count ->
+            if endpoint = "/answer" then
+                BoundedFold.OSome
+                    { h_store = BoundedFold.write s "answered" (JStr endpoint)
+                      h_effects = [ Sound(nodeId, 7) ]
+                      h_diagnostics = [ BoundedFold.DRefused(nodeId, "arm", "noted") ]
+                      h_placement = count + 1 }
+            else
+                BoundedFold.ONone }
+
+/// Run the corpus through both, threading each side's store and placement from
+/// step to step, and report every step where the store, the effects, the
+/// diagnostics or the placement disagree.
+let private toyDivergences
+    (prodArm: HandlerArm<ToyStore, ToyEffect, int>)
+    (modelArm: BoundedFold.handler_arm<Fuaran.Core.JVal, ToyEffect, int>)
+    : string list =
+    let seed = Map.ofList [ "title", JStr "t" ]
+
+    toyCorpus
+    |> List.fold
+        (fun (prodStore, modelStore, prodCount, modelCount, found) (label, action) ->
+            let prod, prodCount' =
+                BoundedActions.run toyWitness prodArm "n1" action prodStore prodCount
+
+            let model, modelCount' =
+                BoundedFold.run_action toyModelWitness modelArm "n1" action modelStore modelCount
+
+            let prodState = prod.Store |> Map.toList
+            let modelState = model.o_store |> List.sortBy fst
+            let prodDiagnostics = prod.Diagnostics |> List.map modelDiagnostic
+
+            let found' =
+                if
+                    prodState <> modelState
+                    || prod.Effects <> model.o_effects
+                    || prodDiagnostics <> model.o_diagnostics
+                    || prodCount' <> modelCount'
+                then
+                    found
+                    @ [ sprintf
+                            "%s: store %A / %A, effects %A / %A, diagnostics %A / %A, placement %d / %d"
+                            label
+                            prodState
+                            modelState
+                            prod.Effects
+                            model.o_effects
+                            prodDiagnostics
+                            model.o_diagnostics
+                            prodCount'
+                            modelCount' ]
+                else
+                    found
+
+            prod.Store, model.o_store, prodCount', modelCount', found')
+        (seed, Map.toList seed, 0, 0, [])
+    |> fun (_, _, _, _, found) -> found
+
+let private genericTests =
+    testList
+        "the GENERIC fold through a non-UI test witness (Phase 1896)"
+        [ test "the toy corpus names every view shape, and the fold's every refusal" {
+              let shapes =
+                  toyCorpus
+                  |> List.map (fun (_, a) ->
+                      match toyWitness.Action.View a with
+                      | ActionView.Sequence _ -> "Sequence"
+                      | ActionView.Assign _ -> "Assign"
+                      | ActionView.Call _ -> "Call"
+                      | ActionView.Leaf _ -> "Leaf")
+                  |> Set.ofList
+
+              Expect.equal shapes (Set.ofList [ "Sequence"; "Assign"; "Call"; "Leaf" ]) "all four shapes"
+              Expect.isGreaterThanOrEqual (List.length toyCorpus) 14 "the corpus is the one declared above"
+          }
+
+          test "the extracted generic fold agrees with the ported core at the toy witness" {
+              match toyDivergences (HandlerArm.inert) (BoundedFold.inert_arm ()) with
+              | [] -> ()
+              | first :: _ -> failtestf "the generic model and the ported core disagree:\n%s" first
+          }
+
+          test "and across the placement seam, when the toy placement ANSWERS a call" {
+              match toyDivergences toyArm toyModelArm with
+              | [] -> ()
+              | first :: _ -> failtestf "the generic model and the ported core disagree on the answered call:\n%s" first
+          } ]
+
 [<Tests>]
 let tests =
     let corpus = corpusCases ()
@@ -591,7 +778,9 @@ let tests =
               Expect.isNonEmpty
                   defective
                   "a fold that invokes the closure a Call carries MUST diverge from the proved model — a comparison that cannot lose is not evidence"
-          } ]
+          }
+
+          genericTests ]
 
 // ============================================================================
 //  Phase 1716 — the differential host for the proved interaction budget.
