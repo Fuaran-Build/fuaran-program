@@ -194,9 +194,6 @@ module Schema =
         | ColExpr.Col name -> [ name ]
         | ColExpr.Lit _
         | ColExpr.Param _ -> []
-        // The evaluator's clock (Core-Compute 0.34.0): it reads the pinned
-        // evaluation instant, never a column of the input row.
-        | ColExpr.Now _ -> []
         | ColExpr.Binary(_, a, b) -> readsOfExpr a @ readsOfExpr b
         | ColExpr.Not x -> readsOfExpr x
         | ColExpr.Coalesce xs -> xs |> List.collect readsOfExpr
