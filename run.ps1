@@ -29,7 +29,10 @@ Set-Location $PSScriptRoot
 # 0. `-SkipFormat` therefore ran the pin preflight and then exited GREEN, having
 # built nothing and tested nothing. A gate that reports success for work it did
 # not do is the failure this file's other comments exist to rule out.
-$LASTEXITCODE = 0
+# The `global:` scope is load-bearing: a plain assignment creates a SCRIPT-scope copy,
+# and when this file is invoked with `&` that copy shadows the real exit code, so
+# every guard below reads 0 whatever the native command returned.
+$global:LASTEXITCODE = 0
 
 if (-not $SkipFormat) {
     dotnet tool restore
