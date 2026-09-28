@@ -37,8 +37,13 @@ comments beside `<Version>` in `Directory.Build.props`, and are not restated her
 - **The UI tier leaves the dependency graph.** None of the three packages references a
   `Fuaran.UI.*` package any more, declared or transitive, and a test fails if one returns. They name
   the substrate they use directly instead: `Fuaran.Core.Wire`, `.Column`, `.DataFrame`, `.Tree` and
-  `.OpStream`, pinned at 0.21.0 — the substrate the UI tier this repository pins was built on
-  (`docs/dataframe-0.34-surface-diff.md` says why not the current evaluator).
+  `.OpStream` — the evaluator at the Core-Compute release 0.34.0, the rest at the 0.32.0 it
+  declares. That is the substrate the UI tier this repository now pins (0.86.0) was built on, and
+  it is a raise from the 0.21.0 the packages received through the UI tier before: `RunQuery` runs
+  the 0.34.0 evaluator, which is linear where 0.21.0 was badly super-linear
+  (`docs/runquery-benchmark.md`). A consumer that pins `Fuaran.Core.*` itself meets the substrate's
+  own changes at these versions — `Transform.Limit` / `Sort` take slots, `ColExpr` gained `Now`,
+  `EvalError` gained `UnpinnedClock` (`docs/dataframe-0.34-surface-diff.md`).
 - **The UI-typed transport leaves the core.** The bounded driver, its channel glue and the client
   runtime (`BoundedDriver`, `BoundedConnection`, `Program`), the client-effect destination map, the
   UI's URL floor in the egress classification, and the server session's and durable interpreter's
@@ -56,9 +61,21 @@ comments beside `<Version>` in `Directory.Build.props`, and are not restated her
 - **The program wire.** No schema, no fixture byte and no rule of the program wire specification
   moved: the conformance corpus's codec families and driver-semantics scenarios pass byte for byte,
   run through the generic core and the UI adapter.
-- **What a UI-tree program does.** Every existing test runs, unchanged in what it asserts, through
-  the UI instantiation. The signed effect envelope's tree hash moved from the UI tier's SHA-256 to
-  Core's; an envelope signed before the move is pinned as a test and still verifies (K7).
+- **What a UI-tree program does**, with ONE exception below that comes from the UI tier, not from
+  this change. Every other existing test runs, unchanged in what it asserts, through the UI
+  instantiation. The signed effect envelope's tree hash moved from the UI tier's SHA-256 to Core's;
+  an envelope signed before the move is pinned as a test and still verifies (K7).
+
+### A behaviour a consumer of UI trees inherits from the UI tier raise
+
+The UI tier (0.86.0) resolves a state binding with NO declared default, at a slot nothing has
+written, as UNRESOLVED; until then it resolved to the empty value. The adapter follows the tier. On
+the bounded path that shows in two places a tree can observe: a `WriteToClipboard` whose payload is
+such a binding is now REFUSED (nothing copied, one `Refused` diagnostic) where it copied `""`, and a
+`SetState` taking its `valueFrom` from such a binding now performs no write and is diagnosed
+("valueFrom did not resolve to a value") where it wrote the empty value. Both are pinned by tests.
+**What to do:** give the binding a default — `Binding.State(key, Some default)`
+resolves to the default at an unwritten slot, and is copied.
 
 ### What a consumer does about it
 
