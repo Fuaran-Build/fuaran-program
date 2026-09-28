@@ -157,7 +157,13 @@ let tests =
               let readsAndWritesEverythingElse =
                   { Name = "no-mutation"
                     Stages =
-                      [ Effect(ServerEffect.RunQuery("rows", Fuaran.Core.Embedded rows, [ Fuaran.Core.Limit(2, 0) ]))
+                      [ Effect(
+                            ServerEffect.RunQuery(
+                                "rows",
+                                Fuaran.Core.Embedded rows,
+                                [ Fuaran.Core.Limit(Fuaran.Core.Slot.Lit 2, Fuaran.Core.Slot.Lit 0) ]
+                            )
+                        )
                         Compute(Action.SetState("status", Some(jstr "written"), None))
                         Effect(ServerEffect.HostCall("audit", jstr "note", Some "audited"))
                         Effect(ServerEffect.EmitPatch [ TreeOp.RemoveNode(NodeId "call") ])
@@ -211,7 +217,13 @@ let tests =
               let handler =
                   { Name = "query"
                     Stages =
-                      [ Effect(ServerEffect.RunQuery("rows", Fuaran.Core.Embedded rows, [ Fuaran.Core.Limit(2, 0) ])) ] }
+                      [ Effect(
+                            ServerEffect.RunQuery(
+                                "rows",
+                                Fuaran.Core.Embedded rows,
+                                [ Fuaran.Core.Limit(Fuaran.Core.Slot.Lit 2, Fuaran.Core.Slot.Lit 0) ]
+                            )
+                        ) ] }
 
               let outcome = Handler.run (openRegistry (ref [])) sources "call" handler store
 

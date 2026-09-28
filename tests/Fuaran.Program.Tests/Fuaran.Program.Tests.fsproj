@@ -13,6 +13,7 @@
     <Compile Include="ToyDomain.fs" />
     <Compile Include="GenericityTests.fs" />
     <Compile Include="CoreBoundaryTests.fs" />
+    <Compile Include="SchemaClockTests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
   <ItemGroup>

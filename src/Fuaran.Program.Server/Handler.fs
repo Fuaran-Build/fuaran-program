@@ -241,6 +241,9 @@ module Handler =
         | Fuaran.Core.UnresolvedSource _ -> "UnresolvedSource"
         | Fuaran.Core.OverflowError _ -> "OverflowError"
         | Fuaran.Core.UnboundParam _ -> "UnboundParam"
+        // The evaluator's clock read with no pinned evaluation instant
+        // (Core-Compute 0.34.0).
+        | Fuaran.Core.UnpinnedClock _ -> "UnpinnedClock"
 
     let private halt
         (capability: string)

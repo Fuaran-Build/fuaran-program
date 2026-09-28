@@ -193,7 +193,11 @@ module Schema =
         match expr with
         | ColExpr.Col name -> [ name ]
         | ColExpr.Lit _
-        | ColExpr.Param _ -> []
+        | ColExpr.Param _
+        // The evaluator's clock (Core-Compute 0.34.0) carries a grain and no
+        // sub-expression: it reads the pinned evaluation instant, never a
+        // column of the input row.
+        | ColExpr.Now _ -> []
         | ColExpr.Binary(_, a, b) -> readsOfExpr a @ readsOfExpr b
         | ColExpr.Not x -> readsOfExpr x
         | ColExpr.Coalesce xs -> xs |> List.collect readsOfExpr

@@ -74,7 +74,7 @@ let private o (v: 'T) : obj = box v |> Unchecked.nonNull
 /// them as type arguments.
 type private TextBinding = Binding<string>
 type private JValBinding = Binding<JVal>
-type private I18nArgs = Map<string, JVal>
+type private I18nArgs = Map<string, Binding<JVal>>
 
 let private modelOpt (x: 'a option) : BoundedFold.opt<'a> =
     match x with

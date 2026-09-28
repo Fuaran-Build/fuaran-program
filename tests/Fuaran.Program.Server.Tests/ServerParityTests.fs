@@ -141,7 +141,13 @@ let private refreshHandler: Handler =
 
     { Name = "refresh"
       Stages =
-        [ Effect(ServerEffect.RunQuery("rows", Fuaran.Core.Embedded rows, [ Fuaran.Core.Limit(2, 0) ]))
+        [ Effect(
+              ServerEffect.RunQuery(
+                  "rows",
+                  Fuaran.Core.Embedded rows,
+                  [ Fuaran.Core.Limit(Fuaran.Core.Slot.Lit 2, Fuaran.Core.Slot.Lit 0) ]
+              )
+          )
           Compute(Action.SetState("rows", Some(Fuaran.Core.JStr "2 rows"), None))
           Effect(ServerEffect.ApplyOps [ TreeOp.RemoveNode(NodeId "refresh") ])
           Effect(ServerEffect.HostCall("audit", Fuaran.Core.JStr "refreshed", None))

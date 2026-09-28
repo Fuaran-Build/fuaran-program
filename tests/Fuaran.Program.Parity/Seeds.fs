@@ -198,7 +198,11 @@ let private coverageFloorReactive =
 /// extends the floor changes an expectation on purpose rather than moving
 /// behaviour silently. It is a negative result, and the most reusable kind.
 let private coverageFloorPassThrough =
-    let upload = Fuaran.fileUpload "upload" Defaults.fileUpload<obj>
+    let upload =
+        Fuaran.fileUpload
+            "upload"
+            { Defaults.fileUpload<obj> with
+                OnSelect = Some(fun _ -> Action.Chain []) }
 
     fixture
         "coverage-floor-passthrough"

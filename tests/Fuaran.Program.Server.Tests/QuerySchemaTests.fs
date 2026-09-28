@@ -97,6 +97,8 @@ let private grid (id: string) (slot: string) (fields: string option list) : Node
                   KeepRowsTogether = false
                   RepeatHeader = false
                   Exportable = false
+                  WindowStateKey = None
+                  RowTotal = None
                   Source = querySlot slot
                   StaticRows = None
                   OnRowClick = None } }
@@ -398,6 +400,8 @@ let private readerTests =
                                 KeepRowsTogether = false
                                 RepeatHeader = false
                                 Exportable = false
+                                WindowStateKey = None
+                                RowTotal = None
                                 Source = Binding.Static None
                                 StaticRows = None
                                 OnRowClick = None } }

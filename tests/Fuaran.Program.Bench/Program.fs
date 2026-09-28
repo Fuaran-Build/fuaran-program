@@ -40,8 +40,8 @@ let private table (rows: int) : Table =
 let private pipeline (rows: int) : Transform list =
     [ Filter(Binary(Gt, Col "n", Lit(Int(rows / 2))))
       Derive("y", Binary(Mul, Col "x", Lit(Float 2.0)))
-      Sort [ "y", Desc ]
-      Limit(100, 0) ]
+      Sort [ Slot.Lit "y", Desc ]
+      Limit(Slot.Lit 100, Slot.Lit 0) ]
 
 let private handler (rows: int) : Handler =
     { Name = "bench"
