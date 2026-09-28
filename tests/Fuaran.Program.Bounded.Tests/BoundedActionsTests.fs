@@ -142,10 +142,9 @@ let tests =
               //
               // The binding is a SELECTION on a grid with no selection — the
               // same shape the `SetState.valueFrom` refusal above uses, and for
-              // the same reason. A `Binding.State` would NOT do: the tier
-              // resolves an unwritten key to the empty value rather than to
-              // `NotResolved`, deliberately, so it is not an unresolved payload
-              // at all and this arm must not refuse it.
+              // the same reason. (A bare `Binding.State` at an unwritten slot is
+              // unresolved too since the UI tier's 0.86.0 — see the two tests
+              // below, which pin that boundary.)
               let unselected: Binding<string> =
                   Binding.Selection("orders-grid", Binding.projectSelectionField<string> "id", None, Some "id")
 
@@ -160,20 +159,43 @@ let tests =
               | other -> failtestf "expected one Refused diagnostic, got %A" other
           }
 
-          test "WriteToClipboard does NOT refuse a State key nothing has written yet" {
-              // The other side of that boundary, pinned so a later tightening of
-              // the refusal fails here rather than silently breaking every
-              // document that copies a slot the reader has not filled in.
+          test "WriteToClipboard REFUSES a bare State key nothing has written yet" {
+              // The boundary FOLLOWS THE UI TIER (Phase 1896, raising the tier to
+              // 0.86.0): its resolver answers a state binding with NO declared
+              // default, at a slot nothing has written, as UNRESOLVED. The
+              // adapter reproduces the tier's answer rather than special-casing
+              // around it, so the clipboard arm refuses it exactly as it refuses
+              // any other unresolved payload — nothing is copied, one diagnostic
+              // says why. Until 0.86.0 the tier answered the empty value here and
+              // this arm copied "".
               let out =
                   BoundedActions.runBoundedAction
                       "n"
                       (Action.WriteToClipboard(TextSource.Bound(Binding.State("never.written", None))))
                       store0
 
-              Expect.equal
-                  out.Effects
-                  [ ClientEffect.WriteToClipboard "" ]
-                  "the empty steady state is copied, not refused"
+              Expect.isEmpty out.Effects "nothing reaches the clipboard"
+              Expect.equal out.Store.State store0.State "store unchanged"
+
+              match out.Diagnostics with
+              | [ BoundedDiagnostic.Refused(nodeId, _, reason) ] ->
+                  Expect.equal nodeId "n" "the refusal names the node"
+                  Expect.stringContains reason "nothing was written to the clipboard" "and says what did not happen"
+              | other -> failtestf "expected one Refused diagnostic, got %A" other
+          }
+
+          test "WriteToClipboard copies a State key's DECLARED default at an unwritten slot" {
+              // The other side of that boundary, and what a document that wants
+              // the old behaviour does: declare the default. An unwritten slot
+              // with a declared default resolves to it, and it is copied, not
+              // refused.
+              let out =
+                  BoundedActions.runBoundedAction
+                      "n"
+                      (Action.WriteToClipboard(TextSource.Bound(Binding.State("never.written", Some "fallback"))))
+                      store0
+
+              Expect.equal out.Effects [ ClientEffect.WriteToClipboard "fallback" ] "the declared default is copied"
 
               Expect.isEmpty out.Diagnostics "not a refusal"
           }

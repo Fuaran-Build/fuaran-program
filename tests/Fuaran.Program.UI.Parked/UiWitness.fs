@@ -147,9 +147,11 @@ let lower (nodeId: string) (action: Action<obj>) (s: BindingSources) : LeafOutco
             | None -> LeafOutcome.Refuse "route is not a safe URL"
 
     // The clipboard payload resolves at DISPATCH TIME through the same
-    // resolver. A resolved-but-NULL value is the unwritten-State steady state
-    // and is copied as the empty string; a binding that genuinely fails to
-    // resolve is REFUSED, because on a clipboard nobody sees the gap.
+    // resolver. A resolved-but-NULL value is copied as the empty string; a
+    // binding that fails to resolve is REFUSED, because on a clipboard nobody
+    // sees the gap. Which bindings resolve is the UI tier's answer, followed
+    // rather than second-guessed: since its 0.86.0 a bare state binding at a
+    // slot nothing has written is unresolved, and a declared default resolves.
     | Action.WriteToClipboard text ->
         let payload: Result<string, string> =
             match text with
