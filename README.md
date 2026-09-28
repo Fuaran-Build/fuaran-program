@@ -32,6 +32,8 @@ safe to run untrusted: bounded code plus bounded cost.
 | `Fuaran.Program.Bounded` | the bounded interpreter, the binding re-resolution pass, the resource budget, and the demanded-effect projection, generic over a domain's witness since 0.6.0 (the server driver is the UI adapter's) — [README](src/Fuaran.Program.Bounded/README.md) |
 | `Fuaran.Program.Runtime` | the **client placement**'s effect seam, generic over a domain's effects since 0.6.0; the browser loop that runs a wire-decoded UI tree is the UI adapter's — [README](src/Fuaran.Program.Runtime/README.md) |
 | `Fuaran.Program.Server` | the **server-logic placement**: handlers as data behind a closed, default-deny server-effect vocabulary, plus a second interpreter of the same algebra under deterministic replay over an effect journal — [README](src/Fuaran.Program.Server/README.md) |
+| `Fuaran.Program.UI` | the **UI adapter** (new in 0.6.0, Fable-clean): the core instantiated at the UI tier's types — the UI witness, the pre-0.6.0 names as aliases, and the UI transport loop (the bounded driver, its channel glue, the client runtime). Open it AFTER the `Fuaran.Program.*` namespaces — [README](src/Fuaran.Program.UI/README.md) |
+| `Fuaran.Program.Server.UI` | the server placement's **UI adapter** (new in 0.6.0, .NET only): the pre-0.6.0 server names as aliases, and the UI event step in front of the core's dispatch. Open it AFTER `Fuaran.Program.Server` — [README](src/Fuaran.Program.Server.UI/README.md) |
 
 One algebra, several placements — and one *interpreter* shared between them, which is what makes
 "the placements agree" a property of the code rather than a claim in a document. The server

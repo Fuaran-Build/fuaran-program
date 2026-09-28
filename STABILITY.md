@@ -1,8 +1,9 @@
 # Fuaran.Program — API stability
 
 **Status:** pre-1.0. The version is single-sourced from `<Version>` in `Directory.Build.props`, and
-all four packages (`Fuaran.Program`, `.Bounded`, `.Runtime`, `.Server`) share it: a minor bump on an
-untouched package costs nothing, and a per-package line would have to be right four times. This file
+every package (`Fuaran.Program`, `.Bounded`, `.Runtime`, `.Server`, and since 0.6.0 the UI adapter
+packages `.UI` and `.Server.UI`) shares it: a minor bump on an untouched package costs nothing, and a
+per-package line would have to be right six times. This file
 records, per version slot, what a consumer pays to adopt it and why.
 
 ## Versioning policy
@@ -91,6 +92,17 @@ resolves to the default at an unwritten slot, and is copied.
 ### The core and its adapter release together
 
 The UI adapter is new at `0.6.0` and ships in the same version as the core it instantiates: **no
-`0.6.0` core is released without its adapter.** At this slot's head the adapter's sources are parked,
-non-packable, under `tests/Fuaran.Program.UI.Parked/` and `tests/Fuaran.Program.Server.UI.Parked/`;
-Phase 1897 promotes them to the two packages. Until then this slot stays a draft.
+`0.6.0` core is released without its adapter.** `0.6.0` is ONE version across all six packages —
+`Fuaran.Program`, `.Bounded`, `.Runtime`, `.Server` and the two adapter packages
+`Fuaran.Program.UI` and `Fuaran.Program.Server.UI` — single-sourced from `<Version>` like the rest,
+packed by the same `-Pack` leg and published by the same tag.
+
+**Class: additive**, for the two adapter packages (Phase 1897). Phase 1896 wrote their sources in
+two non-packable projects under `tests/`; Phase 1897 moved them, file for file, to
+`src/Fuaran.Program.UI/` and `src/Fuaran.Program.Server.UI/` and made them packable. Their public
+surface is exactly what the existing suite, the scenario corpus and the sample already ran through,
+so the move changes no behaviour; it rides this draft slot rather than advancing it. The core
+boundary test covers the new neighbours: no core package may reference an adapter package, declared
+or resolved, any more than it may reference the UI tier itself.
+
+The slot stays a DRAFT: tagging `v0.6.0` is the release gesture, a separate recorded act.

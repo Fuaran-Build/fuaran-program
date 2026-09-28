@@ -49,15 +49,19 @@ jobs:
       - name: Create empty local folder feed on the runner
         run: mkdir -p ../../local-nuget-feed
 
-      # The four packable projects, named rather than packing the solution,
-      # which would also walk the test assemblies.
+      # The six packable projects — the four core packages and, since 0.6.0,
+      # the two UI adapter packages released in the same version — named
+      # rather than packing the solution, which would also walk the test
+      # assemblies.
       - name: Pack
         run: |
           for proj in \
             src/Fuaran.Program/Fuaran.Program.fsproj \
             src/Fuaran.Program.Bounded/Fuaran.Program.Bounded.fsproj \
             src/Fuaran.Program.Runtime/Fuaran.Program.Runtime.fsproj \
-            src/Fuaran.Program.Server/Fuaran.Program.Server.fsproj
+            src/Fuaran.Program.Server/Fuaran.Program.Server.fsproj \
+            src/Fuaran.Program.UI/Fuaran.Program.UI.fsproj \
+            src/Fuaran.Program.Server.UI/Fuaran.Program.Server.UI.fsproj
           do
             dotnet pack "$proj" -c Release -o "$GITHUB_WORKSPACE/artifacts" --nologo
           done
