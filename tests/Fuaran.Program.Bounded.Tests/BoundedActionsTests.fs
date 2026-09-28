@@ -200,6 +200,36 @@ let tests =
               Expect.isEmpty out.Diagnostics "not a refusal"
           }
 
+          test "SetState.valueFrom from a bare State key nothing has written performs no write" {
+              // The same UI-tier boundary (0.86.0) on the state channel: the
+              // expression is unresolved, so the fold's own refusal applies —
+              // no write, one diagnostic. Until 0.86.0 the tier answered the
+              // empty value here and the fold wrote it.
+              let out =
+                  BoundedActions.runBoundedAction
+                      "n"
+                      (Action.SetState("dest", None, Some(Binding.State("never.written", None))))
+                      store0
+
+              Expect.equal out.Store.State store0.State "no write performed"
+
+              match out.Diagnostics with
+              | [ BoundedDiagnostic.Refused(_, _, reason) ] ->
+                  Expect.stringContains reason "did not resolve" "refused as unresolved"
+              | other -> failtestf "expected one Refused diagnostic, got %A" other
+          }
+
+          test "SetState.valueFrom from a State key with a DECLARED default writes the default" {
+              let out =
+                  BoundedActions.runBoundedAction
+                      "n"
+                      (Action.SetState("dest", None, Some(Binding.State("never.written", Some(Fuaran.Core.JStr "d")))))
+                      store0
+
+              Expect.equal (Map.tryFind "dest" out.Store.State) (Some(o "d")) "the default is written"
+              Expect.isEmpty out.Diagnostics "not a refusal"
+          }
+
           test "Print → payload-free ClientEffect; store unchanged" {
               let out = BoundedActions.runBoundedAction "n" Action.Print store0
               Expect.equal out.Effects [ ClientEffect.Print ] "one Print effect"
