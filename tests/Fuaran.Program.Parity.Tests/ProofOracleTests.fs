@@ -499,7 +499,8 @@ let private closureInvoking: Fold =
 //  Phase 1896 — the GENERIC fold, through a NON-UI test witness.
 //
 //  Everything above compares the extraction's `run` — the generic fold at the
-//  model's UI witness — with production at the parked UI adapter. That ties
+//  model's UI witness — with production at the UI adapter package
+//  (`src/Fuaran.Program.UI`, promoted there by Phase 1897). That ties
 //  the fourteen arms to the model; it does not, on its own, tie the GENERIC
 //  core to the generic model, because both sides of it are one witness. This
 //  comparison does: the extraction's generic `run_action` at a toy witness,

@@ -2,11 +2,10 @@
 /// binding store, its tree-ops and its client effects, seen through the generic
 /// core's witness contract (DECISIONS.md D18, docs/generic-tier.md §3).
 ///
-/// PARKED here, in a non-packable project under tests/, by Phase 1896: the core
-/// packages reference no UI-tier package, and this is the instantiation the
-/// existing suite, the scenario corpus and the sample run through. Phase 1897
-/// promotes this file, unchanged in shape, into the `Fuaran.Program.UI` adapter
-/// package. Every member below is the code the core ran before the cut, moved
+/// Part of the `Fuaran.Program.UI` adapter package: the core packages reference
+/// no UI-tier package, and this is the instantiation the existing suite, the
+/// scenario corpus and the sample run through. Phase 1896 wrote it (parked in a
+/// non-packable project) and Phase 1897 moved it here unchanged in shape. Every member below is the code the core ran before the cut, moved
 /// rather than rewritten, so the program wire's bytes do not move with it.
 module Fuaran.Program.UI.UiWitness
 

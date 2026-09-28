@@ -10,9 +10,15 @@
 ///     arrival through another reference — which only the restore's
 ///     `project.assets.json` and the built assembly's own references show.
 ///
-/// Each reading is proven able to fail on the parked UI adapter, which does
-/// reference the tier: a scan that has never been seen to go red is a scan
-/// whose mechanism nobody has verified.
+/// Each reading is proven able to fail on the UI adapter, which does reference
+/// the tier: a scan that has never been seen to go red is a scan whose
+/// mechanism nobody has verified.
+///
+/// Since Phase 1897 the adapter is two packages under `src/`, beside the core
+/// (`Fuaran.Program.UI`, `Fuaran.Program.Server.UI`). They count as the UI
+/// tier here too: a core package that referenced its own adapter would reach
+/// the tier through it, and the adapter's names do not match `Fuaran.UI` by
+/// spelling, so they are named explicitly.
 module Fuaran.Program.Tests.CoreBoundaryTests
 
 open System
@@ -40,10 +46,21 @@ let private corePackages =
 
 let private coreDir (name: string) = Path.Combine(repoRoot, "src", name)
 
-let private parkedDir = Path.Combine(repoRoot, "tests", "Fuaran.Program.UI.Parked")
+let private adapterDir = Path.Combine(repoRoot, "src", "Fuaran.Program.UI")
 
-/// A UI-tier package id or namespace: `Fuaran.UI` itself or anything under it.
-let private uiName = Regex(@"\bFuaran\.UI(\.|\b|"")", RegexOptions.Compiled)
+let private serverAdapterDir =
+    Path.Combine(repoRoot, "src", "Fuaran.Program.Server.UI")
+
+/// A UI-tier package id or namespace: `Fuaran.UI` itself or anything under it,
+/// or one of the two adapter packages that instantiate the core at it.
+let private uiName =
+    Regex(@"\bFuaran\.(Program\.(Server\.)?)?UI(\.|\b|"")", RegexOptions.Compiled)
+
+/// The same test over a resolved library or assembly name.
+let private isUiTier (name: string) =
+    name.StartsWith "Fuaran.UI"
+    || name.StartsWith "Fuaran.Program.UI"
+    || name.StartsWith "Fuaran.Program.Server.UI"
 
 /// Declared references in a project file: a `PackageReference` or a
 /// `ProjectReference` naming the tier.
@@ -88,7 +105,7 @@ let private resolvedIn (dir: string) : Result<string list, string> =
 
         doc.RootElement.GetProperty("targets").EnumerateObject()
         |> Seq.collect (fun target -> target.Value.EnumerateObject() |> Seq.map _.Name)
-        |> Seq.filter (fun library -> library.StartsWith "Fuaran.UI")
+        |> Seq.filter isUiTier
         |> Seq.distinct
         |> List.ofSeq
         |> Ok
@@ -109,7 +126,7 @@ let private referencedBy (dir: string) (assembly: string) : Result<string list, 
 
         metadata.AssemblyReferences
         |> Seq.map (fun handle -> metadata.GetString(metadata.GetAssemblyReference(handle).Name))
-        |> Seq.filter (fun name -> name.StartsWith "Fuaran.UI")
+        |> Seq.filter isUiTier
         |> List.ofSeq
         |> Ok
 
@@ -143,16 +160,36 @@ let tests =
               }
 
           // The probes, proven able to fail: every reading finds the tier in the
-          // parked UI adapter, which references it by design.
+          // UI adapter, which references it by design.
           test "the probes find the tier where it is" {
               Expect.isNonEmpty
-                  (declaredIn (Path.Combine(parkedDir, "Fuaran.Program.UI.Parked.fsproj")))
+                  (declaredIn (Path.Combine(adapterDir, "Fuaran.Program.UI.fsproj")))
                   "the declared-reference probe"
 
-              Expect.isNonEmpty (namedIn parkedDir) "the source probe"
-              Expect.isNonEmpty (expectRead "parked adapter" (resolvedIn parkedDir)) "the resolved-graph probe"
+              Expect.isNonEmpty (namedIn adapterDir) "the source probe"
+              Expect.isNonEmpty (expectRead "UI adapter" (resolvedIn adapterDir)) "the resolved-graph probe"
 
               Expect.isNonEmpty
-                  (expectRead "parked adapter" (referencedBy parkedDir "Fuaran.Program.UI.Parked"))
+                  (expectRead "UI adapter" (referencedBy adapterDir "Fuaran.Program.UI"))
                   "the built-assembly probe"
+          }
+
+          // And the adapter's own names are caught: the server adapter declares a
+          // reference to the client adapter, which the `Fuaran.UI` spelling alone
+          // would not match.
+          test "the probes find a reference to the adapter itself" {
+              let declared =
+                  declaredIn (Path.Combine(serverAdapterDir, "Fuaran.Program.Server.UI.fsproj"))
+
+              Expect.exists
+                  declared
+                  (fun line -> line.Contains "Fuaran.Program.UI.fsproj")
+                  "the declared-reference probe names the adapter project"
+
+              let resolved = expectRead "server UI adapter" (resolvedIn serverAdapterDir)
+
+              Expect.exists
+                  resolved
+                  (fun library -> library.StartsWith "Fuaran.Program.UI/")
+                  "the resolved-graph probe names the adapter project"
           } ]

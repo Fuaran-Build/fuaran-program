@@ -205,7 +205,7 @@ differential is what says the discharged instance is the shipped one.
 A proof about a model is a claim about the code only if something runs the two side by side.
 `tests/Fuaran.Program.Parity.Tests/ProofOracleTests.fs` is that something: it runs the
 EXTRACTION of `BoundedFold.fst` beside `BoundedActions.runBoundedActionWith` — the generic core
-at the UI witness, through the UI adapter parked under `tests/Fuaran.Program.UI.Parked/` — and,
+at the UI witness, through the UI adapter package `src/Fuaran.Program.UI/` — and,
 since Phase 1896, the extraction's generic `run_action` beside `BoundedActions.run` at a non-UI
 test witness, and requires the
 store, the effect list and the diagnostics to agree — all three at once, because a fold that
@@ -318,8 +318,8 @@ theorem above proves the no-closure half. `Budget.fst` proves the budget half, o
 arithmetic that decides whether a tree is admitted at all.
 
 The subject is `Budget.satAdd` / `satMul`, `Budget.actionCascadeCost`, `Budget.treeCost`, and
-the G2 stage of `BoundedDriver.step` (`tests/Fuaran.Program.UI.Parked/BoundedDriver.fs:203-242`,
-the UI transport loop, parked there by Phase 1896) that consumes them. Five
+the G2 stage of `BoundedDriver.step` (`src/Fuaran.Program.UI/BoundedDriver.fs:203-242`,
+the UI transport loop, in the UI adapter package since Phase 1897) that consumes them. Five
 headline lemmas.
 
 ### 1. `sat_monotone` — the saturating arithmetic cannot make a tree look cheap

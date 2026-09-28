@@ -11,9 +11,11 @@ Five suites, each its own Expecto assembly runner, plus the Fable parity leg.
 | `Fuaran.Program.Server.Tests` | the server-logic placement: handlers, the server-effect seam, the pre-execution query-schema check, the replay classification's reasons and mode enforcement, and tier-parity leg (d) |
 | `Fuaran.Program.Parity.Tests` | tier parity, .NET legs (a) + (b); and the proof oracle's differential (`ProofOracleTests.fs`) |
 | `Fuaran.Program.Parity.Fable` | tier parity, leg (c) — the same runner under node |
-| `Fuaran.Program.UI.Parked` | NOT a test project: the UI instantiation of the generic core (the UI witness, the pre-0.6.0 names as aliases, the UI transport loop), Fable-clean and non-packable, parked here by Phase 1896 until Phase 1897 ships it as the `Fuaran.Program.UI` package |
-| `Fuaran.Program.Server.UI.Parked` | NOT a test project: the server placement's UI instantiation (aliases, and the UI event step for the session and the durable interpreter), .NET-only and non-packable, parked likewise for `Fuaran.Program.Server.UI` |
 | `Fuaran.Program.Bench` | the `RunQuery` benchmark; a smoke pass under the gate, the measurement under `--full` (`docs/runquery-benchmark.md`) |
+
+The UI instantiation the UI-tree suites run through is not a test project: it is the UI adapter,
+`src/Fuaran.Program.UI` (Fable-clean) and `src/Fuaran.Program.Server.UI` (.NET-only), written by
+Phase 1896 in two non-packable projects here and promoted to packages by Phase 1897.
 
 ## The tier-parity family
 

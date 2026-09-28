@@ -284,7 +284,8 @@
           "the oracle agrees with production when the placement ANSWERS a call",
           "GO RED: a fold that invokes a carried closure loses the comparison"
         ],
-        "runner": "proofs/check.ps1 step 6, which asserts a CASE COUNT because a filter matching nothing reports success"
+        "runner": "proofs/check.ps1 step 6, which asserts a CASE COUNT because a filter matching nothing reports success",
+        "note": "production at the UI witness is the UI adapter package, src/Fuaran.Program.UI (the UI witness and the aliases over the generic core), promoted there from a non-packable project by Phase 1897; since Phase 1896 the same list also compares the extraction's generic run_action with the core's BoundedActions.run at a non-UI test witness"
       }
     },
     {
@@ -492,7 +493,7 @@
           "GO RED: an accumulator that wraps loses the ceiling comparison"
         ],
         "runner": "proofs/check.ps1 step 6, which asserts a CASE COUNT because a filter matching nothing reports success",
-        "note": "the comparison is of the INTEGER and not the verdict, which is what says the model kept production's explicit stack in production's push order — above the ceiling the answer depends on which nodes were visited first. The go-red case commits a walk that accumulates with .NET's wrapping add and asserts BOTH that the harness reports it and that its ceiling comparison comes out the wrong way, the tree being admitted rather than refused; a divergence that was merely a different number would not demonstrate the defect the law excludes"
+        "note": "the G2 stage compared is BoundedDriver.step in the UI adapter package, src/Fuaran.Program.UI (the UI transport loop, promoted there by Phase 1897); the pricing functions are the core's Budget. The comparison is of the INTEGER and not the verdict, which is what says the model kept production's explicit stack in production's push order — above the ceiling the answer depends on which nodes were visited first. The go-red case commits a walk that accumulates with .NET's wrapping add and asserts BOTH that the harness reports it and that its ceiling comparison comes out the wrong way, the tree being admitted rather than refused; a divergence that was merely a different number would not demonstrate the defect the law excludes"
       }
     },
     {

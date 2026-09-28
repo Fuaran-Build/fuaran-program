@@ -25,9 +25,9 @@
   </ItemGroup>
   <ItemGroup>
     <!-- Phase 1896: the core packages are domain-generic, so a UI-tree sample
-         runs through the UI adapter — parked under tests/ until Phase 1897
-         ships it as a package. -->
-    <ProjectReference Include="..\..\tests\Fuaran.Program.UI.Parked\Fuaran.Program.UI.Parked.fsproj" />
+         runs through the UI adapter package (promoted to src/ by Phase
+         1897). -->
+    <ProjectReference Include="..\..\src\Fuaran.Program.UI\Fuaran.Program.UI.fsproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Fable.Core" />

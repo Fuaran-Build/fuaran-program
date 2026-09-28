@@ -3,8 +3,8 @@ namespace Fuaran.Program.Server.UI
 // ============================================================================
 //  The server placement's pre-Phase-1896 names, at the UI witness.
 //
-//  PARKED by Phase 1896 in this non-packable project; Phase 1897 promotes it
-//  into the `Fuaran.Program.Server.UI` adapter package. As in the client-side
+//  Part of the `Fuaran.Program.Server.UI` adapter package (Phase 1896 wrote
+//  it, Phase 1897 made it a package). As in the client-side
 //  aliases: open this namespace AFTER `Fuaran.Program.Server`, because a module
 //  here and a core module of the same name are searched latest-opened first.
 // ============================================================================

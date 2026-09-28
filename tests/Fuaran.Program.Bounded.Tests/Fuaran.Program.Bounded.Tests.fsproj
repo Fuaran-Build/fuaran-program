@@ -17,7 +17,7 @@
     <Compile Include="Program.fs" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\Fuaran.Program.UI.Parked\Fuaran.Program.UI.Parked.fsproj" />
+    <ProjectReference Include="..\..\src\Fuaran.Program.UI\Fuaran.Program.UI.fsproj" />
   </ItemGroup>
   <!-- The fixtures author trees (Fuaran.UI), build TreeOps + decode wire JSON
        (Fuaran.UI.Ops), assert against the op-stream sink contract

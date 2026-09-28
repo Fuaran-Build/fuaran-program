@@ -22,7 +22,7 @@
     <Compile Include="Program.fs" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\Fuaran.Program.Server.UI.Parked\Fuaran.Program.Server.UI.Parked.fsproj" />
+    <ProjectReference Include="..\..\src\Fuaran.Program.Server.UI\Fuaran.Program.Server.UI.fsproj" />
     <!-- The tier-parity leg reads the SAME fixture files the other placements
          read, through the same loader. A separate corpus would prove nothing. -->
     <ProjectReference Include="..\Fuaran.Program.Parity\Fuaran.Program.Parity.fsproj" />

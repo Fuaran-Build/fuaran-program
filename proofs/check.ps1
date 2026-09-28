@@ -30,7 +30,9 @@
          gate.
       6. RUN each module's differential host — an Expecto list inside
          `Fuaran.Program.Parity.Tests` that runs the extracted model
-         beside production and requires them to agree. Skippable with
+         beside production and requires them to agree. Production at the
+         UI witness is the UI adapter package (`src/Fuaran.Program.UI`),
+         so the host names below follow that code, not the core's. Skippable with
          `-SkipHost`, because it needs the solution built and the proof
          half does not.
 
@@ -105,7 +107,7 @@ $modules = @(
         Oracle       = "oracle/BoundedFold.fs"
         HostList     = "Phase 1715 - the proved bounded fold as oracle"
         HostMinCases = 5
-        HostSubject  = "the driver-semantics family and an arm-complete action corpus"
+        HostSubject  = "the driver-semantics family and an arm-complete action corpus, through the UI adapter (src/Fuaran.Program.UI) and a non-UI test witness"
     }
     @{
         Name         = "Budget"
@@ -113,7 +115,7 @@ $modules = @(
         Oracle       = "oracle/Budget.fs"
         HostList     = "Phase 1716 - the proved budget as oracle"
         HostMinCases = 6
-        HostSubject  = "the bounded driver's own trees, generated trees straddling the ceiling, and the G2 gate"
+        HostSubject  = "the bounded driver's own trees, generated trees straddling the ceiling, and the G2 gate of the UI adapter's BoundedDriver (src/Fuaran.Program.UI)"
     }
 )
 

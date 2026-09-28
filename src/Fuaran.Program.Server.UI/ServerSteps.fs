@@ -12,8 +12,8 @@ namespace Fuaran.Program.Server.UI
 //  and nothing after it, and a WireTree is reified here before the core ever
 //  sees a tree.
 //
-//  PARKED by Phase 1896; Phase 1897 promotes it into the
-//  `Fuaran.Program.Server.UI` adapter package.
+//  Part of the `Fuaran.Program.Server.UI` adapter package (Phase 1896 wrote
+//  it, Phase 1897 made it a package).
 // ============================================================================
 
 open Fuaran.UI.Types

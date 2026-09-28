@@ -3,8 +3,8 @@ namespace Fuaran.Program.UI
 // ============================================================================
 //  The UI tier's client effects, placed against the core's egress seam.
 //
-//  PARKED by Phase 1896 in this non-packable project; Phase 1897 promotes it
-//  into the `Fuaran.Program.UI` adapter package. The destination policy's
+//  Part of the `Fuaran.Program.UI` adapter package (Phase 1896 wrote it, Phase
+//  1897 made it a package). The destination policy's
 //  mechanism is the core's (`Fuaran.Program.Runtime.EgressPolicy`); what is
 //  here is what only the UI tier knows — its renderer URL floor, and which of
 //  its eight effect arms points where.

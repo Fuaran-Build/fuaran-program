@@ -3,8 +3,8 @@ namespace Fuaran.Program.UI
 // ============================================================================
 //  The pre-Phase-1896 names, at the UI witness.
 //
-//  PARKED by Phase 1896; Phase 1897 promotes it into the `Fuaran.Program.UI`
-//  adapter package. docs/generic-tier.md §5.1: the adapter keeps the old names
+//  Part of the `Fuaran.Program.UI` adapter package (Phase 1896 wrote it, Phase
+//  1897 made it a package). docs/generic-tier.md §5.1: the adapter keeps the old names
 //  as closed aliases and partially applied modules, so a consumer migrates by
 //  changing a package reference and adding one `open` — AFTER
 //  `open Fuaran.Program.Bounded`, because a module here and a core module of
