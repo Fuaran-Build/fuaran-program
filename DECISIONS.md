@@ -166,6 +166,14 @@ The handler-as-atomicity-unit guarantee is unchanged: `Committed` still says whi
 outcomes a caller got, a halt still discards the store, ops, patches, notifications and effects in
 favour of the entry state, and the op sink is still called once, after the handler, never per stage.
 
+**Mechanism reference (Phase 1717).** The three clauses above are machine-checked in
+`proofs/Staging.fst` — `plan_pure` (nothing external runs in the plan phase),
+`residual_is_prefix` (on failure at position k the outcome is the entry state and `Performed` is
+exactly the first k staged calls), `performed_in_order` and `commit_is_total_prefix` — over every
+staged sequence and every point of failure, with the performer abstract; the differential host in
+`tests/Fuaran.Program.Server.Tests/ProofOracleTests.fs` runs the extraction beside `Handler.run`.
+The claims ladder in `proofs/README.md` says what that does and does not cover.
+
 ## D9 — The HANDLER declares where its results land; a tree-declared result target is refused (2026-08-22)
 
 A program tree's call action can carry a result target, and a handler's stages name their own landing

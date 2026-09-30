@@ -462,6 +462,136 @@ would not demonstrate the defect this law exists to exclude.
   time. A tree within budget can still be slow on a slow machine, and no law here says
   otherwise.
 
+## The staging theorem
+
+DECISIONS.md D8 chose two-phase staging for host-effect atomicity and states the law in prose:
+nothing external runs in the plan phase; an uncommitted outcome equals the entry state EXCEPT
+that `Performed` names exactly the prefix of staged host calls that ran; and `Performed` is
+execution order. `Handler.run` (`src/Fuaran.Program.Server/Handler.fs`) keeps it with one `if`,
+and `HandlerLoopTests` / `DurableInterpreterTests` pin instances of it. "At most a prefix"
+quantifies over every staged sequence and every point of failure, which is what instances
+cannot cover and what the next handler arm can silently break. `Staging.fst` proves it.
+
+The subject is the plan phase (`runStage` / `runEffect` — the five effect arms and the
+`Compute` arm), the phase boundary, the perform phase (`perform`) and the two outcome
+constructors, modelled clause for clause with the PERFORMER abstract. Four headline lemmas and
+one supporting clause.
+
+### 1. `plan_pure` — nothing external runs in the plan phase
+
+The plan phase's output is a function of the entry state, the program, the witness and the
+registry's gate, policy and lookup alone: under every behaviour the performers could have, it
+is EQUAL — the same staged list, the same store, the same diagnostics. Stated as an equation
+rather than an inspection, because a plan that had invoked a performer could not be the same
+under a performer that answers differently.
+
+What makes it statable is the one place the model departs from production's shape. Production's
+`HostFunctions` map goes from a name to a closure; the model goes from a name to an opaque
+performer TOKEN (`r_lookup`) and, separately, from a token and an argument to a result
+(`r_perf`). The plan phase captures the token; only the perform phase applies the behaviour.
+In the differential host the token is production's own closure and the behaviour is
+application, so nothing is lost in the split.
+
+### 2. `residual_is_prefix` — on failure at position k, exactly the first k, and nothing else
+
+When the plan completed and the performer fails at position `k` of the staged list — any list,
+any position — the outcome's store is the ENTRY store, the handler is uncommitted, it carries
+no patches, no notifications and no client effects, and `Performed` is exactly the first `k`
+staged capabilities, in declaration order. Not "at most a prefix": the prefix, and which one.
+
+### 3. `performed_in_order` — the general statement
+
+For EVERY performer: when the plan completed, the handler commits exactly when every staged
+call ran, and `Performed` is the plan phase's capabilities in stage order (on commit; nothing on
+rollback) followed by the staged capabilities the performer answered, in DECLARATION order —
+the first `ran` of them, where `ran` counts the calls answered before the first refusal. Lemmas
+2 and 4 are corollaries read off this one, which is why it is the one `perform_spec` (the
+whole behaviour of the perform phase, stated once by induction) feeds.
+
+### 4. `commit_is_total_prefix` — on success, everything
+
+When every staged call succeeds the handler commits, and `Performed` is the plan phase's
+capabilities in stage order followed by the WHOLE staged list in declaration order.
+
+### The supporting clause — `plan_halt_performs_nothing`
+
+A handler that halted while planning rolls back to the entry store and reports nothing
+performed, under every performer at once, because nothing reached the perform phase. This is
+the plan-phase half of D8's "at most a prefix": the prefix is empty when the plan fails.
+
+### What the staging model does NOT own
+
+The handler is generic in its tree, bindings, values, ops, actions and client effects, and the
+model keeps every one a type parameter; what production does WITH them reaches it through two
+records of arrows, and both are the assumed rung:
+
+- **the witness** — `LandQuery`, `Assign`, `IsReserved`, `ReservedPrefix`, the op stream's
+  `Apply`, the shared fold's `runInert` (Phase 1715's subject, so opaque here), and the query
+  evaluator. The evaluator and `LandQuery` arrive as ONE arrow, because one opaque composed with
+  another is one opaque and the clause the handler owns is halt-or-land; the evaluator's error
+  reaches the model already reduced to its discriminator, as `Handler.evalErrorKind` reduces it;
+- **the registry** — the gate, the argument policy (with its defect already described), the
+  lookup and the performer's behaviour.
+
+The denial sink (`OnDenied`) is a unit-returning observer and is not modelled.
+
+### The staging claims ladder
+
+#### Proved
+
+1. **Nothing external runs in the plan phase** — `plan_pure`.
+2. **The residual is exactly the prefix that ran** — `residual_is_prefix`.
+3. **`Performed` is execution order, for every performer** — `performed_in_order`, with
+   `perform_spec` as the inductive core.
+4. **Success performs the whole staged list** — `commit_is_total_prefix`.
+
+No `admit`, no `assume`; `--report_assumes error` is on for this module exactly as it is for
+the other two.
+
+#### Differentially tested
+
+The extracted model agrees with production over the staging cases the handler's own suites
+drive — `HandlerLoopTests`' every-arm handler, its ordered handler, its landing slot, its
+three-call half-performer, its plan-then-halt, its reads-too-early and its refused gate;
+`DurableInterpreterTests`' refresh handler and its two-call handler — plus the plan-halt arms
+those cases do not reach (an unregistered performer, a refused argument policy, a reserved
+landing slot, an apply refusal, an unresolvable query). Each case runs with a SCRIPTED
+performer that counts its invocations and refuses at one position, at every position of the
+staged list and once with no refusal at all. Three things are compared: the two outcomes
+(projected as the durable parity leg projects them), the two performers' logs of what they
+were asked, and production's `Performed` against the performer's own log of what ran.
+
+That third comparison is what the **go-red case** defeats: a performer that reports success for
+a call it did not run. Production and the model still agree with each other — both believed
+it — and the check that catches it is the claim against the log, which is the ground truth
+every green case rests on. A comparison that could not lose would not be evidence.
+
+#### Assumed, and stated
+
+- **The performer is a function of the call.** The model's `r_perf` is pure, so a stateful
+  production performer is represented by the verdicts it actually returned, in the order the
+  perform phase asked for them. The perform phase asks each staged call once, in declaration
+  order — a property the extraction inherits — so the differential's counter-driven performer
+  exercises exactly the case the pure model cannot state, including a list that stages the same
+  function twice.
+- **The witness and the registry**, per the table above: what production does with a query, an
+  op, a landing slot and a `Compute` stage is supplied to the model from production's own
+  members, and the differential is over the extraction of everything else.
+- **The toolchain**, on the same terms as the fold theorem's.
+
+#### Not claimed
+
+- **The durable journal.** D12's interpreter journals the one arm that reaches outside and
+  replays over the journal; it CALLS `Handler.run` and does not fork it, so it sits above this
+  theorem and is out of it, as it is out of the fold theorem's.
+- **The indeterminate window D12 declines to close.** A step journaled as attempted and never
+  decided may have happened and may not; the theorem says what `Performed` reports when the
+  performer ANSWERS, and nothing about a performer that never does. That window is declared,
+  not closed, and no proof here narrows it.
+- **The performer's own effect.** What a host function does when invoked is the host's. The
+  theorem bounds what the handler reports and when it stops asking; it cannot bound what an
+  invocation did.
+
 ## Running it
 
 ```powershell
@@ -472,7 +602,11 @@ pwsh ./proofs/check.ps1 -SkipHost    # the proof half only; no solution build ne
 
 Six steps, each refusing rather than warning: resolve the pinned prover, CHECK, EXTRACT,
 BYTE-DIFF against the committed `oracle/*.fs`, BUILD the oracle project, RUN the differential
-host.
+host. A module names the test project that hosts its differential: the fold's and the
+budget's live in `Fuaran.Program.Parity.Tests`, the staging theorem's in
+`Fuaran.Program.Server.Tests` beside the handler suites it re-declares — which means step 6 for
+that module needs the conformance corpus the server suite loads at start-up
+(`FUARAN_PROGRAM_SPEC`, or the sibling clone), exactly as `run.ps1` does.
 
 **The toolchain is a large one-off download and is NOT a build dependency.** Nothing in
 `run.ps1`, `dotnet build` or the ordinary CI matrix needs a prover — the extractions are
@@ -485,7 +619,8 @@ mismatch.
 each against a fresh extraction, so a hand edit is a change the leg refuses rather than one it
 absorbs. When a model changes legitimately, its two files move in the same commit and the
 script prints the copy command. `Budget.fs` needed no addition to the `Prims` shim below: it
-uses `string_of_int`, which was already there, and native operators on `Prims.int`.
+uses `string_of_int`, which was already there, and native operators on `Prims.int`. `Staging.fs`
+needed none either: `strcat` and the `Prims` type aliases are all it references.
 
 ### Why the pin, and why three runs
 

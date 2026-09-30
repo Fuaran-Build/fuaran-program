@@ -26,7 +26,7 @@
   "kind": "proofs",
   "version": 1,
   "subject": "Fuaran-Program",
-  "$scope": "the proved models under proofs/: the shared bounded fold — BoundedActions.runBoundedActionWith, the one interpreter every placement runs, over the closed Action union, its State store, its closure-free client effects and its diagnostics (Phase 1715), restated over the generic tier's ActionView and the fold-read members of the ProgramWitness contract (DECISIONS.md D18) and re-proved there before the generic core is written, with the fourteen-arm union kept as the UI witness seen through the view (Phase 1898); and the interaction budget — Budget.satAdd/satMul, Budget.actionCascadeCost, Budget.treeCost and the G2 stage of BoundedDriver.step that refuses on them (Phase 1716). Bounded code and bounded cost, the two halves of running an untrusted generated tree on shared infrastructure.",
+  "$scope": "the proved models under proofs/: the shared bounded fold — BoundedActions.runBoundedActionWith, the one interpreter every placement runs, over the closed Action union, its State store, its closure-free client effects and its diagnostics (Phase 1715), restated over the generic tier's ActionView and the fold-read members of the ProgramWitness contract (DECISIONS.md D18) and re-proved there before the generic core is written, with the fourteen-arm union kept as the UI witness seen through the view (Phase 1898); and the interaction budget — Budget.satAdd/satMul, Budget.actionCascadeCost, Budget.treeCost and the G2 stage of BoundedDriver.step that refuses on them (Phase 1716); and two-phase staging — Handler.run's plan phase, phase boundary and perform phase with the performer abstract, DECISIONS.md D8's law that the residual of a failed handler is exactly the prefix of staged host calls that ran (Phase 1717). Bounded code and bounded cost, the two halves of running an untrusted generated tree on shared infrastructure; and bounded residue, what a handler that reaches outside can leave behind.",
   "claims": [
     {
       "id": "fold-totality",
@@ -548,6 +548,166 @@
         "document": "proofs/README.md"
       },
       "reason": "the budget is step- and size-based on purpose — no Stopwatch, no Date.now — so that the same tree and event sequence bound identically at every placement and are unit-testable headlessly. It bounds WORK, not time. A tree within budget can still be slow on a slow machine, and reading these laws as a latency guarantee would be reading them as something they were deliberately not built to be."
+    },
+    {
+      "id": "staging-plan-pure",
+      "level": "proved",
+      "phase": "Phase 1717",
+      "claim": "Nothing external runs in the plan phase. The plan phase's output — the store, the staged list, the audit trail, the patches, the notifications, the client effects and the diagnostics — is a function of the entry state, the program, the witness and the registry's gate, argument policy and performer lookup ALONE: under every behaviour the performers could have, it is EQUAL. And the record of what ran outside is untouched by planning.",
+      "evidence": {
+        "theorem": "plan_pure",
+        "model": "proofs/Staging.fst",
+        "prover": "proofs/fstar-pin.json",
+        "supporting": [
+          "plan_stage_pure"
+        ],
+        "definitions": [
+          "plan",
+          "plan_stage",
+          "plan_effect",
+          "registry",
+          "witness",
+          "capability",
+          "halt",
+          "deny"
+        ],
+        "note": "statable because the model splits production's HostFunctions map — name to closure — into a LOOKUP (name to an opaque performer token, read while planning) and a BEHAVIOUR (token and argument to a result, read only while performing); the theorem replaces the behaviour by an arbitrary other and shows the plan equal. In the differential host the token is production's own closure and the behaviour is application, so the split loses nothing"
+      }
+    },
+    {
+      "id": "staging-residual-is-prefix",
+      "level": "proved",
+      "phase": "Phase 1717",
+      "claim": "When the plan completed and the performer fails at position k of the staged list — any list, any position — the outcome's store is the ENTRY store, the handler is uncommitted, it carries no patches, no notifications and no client effects, and Performed is EXACTLY the first k staged capabilities, in declaration order. Not at most a prefix: the prefix, and which one.",
+      "evidence": {
+        "theorem": "residual_is_prefix",
+        "model": "proofs/Staging.fst",
+        "prover": "proofs/fstar-pin.json",
+        "supporting": [
+          "performed_in_order",
+          "perform_spec",
+          "fails_at_ran",
+          "plan_halt_performs_nothing"
+        ],
+        "definitions": [
+          "run",
+          "perform",
+          "fails_at",
+          "take",
+          "caps"
+        ],
+        "note": "plan_halt_performs_nothing is the plan-phase half of the same clause: a handler that halted while planning reports nothing performed, under every performer at once, because nothing reached the perform phase"
+      }
+    },
+    {
+      "id": "staging-performed-in-order",
+      "level": "proved",
+      "phase": "Phase 1717",
+      "claim": "For EVERY performer: when the plan completed, the handler commits exactly when every staged call ran, and Performed is the plan phase's capabilities in stage order (on commit; nothing on rollback) followed by the staged capabilities the performer answered, in DECLARATION order — the first `ran` of them, where `ran` counts the calls answered before the first refusal. Execution order, as an equation, and the general form the prefix and total-prefix corollaries read off.",
+      "evidence": {
+        "theorem": "performed_in_order",
+        "model": "proofs/Staging.fst",
+        "prover": "proofs/fstar-pin.json",
+        "supporting": [
+          "perform_spec",
+          "plan_pure",
+          "ran_le_length"
+        ],
+        "definitions": [
+          "run",
+          "perform",
+          "ran",
+          "take",
+          "caps",
+          "rev",
+          "app"
+        ],
+        "note": "perform_spec is the inductive core — the whole behaviour of the perform phase stated once: it halts exactly when the performer refused before the end of the list, records as run the prefix it answered in declaration order appended to what was recorded before, and touches nothing else the outcome reads"
+      }
+    },
+    {
+      "id": "staging-commit-is-total-prefix",
+      "level": "proved",
+      "phase": "Phase 1717",
+      "claim": "When every staged call succeeds the handler commits, and Performed is the plan phase's capabilities in stage order followed by the WHOLE staged list in declaration order — the residual, on success, is everything.",
+      "evidence": {
+        "theorem": "commit_is_total_prefix",
+        "model": "proofs/Staging.fst",
+        "prover": "proofs/fstar-pin.json",
+        "supporting": [
+          "performed_in_order",
+          "all_ok_ran",
+          "caps_length",
+          "take_all"
+        ],
+        "definitions": [
+          "run",
+          "perform",
+          "all_ok"
+        ]
+      }
+    },
+    {
+      "id": "staging-model-agrees-with-shipped-code",
+      "level": "tested",
+      "phase": "Phase 1717",
+      "claim": "The extracted staging model and Handler.run produce the SAME outcome — canonical tree, state, query slots, verdict, audit trail, patches, notifications, client effects and diagnostics — over the HandlerLoopTests and DurableInterpreterTests staging cases and every plan-phase halt, each run with a scripted performer that refuses at every position of the staged list and once not at all; the two performers are asked the same calls in the same order; and production's Performed is the performer's own log of what ran.",
+      "evidence": {
+        "family": "Phase 1717 - the proved staging as oracle",
+        "host": "tests/Fuaran.Program.Server.Tests/ProofOracleTests.fs",
+        "cases": [
+          "the corpus stages something, and fails at every position of a staged list",
+          "the oracle agrees with production on the HandlerLoopTests staging cases at every failure position",
+          "the oracle agrees with production on the DurableInterpreterTests staging cases at every failure position",
+          "the oracle agrees with production on every plan-phase halt — gate, policy, lookup, slot, apply, query",
+          "the residual is the prefix that ran, in order, and the store is the entry store",
+          "GO RED: a performer that reports success for a call it did not run loses the comparison"
+        ],
+        "runner": "proofs/check.ps1 step 6, which asserts a CASE COUNT because a filter matching nothing reports success",
+        "note": "the host is in Fuaran.Program.Server.Tests, beside the two suites whose private cases it re-declares, and check.ps1 names the host project per module. The go-red case commits a performer that answers Ok for a call it did not run, on both sides: production and the model still agree — both believed it — and the check asserted to catch it is the claim against the performer's log, which is the ground truth every green case rests on"
+      }
+    },
+    {
+      "id": "performer-is-a-function-of-the-call",
+      "level": "assumed",
+      "phase": "Phase 1717",
+      "claim": "The performer is the one genuinely effectful seam and it is modelled as a pure function of the call: a token and an argument to a result. A stateful production performer is represented by the verdicts it actually returned, in the order the perform phase asked for them — the perform phase asks each staged call exactly once, in declaration order, which is a property the extraction inherits.",
+      "class": "model-bridge",
+      "evidence": {
+        "assumption": "a production performer's verdicts, read once each in declaration order, are the verdicts of some pure function of the call"
+      },
+      "mitigation": "the differential host's performer is counter-driven — a function of its history, not of the call — and is run at every failure position of every staged list including one that stages the same function twice; the extraction asks it exactly as production does, so the case the pure model cannot state is the case the differential exercises"
+    },
+    {
+      "id": "staging-witness-and-registry-assumed",
+      "level": "assumed",
+      "phase": "Phase 1717",
+      "claim": "What production does WITH a query, an op, a landing slot, a Compute stage, the gate and the argument policy reaches the model as arrows — LandQuery, Assign, IsReserved, ReservedPrefix, the op stream's Apply, runInert, the query evaluator reduced to a halt-or-land, Gate, and ServerArgumentPolicy.check with its defect described — and each is supplied to the model from production's own member. The theorems are quantified over every witness and every registry; the differential is over the extraction of everything else.",
+      "class": "model-bridge",
+      "evidence": {
+        "assumption": "the differential host's translation supplies each arrow from the production member the model names for it"
+      },
+      "mitigation": "the differential exercises every arm each arrow feeds — a query that lands and one that fails, an op that applies and one that is refused, a slot that lands and a reserved one, a Compute stage that writes, a gate that refuses, a policy that refuses, a lookup that misses — and the diagnostics are compared verbatim, so an arrow wired to the wrong member diverges on the first case that reaches it"
+    },
+    {
+      "id": "indeterminate-window-not-closed",
+      "level": "policy",
+      "phase": "Phase 1717",
+      "claim": "The indeterminate window D12 declares — a step journaled as attempted and never decided — is OUT of the theorem, as the durable journal itself is (the `durable-journal` entry above).",
+      "evidence": {
+        "document": "proofs/README.md"
+      },
+      "reason": "the theorem says what Performed reports when the performer ANSWERS, and nothing about a performer that never does; the durable interpreter CALLS Handler.run and does not fork it, so it sits above the model. The window is declared rather than closed by D12 on its own argument — the effect commits in a system this host does not own — and no proof here narrows it. Stated rather than left absent, because an unstated exclusion reads, to whoever finds it later, as a claim that failed."
+    },
+    {
+      "id": "performer-effect-not-claimed",
+      "level": "policy",
+      "phase": "Phase 1717",
+      "claim": "What a host function DOES when invoked is OUT of the theorem.",
+      "evidence": {
+        "document": "proofs/README.md"
+      },
+      "reason": "it is the host's. The theorem bounds what the handler reports and when it stops asking; it cannot bound what an invocation did, and the go-red case exists to show that a performer's report and its act are two different things the differential must check against each other."
     }
   ]
 }

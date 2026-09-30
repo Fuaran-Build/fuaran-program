@@ -19,6 +19,7 @@
     <Compile Include="DurableInterpreterTests.fs" />
     <Compile Include="OperatorControlTests.fs" />
     <Compile Include="DenialDetectorTests.fs" />
+    <Compile Include="ProofOracleTests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
   <ItemGroup>
@@ -26,6 +27,9 @@
     <!-- The tier-parity leg reads the SAME fixture files the other placements
          read, through the same loader. A separate corpus would prove nothing. -->
     <ProjectReference Include="..\Fuaran.Program.Parity\Fuaran.Program.Parity.fsproj" />
+    <!-- Phase 1717 — the extracted model of two-phase staging, run beside
+         production by ProofOracleTests.fs. -->
+    <ProjectReference Include="..\..\proofs\oracle\Fuaran.Program.Proofs.Oracle.fsproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Expecto" />

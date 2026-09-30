@@ -57,5 +57,10 @@
              the driver's budget gate. Independent of BoundedFold above; the
              order here is the order the modules landed in. -->
         <Compile Include="Budget.fs" />
+        <!-- GENERATED from ../Staging.fst — do not edit. Phase 1717, two-phase
+             staging: the handler's plan and perform phases with the performer
+             abstract. Independent of the two above; the order here is the
+             order the modules landed in. -->
+        <Compile Include="Staging.fs" />
     </ItemGroup>
 </Project>

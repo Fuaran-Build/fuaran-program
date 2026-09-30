@@ -2,7 +2,8 @@
 <#
 .SYNOPSIS
     The whole proof leg for every model under proofs/ — Phase 1715's
-    bounded-fold theorem.
+    bounded-fold theorem, Phase 1716's budget theorem and Phase 1717's
+    staging theorem.
 
 .DESCRIPTION
     Self-contained and runnable from the repository root:
@@ -29,12 +30,16 @@
          longer compiles is caught here rather than in someone else's
          gate.
       6. RUN each module's differential host — an Expecto list inside
-         `Fuaran.Program.Parity.Tests` that runs the extracted model
-         beside production and requires them to agree. Production at the
-         UI witness is the UI adapter package (`src/Fuaran.Program.UI`),
-         so the host names below follow that code, not the core's. Skippable with
+         the test project the module names (`Fuaran.Program.Parity.Tests`
+         for the fold and the budget, `Fuaran.Program.Server.Tests` for
+         staging) that runs the extracted model beside production and
+         requires them to agree. Production at the UI witness is the UI
+         adapter package (`src/Fuaran.Program.UI`), so the host names
+         below follow that code, not the core's. Skippable with
          `-SkipHost`, because it needs the solution built and the proof
-         half does not.
+         half does not — and the server host needs the conformance
+         corpus the server suite loads at start-up (`FUARAN_PROGRAM_SPEC`
+         or the sibling clone), exactly as `run.ps1` does.
 
     Two things about reproducibility are worth knowing before reading
     the flags.
@@ -58,9 +63,9 @@
     the only thing that does.
 
     **Adding a module** is one entry in `$modules`: its source, its
-    committed extraction, the Expecto list that is its differential
-    host, and the case-count floor that list declares. Nothing else in
-    this file names a module.
+    committed extraction, the test project and Expecto list that are its
+    differential host, and the case-count floor that list declares.
+    Nothing else in this file names a module.
 
 .PARAMETER Runs
     Repeat the check that many times from a cold cache, with
@@ -97,14 +102,18 @@ $pin = Get-Content (Join-Path $PSScriptRoot "fstar-pin.json") -Raw | ConvertFrom
 # with — a filter that guesses the separator wrong matches nothing and
 # reports success, so the shape that cannot guess wrong is the one used
 # here. `HostMinCases` is the number of cases that list declares,
-# asserted after the run for the reason step 6 gives. A later proof
-# phase APPENDS its entry here.
+# asserted after the run for the reason step 6 gives. `HostProject` is
+# the test project (under tests/) that holds the list — a model's host
+# lives beside the suites whose cases it re-declares, so it is per
+# module rather than one project for all. A later proof phase APPENDS
+# its entry here.
 
 $modules = @(
     @{
         Name         = "BoundedFold"
         Source       = "BoundedFold.fst"
         Oracle       = "oracle/BoundedFold.fs"
+        HostProject  = "Fuaran.Program.Parity.Tests"
         HostList     = "Phase 1715 - the proved bounded fold as oracle"
         HostMinCases = 5
         HostSubject  = "the driver-semantics family and an arm-complete action corpus, through the UI adapter (src/Fuaran.Program.UI) and a non-UI test witness"
@@ -113,9 +122,19 @@ $modules = @(
         Name         = "Budget"
         Source       = "Budget.fst"
         Oracle       = "oracle/Budget.fs"
+        HostProject  = "Fuaran.Program.Parity.Tests"
         HostList     = "Phase 1716 - the proved budget as oracle"
         HostMinCases = 6
         HostSubject  = "the bounded driver's own trees, generated trees straddling the ceiling, and the G2 gate of the UI adapter's BoundedDriver (src/Fuaran.Program.UI)"
+    }
+    @{
+        Name         = "Staging"
+        Source       = "Staging.fst"
+        Oracle       = "oracle/Staging.fs"
+        HostProject  = "Fuaran.Program.Server.Tests"
+        HostList     = "Phase 1717 - the proved staging as oracle"
+        HostMinCases = 6
+        HostSubject  = "the HandlerLoopTests and DurableInterpreterTests staging cases and every plan-phase halt, each with a scripted performer failing at every position of the staged list, against Handler.run through the UI witness (src/Fuaran.Program.Server.UI)"
     }
 )
 
@@ -308,15 +327,21 @@ if ($SkipHost) {
 else {
     Write-Step "6/6  Running the differential hosts"
 
-    $testProject = Join-Path $repoRoot "tests/Fuaran.Program.Parity.Tests/Fuaran.Program.Parity.Tests.fsproj"
-    & dotnet build $testProject --nologo -v q
-    if ($LASTEXITCODE -ne 0) { Fail "Fuaran.Program.Parity.Tests did not build (exit $LASTEXITCODE)." }
-
-    $dll = Join-Path $repoRoot "tests/Fuaran.Program.Parity.Tests/bin/Debug/net10.0/Fuaran.Program.Parity.Tests.dll"
-    if (-not (Test-Path $dll)) { Fail "no test assembly at $dll." }
+    # One build per DISTINCT host project, before any host runs — so a
+    # host project that does not build fails the leg before a module's
+    # cases are read as a count, and so a project two modules share is
+    # built once.
+    foreach ($hostProject in ($modules | ForEach-Object { $_.HostProject } | Select-Object -Unique)) {
+        $testProject = Join-Path $repoRoot "tests/$hostProject/$hostProject.fsproj"
+        & dotnet build $testProject --nologo -v q
+        if ($LASTEXITCODE -ne 0) { Fail "$hostProject did not build (exit $LASTEXITCODE)." }
+    }
 
     foreach ($module in $modules) {
         Write-Host "    --- $($module.Name) over $($module.HostSubject)"
+
+        $dll = Join-Path $repoRoot "tests/$($module.HostProject)/bin/Debug/net10.0/$($module.HostProject).dll"
+        if (-not (Test-Path $dll)) { Fail "no test assembly at $dll." }
 
         $output = & dotnet $dll --filter $module.HostList 2>&1
         $exit = $LASTEXITCODE
