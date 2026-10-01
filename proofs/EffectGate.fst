@@ -210,7 +210,7 @@ let sufficient_for (gate: string -> bool) (sigma: policy_spec) : prop =
 /// answered. Mirrors `run`'s `final` accumulator; never materialised.
 [@@ noextract_to "FSharp"]
 let ghost_trace (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
-                (w: witness t b v o q a eff d) (reg: registry v o q p) (node_id: string)
+                (w: witness t b v o q a eff d) (reg: registry t v o q p) (node_id: string)
                 (stages: list (stage a v o q)) (s: store t b)
   : list string =
   let planned = plan w reg node_id stages (start s) in
@@ -323,26 +323,37 @@ let rec admitted_sigma (gate: string -> bool) (sigma: policy_spec) (tr: list str
    The plan phase under Π — what it records is admitted.
    ─────────────────────────────────────────────────────────────────── *)
 
-/// Staging ops under an admitted capability keeps the staged capabilities
-/// admitted: every call `stage_ops` prepends carries that one capability
-/// (Phase 1967).
-let rec stage_ops_admitted (#v: Type0) (#o: Type0) (#p: Type0)
-                           (gate: string -> bool) (cap: string) (stage: o -> (p & v))
-                           (ops: list o) (staged: list (staged_call v p))
+/// Planning ops under an admitted capability keeps the staged
+/// capabilities admitted: every call `plan_ops` prepends carries that one
+/// capability (Phase 1967), a guard prepends none and an edit one, each
+/// staged from the state as of it (Phase 1974).
+let rec plan_ops_admitted (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                          (w: witness t b v o q a eff d) (gate: string -> bool) (cap: string)
+                          (stage: opt (t -> o -> (p & v)))
+                          (ops: list o) (tree: t) (staged: list (staged_call v p))
   : Lemma (requires gate cap /\ admitted gate (caps staged))
-          (ensures admitted gate (caps (stage_ops cap stage ops staged)))
+          (ensures
+            (let r = plan_ops w cap stage ops tree staged in
+             ROk? r ==> admitted gate (caps (snd (ROk?.value r)))))
           (decreases ops) =
   match ops with
-  | [] -> ()
+  | [] -> plan_ops_nil w cap stage tree staged
   | op :: rest ->
-    let (tok, args) = stage op in
-    stage_ops_admitted gate cap stage rest
-      ({ sc_capability = cap; sc_performer = tok; sc_args = args; sc_into = ONone } :: staged)
+    plan_ops_cons w cap stage op rest tree staged;
+    (match w.w_apply op tree with
+     | RErr _ -> ()
+     | ROk tree' ->
+       (match w.w_op_view op with
+        | ORequire -> plan_ops_admitted w gate cap stage rest tree staged
+        | OEdit ->
+          (match stage with
+           | ONone -> plan_ops_admitted w gate cap stage rest tree' staged
+           | OSome f -> plan_ops_admitted w gate cap stage rest tree' (staged_from cap f tree' op :: staged))))
 
 /// One stage keeps `ac_performed` and the staged capabilities admitted:
 /// `plan_effect` extends either only after `r_gate` answered true.
 let plan_stage_admitted (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
-                        (w: witness t b v o q a eff d) (reg: registry v o q p) (node_id: string)
+                        (w: witness t b v o q a eff d) (reg: registry t v o q p) (node_id: string)
                         (s: stage a v o q) (acc: accumulator t b v o eff d p)
   : Lemma
       (requires admitted reg.r_gate acc.ac_performed /\ admitted reg.r_gate (caps acc.ac_staged))
@@ -364,21 +375,19 @@ let plan_stage_admitted (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Typ
              | RErr _ -> ()
              | ROk _ -> ())
           | ApplyOps ops ->
-            (match apply_all w ops acc.ac_store.st_tree with
-             | RErr _ -> ()
-             | ROk _ ->
-               (match reg.r_op_perform with
-                | ONone -> ()
-                | OSome stage -> stage_ops_admitted reg.r_gate cap stage ops acc.ac_staged))
+            plan_ops_admitted w reg.r_gate cap reg.r_op_perform ops acc.ac_store.st_tree acc.ac_staged
           | HostCall fn _ into ->
             (match reg.r_lookup fn with
              | ONone -> ()
-             | OSome _ -> if reserved_slot w into then () else ())
+             | OSome _ ->
+               (match slot_refused w into with
+                | OSome _ -> ()
+                | ONone -> ()))
           | EmitPatch _ -> ()
           | Notify _ _ -> ()))
 
 let rec plan_admitted (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
-                      (w: witness t b v o q a eff d) (reg: registry v o q p) (node_id: string)
+                      (w: witness t b v o q a eff d) (reg: registry t v o q p) (node_id: string)
                       (stages: list (stage a v o q)) (acc: accumulator t b v o eff d p)
   : Lemma
       (requires admitted reg.r_gate acc.ac_performed /\ admitted reg.r_gate (caps acc.ac_staged))
@@ -416,7 +425,7 @@ let rec caps_rev (#v: Type0) (#p: Type0) (xs: list (staged_call v p))
     caps_app (rev rest) [c]
 
 let rec perform_admitted (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
-                         (w: witness t b v o q a eff d) (reg: registry v o q p)
+                         (w: witness t b v o q a eff d) (reg: registry t v o q p)
                          (calls: list (staged_call v p)) (acc: accumulator t b v o eff d p)
   : Lemma
       (requires admitted reg.r_gate (caps calls) /\ admitted reg.r_gate acc.ac_externally)
@@ -443,7 +452,7 @@ let rec perform_admitted (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Ty
 /// through `Assign`, and nothing else reaches them: a result the
 /// performer did not answer `ROk` is never assigned.
 let rec perform_store (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
-                      (w: witness t b v o q a eff d) (reg: registry v o q p)
+                      (w: witness t b v o q a eff d) (reg: registry t v o q p)
                       (calls: list (staged_call v p)) (acc: accumulator t b v o eff d p)
   : Lemma
       (ensures
@@ -471,7 +480,7 @@ let rec perform_store (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0
 /// The diagnostics the perform phase appends: exactly the first refusal
 /// as `PerformFailed`, or nothing.
 let rec perform_diag (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
-                     (w: witness t b v o q a eff d) (reg: registry v o q p)
+                     (w: witness t b v o q a eff d) (reg: registry t v o q p)
                      (calls: list (staged_call v p)) (acc: accumulator t b v o eff d p)
   : Lemma
       (ensures
@@ -553,7 +562,7 @@ let rec violation_refuses (#v: Type0) (#p: Type0) (ct: p -> opt (contract v)) (p
    ─────────────────────────────────────────────────────────────────── *)
 
 let rec plan_halted (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
-                    (w: witness t b v o q a eff d) (reg: registry v o q p) (node_id: string)
+                    (w: witness t b v o q a eff d) (reg: registry t v o q p) (node_id: string)
                     (stages: list (stage a v o q)) (acc: accumulator t b v o eff d p)
   : Lemma (requires acc.ac_halted) (ensures plan w reg node_id stages acc == acc) (decreases stages) =
   match stages with
@@ -561,7 +570,7 @@ let rec plan_halted (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) 
   | _ :: rest -> plan_halted w reg node_id rest acc
 
 let rec plan_app (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
-                 (w: witness t b v o q a eff d) (reg: registry v o q p) (node_id: string)
+                 (w: witness t b v o q a eff d) (reg: registry t v o q p) (node_id: string)
                  (xs: list (stage a v o q)) (ys: list (stage a v o q)) (acc: accumulator t b v o eff d p)
   : Lemma (ensures plan w reg node_id (app xs ys) acc == plan w reg node_id ys (plan w reg node_id xs acc))
           (decreases xs) =
@@ -584,7 +593,7 @@ let rec plan_app (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a
 /// performer" as an equation.
 let gate_before_perform (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
                         (w: witness t b v o q a eff d) (w': witness t b v o q a eff d)
-                        (reg: registry v o q p)
+                        (reg: registry t v o q p)
                         (lookup': string -> opt p) (perf': p -> v -> res v) (policy': server_effect v o q -> opt string)
                         (e: server_effect v o q) (acc: accumulator t b v o eff d p)
   : Lemma
@@ -612,7 +621,7 @@ let gate_before_perform (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Typ
 /// would have answered: nothing after the refusal is planned, and no
 /// performer is reached.
 let gate_refusal_halts_run (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
-                           (w: witness t b v o q a eff d) (reg: registry v o q p) (perf': p -> v -> res v) (node_id: string)
+                           (w: witness t b v o q a eff d) (reg: registry t v o q p) (perf': p -> v -> res v) (node_id: string)
                            (prefix: list (stage a v o q)) (e: server_effect v o q)
                            (rest: list (stage a v o q)) (rest': list (stage a v o q)) (s: store t b)
   : Lemma
@@ -649,7 +658,7 @@ let gate_refusal_halts_run (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: 
 /// every entry store: the performer is an abstract parameter here, and
 /// nothing it answers can produce a capability the gate did not admit.
 let policy_sufficient (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
-                      (w: witness t b v o q a eff d) (reg: registry v o q p) (node_id: string)
+                      (w: witness t b v o q a eff d) (reg: registry t v o q p) (node_id: string)
                       (stages: list (stage a v o q)) (s: store t b) (sigma: policy_spec)
   : Lemma
       (requires sufficient_for reg.r_gate sigma)
@@ -689,7 +698,7 @@ let policy_sufficient (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0
 /// NAME: a typed refusal, carrying the host's own vocabulary and never
 /// the value.
 let return_contract (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
-                    (w: witness t b v o q a eff d) (reg: registry v o q p) (ct: p -> opt (contract v))
+                    (w: witness t b v o q a eff d) (reg: registry t v o q p) (ct: p -> opt (contract v))
                     (node_id: string) (stages: list (stage a v o q)) (s: store t b)
   : Lemma
       (requires not (plan w reg node_id stages (start s)).ac_halted)

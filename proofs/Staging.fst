@@ -45,6 +45,22 @@
 /// and what it stages, never what it answers. Without one (`ONone`, the
 /// UI tier) the arm is exactly what it was.
 ///
+/// Since Phase 1974 (the third witness, DECISIONS.md D20) the `ApplyOps`
+/// arm reads two things more of the STATE axis, and both are clauses of
+/// that one arm (`plan_ops`). The op witness VIEWS each op (`w_op_view`):
+/// an op viewed as `ORequire` is the op-channel GUARD — resolved through
+/// its own apply against the state as of that point in the plan, holding
+/// without moving the state and refusing with its reason verbatim, and
+/// never staged (F-GUARD). And a registered op performer stages each
+/// edit FROM THE STATE AS OF THAT OP — the planned state with the op
+/// applied — so the performer is handed the state the plan produced
+/// rather than re-deriving it (F-PERFORM). The landing-slot check reads
+/// one arrow, `w_slot_refused`, so a composition with no binding channel
+/// (no dispatch axis) refuses every slot through the clause a reserved
+/// slot is refused through. Every earlier theorem is restated over the
+/// arm as it now is and keeps its statement; `guard_holds_moves_nothing`,
+/// `guard_refusal_halts` and `performer_handed_the_plan` are new.
+///
 /// DECISIONS.md D8 states the law in prose: nothing external runs in the
 /// plan phase; an uncommitted outcome equals the entry state EXCEPT that
 /// `Performed` names exactly the prefix of staged host calls that ran;
@@ -63,7 +79,8 @@
 /// records of arrows:
 ///
 ///   * the `witness` — the store witness's `LandQuery` / `Assign` /
-///     `IsReserved` / `ReservedPrefix`, the op witness's `Apply`, the
+///     `IsReserved` / `ReservedPrefix` (the last two as one slot-refusal
+///     arrow since Phase 1974), the state witness's `Apply` and `View`, the
 ///     shared fold's `runInert` (Phase 1715's subject, so opaque here),
 ///     and the query evaluator. The evaluator and `LandQuery` arrive as
 ///     ONE arrow, `w_query`, because one opaque composed with another is
@@ -114,6 +131,20 @@
 /// `plan_halt_performs_nothing` is the supporting clause: a handler that
 /// halted while planning reports nothing performed at all, because
 /// nothing reached the perform phase.
+///
+/// Beside them (Phase 1974):
+///
+///   * `guard_holds_moves_nothing` — an op-channel guard that holds is
+///     invisible to the plan: the ops after it are planned against the
+///     SAME state, and nothing is staged for it.
+///   * `guard_refusal_halts` — an op-channel guard that refuses refuses
+///     the whole op sequence with its own reason, verbatim, whatever
+///     follows it; the effect halts on that reason and stages nothing
+///     (`plan_halt_performs_nothing` lifts it to the handler).
+///   * `performer_handed_the_plan` — under a registered op performer, the
+///     last staged edit of a planned op sequence was staged from the
+///     sequence's FINAL planned state: the performer is handed what the
+///     plan produced and needs to fold nothing itself.
 
 module Staging
 
@@ -212,28 +243,43 @@ type bounded_outcome (b: Type0) (eff: Type0) (d: Type0) = {
   bo_diagnostics: list d;
 }
 
+/// F#: `OpView` (Phase 1974) — what one op IS to the handler: an edit
+/// that moves the state, or the op-channel guard.
+type op_view =
+  | OEdit : op_view
+  | ORequire : op_view
+
 /// F#: the members of `ProgramWitness` the handler reads, plus the
-/// query evaluator it calls.
+/// query evaluator it calls. Since Phase 1974 they sit on two axes:
+/// `w_apply` and `w_op_view` on the STATE axis; `w_compute`, `w_query`,
+/// `w_assign` and `w_slot_refused` on the DISPATCH axis, which a
+/// composition with no dispatch axis fills with its refusals (proofs/
+/// README.md, "The three axes").
 noeq type witness (t: Type0) (b: Type0) (v: Type0) (o: Type0) (q: Type0) (a: Type0) (eff: Type0) (d: Type0) = {
   /// `BoundedActions.runInert witness nodeId action bindings` (Phase 1715).
   w_compute: string -> a -> b -> bounded_outcome b eff d;
   /// `DataFrame.evalSource` / `evalPipelineWith`, then `StoreWitness.LandQuery`
   /// on success; on failure the error's discriminator (`evalErrorKind`).
   w_query: string -> q -> b -> res b;
-  /// `OpWitness.Stream.Apply`, one op against the tree.
+  /// `StateWitness.Stream.Apply`, one op against the tree.
   w_apply: o -> t -> res t;
+  /// `StateWitness.View` (Phase 1974): an op viewed `ORequire` is a
+  /// guard, resolved through `w_apply` and never staged.
+  w_op_view: o -> op_view;
   /// `StoreWitness.Assign`.
   w_assign: string -> v -> b -> b;
-  /// `StoreWitness.IsReserved`.
-  w_is_reserved: string -> bool;
-  /// `StoreWitness.ReservedPrefix`, for the refusal's text.
-  w_reserved_prefix: string;
+  /// The landing-slot refusal: `OSome reason` refuses the slot while
+  /// planning. With a dispatch axis it is `StoreWitness.IsReserved`
+  /// rendered with `ReservedPrefix` into the refusal's text; without one
+  /// every slot is refused, because there is no binding channel to land
+  /// in (Phase 1974).
+  w_slot_refused: string -> opt string;
 }
 
 /// F#: `ServerEffectRegistry`, with `HostFunctions` split into the LOOKUP
 /// (name to an opaque performer token) and the BEHAVIOUR (token and
 /// argument to a result) — the split the header explains.
-noeq type registry (v: Type0) (o: Type0) (q: Type0) (p: Type0) = {
+noeq type registry (t: Type0) (v: Type0) (o: Type0) (q: Type0) (p: Type0) = {
   /// `Gate`.
   r_gate: string -> bool;
   /// `ServerArgumentPolicy.check`, with its defect already `describe`d:
@@ -255,8 +301,10 @@ noeq type registry (v: Type0) (o: Type0) (q: Type0) (p: Type0) = {
   /// replaced. A registered op performer makes `ApplyOps` a STAGED arm:
   /// its ops are applied in memory while planning, as always, and
   /// performed in the perform phase, one staged call per op in plan
-  /// order, exactly as host calls are.
-  r_op_perform: opt (o -> (p & v));
+  /// order, exactly as host calls are. Since Phase 1974 it stages FROM
+  /// the state as of the op — the planned state with that op applied —
+  /// and the op (F-PERFORM): production's `fun _ -> perform state op`.
+  r_op_perform: opt (t -> o -> (p & v));
 }
 
 (* ───────────────────────────────────────────────────────────────────
@@ -309,17 +357,44 @@ let deny (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#eff: Type0) (#d: Type
   : accumulator t b v o eff d p =
   { acc with ac_halted = true; ac_diagnostics = Denied why :: acc.ac_diagnostics }
 
-/// F#: `Handler.runEffect`'s `ApplyOps` fold — `List.fold` with
-/// `Result.bind` over `Apply`, short-circuiting at the first refusal.
-let rec apply_all (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
-                  (w: witness t b v o q a eff d) (ops: list o) (tree: t)
-  : Tot (res t) (decreases ops) =
+/// F#: `Handler.stagedOp` — one edit staged under a registered op
+/// performer: the arm's capability, the token and argument the performer
+/// answered for the state AS OF THE OP and the op, and no landing slot —
+/// an op lands nothing (Phase 1974, F-PERFORM).
+let staged_from (#t: Type0) (#v: Type0) (#o: Type0) (#p: Type0)
+                (cap: string) (f: t -> o -> (p & v)) (tree: t) (op: o)
+  : staged_call v p =
+  let (tok, args) = f tree op in
+  { sc_capability = cap; sc_performer = tok; sc_args = args; sc_into = ONone }
+
+/// F#: `Handler.planOps` — the `ApplyOps` arm's fold over its ops,
+/// short-circuiting at the first refusal. Each op is resolved through
+/// `w_apply` against the state as the ops before it left it. An op the
+/// state witness views as `ORequire` is the op-channel GUARD (Phase
+/// 1974, F-GUARD): it holds without moving the state and is never
+/// staged, and its refusal is the sequence's. Every other op is an EDIT:
+/// the state moves, and under a registered op performer (`OSome stage`)
+/// it is staged from the state AS OF THAT OP — the state it produced —
+/// and the op (F-PERFORM), prepended onto the reversed staged list
+/// exactly as a host call is, so the perform phase meets the ops in plan
+/// order. With no performer (`ONone`) nothing is staged and the arm is
+/// the in-memory apply it always was.
+let rec plan_ops (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                 (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
+                 (ops: list o) (tree: t) (staged: list (staged_call v p))
+  : Tot (res (t & list (staged_call v p))) (decreases ops) =
   match ops with
-  | [] -> ROk tree
+  | [] -> ROk (tree, staged)
   | op :: rest ->
     (match w.w_apply op tree with
      | RErr code -> RErr code
-     | ROk tree' -> apply_all w rest tree')
+     | ROk tree' ->
+       (match w.w_op_view op with
+        | ORequire -> plan_ops w cap stage rest tree staged
+        | OEdit ->
+          (match stage with
+           | ONone -> plan_ops w cap stage rest tree' staged
+           | OSome f -> plan_ops w cap stage rest tree' (staged_from cap f tree' op :: staged))))
 
 /// F#: `List.map ServerDiagnostic.Bounded`.
 let rec map_bounded (#d: Type0) (ds: list d) : Tot (list (diagnostic d)) (decreases ds) =
@@ -327,30 +402,14 @@ let rec map_bounded (#d: Type0) (ds: list d) : Tot (list (diagnostic d)) (decrea
   | [] -> []
   | x :: rest -> Bounded x :: map_bounded rest
 
-/// F#: the `Some key when witness.Store.IsReserved key` guard on the
-/// `HostCall` arm — a landing slot under the host-reserved namespace.
-let reserved_slot (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
-                  (w: witness t b v o q a eff d) (into: opt string) : bool =
+/// F#: the landing-slot check on the `HostCall` arm — a slot under the
+/// host-reserved namespace, or any slot at all when the composition has
+/// no binding channel (Phase 1974). `OSome reason` refuses it.
+let slot_refused (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
+                 (w: witness t b v o q a eff d) (into: opt string) : opt string =
   match into with
-  | OSome key -> w.w_is_reserved key
-  | ONone -> false
-
-/// F#: the `List.fold` in `Handler.runEffect`'s `ApplyOps` arm that
-/// STAGES each op under a registered op performer (Phase 1967): one
-/// staged call per op, carrying the arm's capability, the token and
-/// argument the performer answered for the op, and no landing slot —
-/// an op lands nothing. Prepended in op order onto the reversed staged
-/// list, exactly as a host call is, so the perform phase meets them in
-/// plan order.
-let rec stage_ops (#v: Type0) (#o: Type0) (#p: Type0)
-                  (cap: string) (stage: o -> (p & v)) (ops: list o) (staged: list (staged_call v p))
-  : Tot (list (staged_call v p)) (decreases ops) =
-  match ops with
-  | [] -> staged
-  | op :: rest ->
-    let (tok, args) = stage op in
-    stage_ops cap stage rest
-      ({ sc_capability = cap; sc_performer = tok; sc_args = args; sc_into = ONone } :: staged)
+  | OSome key -> w.w_slot_refused key
+  | ONone -> ONone
 
 (* ───────────────────────────────────────────────────────────────────
    THE PLAN PHASE — `Handler.runEffect`, `Handler.runStage`, and the
@@ -363,7 +422,7 @@ let rec stage_ops (#v: Type0) (#o: Type0) (#p: Type0)
 /// Four arms complete here; `HostCall` is STAGED: the token is captured,
 /// nothing is invoked, and `ac_performed` is deliberately not extended.
 let plan_effect (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
-                (w: witness t b v o q a eff d) (reg: registry v o q p)
+                (w: witness t b v o q a eff d) (reg: registry t v o q p)
                 (e: server_effect v o q) (acc: accumulator t b v o eff d p)
   : accumulator t b v o eff d p =
   let cap = capability e in
@@ -381,36 +440,34 @@ let plan_effect (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a:
           | ROk bindings ->
             { performed with ac_store = { performed.ac_store with st_bindings = bindings } })
        | ApplyOps ops ->
-         (match apply_all w ops performed.ac_store.st_tree with
+         (match plan_ops w cap reg.r_op_perform ops performed.ac_store.st_tree acc.ac_staged with
           | RErr code -> halt cap code acc
-          | ROk tree ->
+          | ROk (tree, staged) ->
             (match reg.r_op_perform with
              // In memory: the apply IS the effect, and it is performed
              // here, in the plan phase — the shape every placement had
-             // before Phase 1967, and the UI tier's still.
+             // before Phase 1967, and the UI tier's still. `plan_ops`
+             // staged nothing (`plan_ops_unstaged`).
              | ONone -> { performed with ac_store = { performed.ac_store with st_tree = tree } }
              // Performed: the apply is a PLAN. The tree moves — a later
              // stage reads the planned tree — but the capability is not
-             // recorded as performed; the staged calls are, one per op,
-             // when the perform phase runs them.
-             | OSome stage ->
+             // recorded as performed; the staged calls are, one per
+             // edit, when the perform phase runs them.
+             | OSome _ ->
                { acc with
                  ac_store = { acc.ac_store with st_tree = tree };
-                 ac_staged = stage_ops cap stage ops acc.ac_staged }))
+                 ac_staged = staged }))
        | HostCall fn args into ->
          (match reg.r_lookup fn with
           | ONone -> deny (Unregistered cap) acc
           | OSome performer ->
-            if reserved_slot w into then
-              halt cap
-                (strcat "landing slot is under the host-reserved '"
-                  (strcat w.w_reserved_prefix "' namespace"))
-                acc
-            else
+            (match slot_refused w into with
+             | OSome reason -> halt cap reason acc
+             | ONone ->
               { acc with
                 ac_staged =
                   { sc_capability = cap; sc_performer = performer; sc_args = args; sc_into = into }
-                  :: acc.ac_staged })
+                  :: acc.ac_staged }))
        | EmitPatch ops ->
          { performed with ac_patches = app (rev ops) performed.ac_patches }
        | Notify channel payload ->
@@ -419,7 +476,7 @@ let plan_effect (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a:
 /// F#: `Handler.runStage`. The `Compute` arm is the shared fold with the
 /// inert arm — opaque here, Phase 1715's subject.
 let plan_stage (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
-               (w: witness t b v o q a eff d) (reg: registry v o q p) (node_id: string)
+               (w: witness t b v o q a eff d) (reg: registry t v o q p) (node_id: string)
                (s: stage a v o q) (acc: accumulator t b v o eff d p)
   : accumulator t b v o eff d p =
   match s with
@@ -434,7 +491,7 @@ let plan_stage (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: 
 /// F#: the `List.fold` in `Handler.run` — every stage in order, each
 /// skipped once the accumulator has halted.
 let rec plan (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
-             (w: witness t b v o q a eff d) (reg: registry v o q p) (node_id: string)
+             (w: witness t b v o q a eff d) (reg: registry t v o q p) (node_id: string)
              (stages: list (stage a v o q)) (acc: accumulator t b v o eff d p)
   : Tot (accumulator t b v o eff d p) (decreases stages) =
   match stages with
@@ -452,7 +509,7 @@ let rec plan (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Ty
 /// asked; a success is recorded in `ac_externally` and its result landed
 /// in the declared slot.
 let rec perform (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
-                (w: witness t b v o q a eff d) (reg: registry v o q p)
+                (w: witness t b v o q a eff d) (reg: registry t v o q p)
                 (staged: list (staged_call v p)) (acc: accumulator t b v o eff d p)
   : Tot (accumulator t b v o eff d p) (decreases staged) =
   match staged with
@@ -501,7 +558,7 @@ let start (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#eff: Type0) (#d: Typ
 /// its predecessors run and reporting `[]` there would be the one lie
 /// this design exists to avoid.
 let run (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
-        (w: witness t b v o q a eff d) (reg: registry v o q p) (node_id: string)
+        (w: witness t b v o q a eff d) (reg: registry t v o q p) (node_id: string)
         (stages: list (stage a v o q)) (s: store t b)
   : outcome t b v o eff d =
   let planned = plan w reg node_id stages (start s) in
@@ -652,7 +709,7 @@ let rec all_ok_ran (#v: Type0) (#p: Type0) (perf: p -> v -> res v) (calls: list 
 /// One stage, under two registries that differ only in the performers'
 /// behaviour, plans identically — and leaves `ac_externally` alone.
 let plan_stage_pure (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
-                    (w: witness t b v o q a eff d) (reg: registry v o q p) (perf': p -> v -> res v)
+                    (w: witness t b v o q a eff d) (reg: registry t v o q p) (perf': p -> v -> res v)
                     (node_id: string) (s: stage a v o q) (acc: accumulator t b v o eff d p)
   : Lemma
       (ensures
@@ -673,7 +730,7 @@ let plan_stage_pure (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) 
              | RErr _ -> ()
              | ROk _ -> ())
           | ApplyOps ops ->
-            (match apply_all w ops acc.ac_store.st_tree with
+            (match plan_ops w cap reg.r_op_perform ops acc.ac_store.st_tree acc.ac_staged with
              | RErr _ -> ()
              | ROk _ ->
                (match reg.r_op_perform with
@@ -682,7 +739,10 @@ let plan_stage_pure (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) 
           | HostCall fn _ into ->
             (match reg.r_lookup fn with
              | ONone -> ()
-             | OSome _ -> if reserved_slot w into then () else ())
+             | OSome _ ->
+               (match slot_refused w into with
+                | OSome _ -> ()
+                | ONone -> ()))
           | EmitPatch _ -> ()
           | Notify _ _ -> ()))
 
@@ -696,7 +756,7 @@ let plan_stage_pure (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) 
 /// differently. And `ac_externally` — the record of what ran outside —
 /// is untouched by planning, which is what `run` reads it as.
 let rec plan_pure (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
-                  (w: witness t b v o q a eff d) (reg: registry v o q p) (perf': p -> v -> res v)
+                  (w: witness t b v o q a eff d) (reg: registry t v o q p) (perf': p -> v -> res v)
                   (node_id: string) (stages: list (stage a v o q)) (acc: accumulator t b v o eff d p)
   : Lemma
       (ensures
@@ -720,7 +780,7 @@ let rec plan_pure (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#
 /// in declaration order, appended to whatever was recorded before; and
 /// it touches nothing else the outcome reads.
 let rec perform_spec (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
-                     (w: witness t b v o q a eff d) (reg: registry v o q p)
+                     (w: witness t b v o q a eff d) (reg: registry t v o q p)
                      (calls: list (staged_call v p)) (acc: accumulator t b v o eff d p)
   : Lemma
       (ensures
@@ -761,7 +821,7 @@ let rec perform_spec (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0)
 /// D8's third clause, "`Performed` is execution order", and the general
 /// form the two corollaries below read off.
 let performed_in_order (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
-                       (w: witness t b v o q a eff d) (reg: registry v o q p) (node_id: string)
+                       (w: witness t b v o q a eff d) (reg: registry t v o q p) (node_id: string)
                        (stages: list (stage a v o q)) (s: store t b)
   : Lemma
       (requires not (plan w reg node_id stages (start s)).ac_halted)
@@ -787,7 +847,7 @@ let performed_in_order (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type
 /// first `k` staged capabilities, in declaration order. Not "at most a
 /// prefix": the prefix, and which one.
 let residual_is_prefix (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
-                       (w: witness t b v o q a eff d) (reg: registry v o q p) (node_id: string)
+                       (w: witness t b v o q a eff d) (reg: registry t v o q p) (node_id: string)
                        (stages: list (stage a v o q)) (s: store t b) (k: nat)
   : Lemma
       (requires
@@ -814,7 +874,7 @@ let residual_is_prefix (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type
 /// stage order followed by the WHOLE staged list in declaration order:
 /// the residual, on success, is everything.
 let commit_is_total_prefix (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
-                           (w: witness t b v o q a eff d) (reg: registry v o q p) (node_id: string)
+                           (w: witness t b v o q a eff d) (reg: registry t v o q p) (node_id: string)
                            (stages: list (stage a v o q)) (s: store t b)
   : Lemma
       (requires
@@ -837,7 +897,7 @@ let commit_is_total_prefix (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: 
 /// back to the entry store and reports nothing performed, because
 /// nothing reached the perform phase — under every performer at once.
 let plan_halt_performs_nothing (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
-                               (w: witness t b v o q a eff d) (reg: registry v o q p) (node_id: string)
+                               (w: witness t b v o q a eff d) (reg: registry t v o q p) (node_id: string)
                                (stages: list (stage a v o q)) (s: store t b)
   : Lemma
       (requires (plan w reg node_id stages (start s)).ac_halted)
@@ -850,3 +910,222 @@ let plan_halt_performs_nothing (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (
          out.oc_notifications == [] /\
          out.oc_client_effects == [])) =
   plan_pure w reg reg.r_perf node_id stages (start s)
+
+(* ───────────────────────────────────────────────────────────────────
+   THE OP-CHANNEL GUARD AND THE PERFORMER'S STATE (Phase 1974)
+
+   The third witness's two findings, both on the STATE axis and both
+   clauses of the one `ApplyOps` arm (`plan_ops`). Stated over the op
+   sequence an `ApplyOps` effect carries, at every position: a guard
+   anywhere in it, and the last edit of it.
+   ─────────────────────────────────────────────────────────────────── *)
+
+/// Planning `ys` from where an earlier `plan_ops` left the state and the
+/// staged list — or that earlier refusal, unchanged. Ghost.
+[@@ noextract_to "FSharp"]
+let plan_after (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+               (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
+               (r: res (t & list (staged_call v p))) (ys: list o)
+  : res (t & list (staged_call v p)) =
+  match r with
+  | RErr code -> RErr code
+  | ROk (tree, staged) -> plan_ops w cap stage ys tree staged
+
+/// One step of `plan_ops`, stated as two equations. The recursive lemmas
+/// below CALL these rather than leave the SMT solver to unfold `plan_ops`
+/// itself: inside a recursive lemma the solver does not unfold it (the
+/// same query succeeds in a non-recursive lemma), and an equation it is
+/// handed is a step it cannot miss.
+let plan_ops_nil (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                 (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
+                 (tree: t) (staged: list (staged_call v p))
+  : Lemma (plan_ops w cap stage [] tree staged == ROk (tree, staged)) = ()
+
+let plan_ops_cons (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                  (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
+                  (op: o) (rest: list o) (tree: t) (staged: list (staged_call v p))
+  : Lemma
+      (plan_ops w cap stage (op :: rest) tree staged ==
+       (match w.w_apply op tree with
+        | RErr code -> RErr code
+        | ROk tree' ->
+          (match w.w_op_view op with
+           | ORequire -> plan_ops w cap stage rest tree staged
+           | OEdit ->
+             (match stage with
+              | ONone -> plan_ops w cap stage rest tree' staged
+              | OSome f -> plan_ops w cap stage rest tree' (staged_from cap f tree' op :: staged))))) = ()
+
+let app_cons (#a: Type0) (x: a) (xs: list a) (ys: list a)
+  : Lemma (app (x :: xs) ys == x :: app xs ys) = ()
+
+/// `plan_ops` over a concatenation is `plan_ops` over the first part, then
+/// over the second from where the first left the state and the staged list.
+let rec plan_ops_app (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                     (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
+                     (xs: list o) (ys: list o) (tree: t) (staged: list (staged_call v p))
+  : Lemma
+      (ensures
+        plan_ops w cap stage (app xs ys) tree staged ==
+        plan_after w cap stage (plan_ops w cap stage xs tree staged) ys)
+      (decreases xs) =
+  match xs with
+  | [] -> plan_ops_nil w cap stage tree staged
+  | op :: rest ->
+    app_cons op rest ys;
+    plan_ops_cons w cap stage op (app rest ys) tree staged;
+    plan_ops_cons w cap stage op rest tree staged;
+    (match w.w_apply op tree with
+     | RErr _ -> ()
+     | ROk tree' ->
+       (match w.w_op_view op with
+        | ORequire -> plan_ops_app w cap stage rest ys tree staged
+        | OEdit ->
+          (match stage with
+           | ONone -> plan_ops_app w cap stage rest ys tree' staged
+           | OSome f -> plan_ops_app w cap stage rest ys tree' (staged_from cap f tree' op :: staged))))
+
+/// With no op performer registered (the in-memory placement), planning
+/// an op sequence stages nothing — which is why the `ONone` arm of
+/// `plan_effect` keeps the staged list it was handed.
+let rec plan_ops_unstaged (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                          (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
+                          (ops: list o) (tree: t) (staged: list (staged_call v p))
+  : Lemma
+      (requires ONone? stage)
+      (ensures
+        (let r = plan_ops w cap stage ops tree staged in
+         ROk? r ==> snd (ROk?.value r) == staged))
+      (decreases ops) =
+  match ops with
+  | [] -> plan_ops_nil w cap stage tree staged
+  | op :: rest ->
+    plan_ops_cons w cap stage op rest tree staged;
+    (match w.w_apply op tree with
+     | RErr _ -> ()
+     | ROk tree' ->
+       (match w.w_op_view op with
+        | ORequire -> plan_ops_unstaged w cap stage rest tree staged
+        | OEdit -> plan_ops_unstaged w cap stage rest tree' staged))
+
+/// **`guard_holds_moves_nothing`.** An op-channel guard that HOLDS at its
+/// position — whatever ops precede it, against the state they left — is
+/// invisible to the plan: the sequence plans exactly as the sequence
+/// without it, so the ops after it are planned against the SAME state and
+/// nothing is staged for it. Holding is resolving through the op's own
+/// apply to `ROk`, whatever state that apply answered: a guard's answer is
+/// discarded, so a guard cannot write, by construction rather than by the
+/// witness's discipline.
+let guard_holds_moves_nothing (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                              (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
+                              (prefix: list o) (guard: o) (suffix: list o) (tree: t) (staged: list (staged_call v p))
+  : Lemma
+      (requires
+        w.w_op_view guard == ORequire /\
+        (let r = plan_ops w cap stage prefix tree staged in
+         ROk? r ==> ROk? (w.w_apply guard (fst (ROk?.value r)))))
+      (ensures
+        plan_ops w cap stage (app prefix (guard :: suffix)) tree staged ==
+        plan_ops w cap stage (app prefix suffix) tree staged) =
+  plan_ops_app w cap stage prefix (guard :: suffix) tree staged;
+  plan_ops_app w cap stage prefix suffix tree staged
+
+/// **`guard_refusal_halts`.** An op-channel guard that REFUSES at its
+/// position — against the state the ops before it left, which is the
+/// planned state and not the entry state — refuses the whole `ApplyOps`
+/// effect with ITS OWN REASON, verbatim, whatever follows it: the
+/// accumulator comes back halted with exactly one new diagnostic,
+/// `Failed ApplyOps reason`, and every other field — the store, the
+/// staged list, `ac_performed` — is the one it was handed. So a typed
+/// refusal rendered into the reason crosses intact (D19's W5), and
+/// `plan_halt_performs_nothing` lifts this to the handler: rolled back,
+/// nothing performed, under every performer.
+let guard_refusal_halts (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                        (w: witness t b v o q a eff d) (reg: registry t v o q p)
+                        (prefix: list o) (guard: o) (suffix: list o) (reason: string)
+                        (acc: accumulator t b v o eff d p)
+  : Lemma
+      (requires
+        reg.r_gate "ApplyOps" /\
+        ONone? (reg.r_policy (ApplyOps (app prefix (guard :: suffix)))) /\
+        w.w_op_view guard == ORequire /\
+        (let r = plan_ops w "ApplyOps" reg.r_op_perform prefix acc.ac_store.st_tree acc.ac_staged in
+         ROk? r /\ w.w_apply guard (fst (ROk?.value r)) == RErr reason))
+      (ensures
+        plan_effect w reg (ApplyOps (app prefix (guard :: suffix))) acc == halt "ApplyOps" reason acc) =
+  plan_ops_app w "ApplyOps" reg.r_op_perform prefix (guard :: suffix) acc.ac_store.st_tree acc.ac_staged
+
+/// The last op of a sequence the state witness views as an EDIT — the
+/// last one a registered performer is handed. Ghost: the theorem below
+/// names it, the oracle does not need it.
+[@@ noextract_to "FSharp"]
+let rec last_edit (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
+                  (w: witness t b v o q a eff d) (ops: list o)
+  : Tot (opt o) (decreases ops) =
+  match ops with
+  | [] -> ONone
+  | op :: rest ->
+    (match last_edit w rest with
+     | OSome e -> OSome e
+     | ONone ->
+       (match w.w_op_view op with
+        | OEdit -> OSome op
+        | ORequire -> ONone))
+
+/// A sequence with no edit in it leaves the state and the staged list
+/// as they were, whenever it plans at all: only guards, and a guard
+/// moves nothing.
+let rec plan_ops_no_edit (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                         (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
+                         (ops: list o) (tree: t) (staged: list (staged_call v p))
+  : Lemma
+      (requires ONone? (last_edit w ops))
+      (ensures
+        (let r = plan_ops w cap stage ops tree staged in
+         ROk? r ==> (fst (ROk?.value r) == tree /\ snd (ROk?.value r) == staged)))
+      (decreases ops) =
+  match ops with
+  | [] -> plan_ops_nil w cap stage tree staged
+  | op :: rest ->
+    plan_ops_cons w cap stage op rest tree staged;
+    (match w.w_apply op tree with
+     | RErr _ -> ()
+     | ROk _ ->
+       (match w.w_op_view op with
+        | ORequire -> plan_ops_no_edit w cap stage rest tree staged
+        | OEdit -> ()))
+
+/// **`performer_handed_the_plan`.** Under a registered op performer, an
+/// op sequence that plans stages its LAST EDIT from the sequence's FINAL
+/// planned state: the head of the staged list `plan_ops` answers is the
+/// call the performer staged from that state and that op. So the state a
+/// performer is handed with the last op it performs is the state the plan
+/// produced — the document to render, the tree to commit — and a tail
+/// that persists it needs to fold nothing itself (F-PERFORM). Every
+/// earlier edit is staged from the state as of IT, by `plan_ops`'s own
+/// clause; this is the one that says the hand-over reaches the end.
+let rec performer_handed_the_plan (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                                  (w: witness t b v o q a eff d) (cap: string) (f: t -> o -> (p & v))
+                                  (ops: list o) (tree: t) (staged: list (staged_call v p))
+  : Lemma
+      (ensures
+        (let r = plan_ops w cap (OSome f) ops tree staged in
+         let e = last_edit w ops in
+         (ROk? r /\ OSome? e) ==>
+         (let staged' = snd (ROk?.value r) in
+          Cons? staged' /\ Cons?.hd staged' == staged_from cap f (fst (ROk?.value r)) (OSome?.item e))))
+      (decreases ops) =
+  match ops with
+  | [] -> plan_ops_nil w cap (OSome f) tree staged
+  | op :: rest ->
+    plan_ops_cons w cap (OSome f) op rest tree staged;
+    (match w.w_apply op tree with
+     | RErr _ -> ()
+     | ROk tree' ->
+       (match w.w_op_view op with
+        | ORequire -> performer_handed_the_plan w cap f rest tree staged
+        | OEdit ->
+          let staged1 = staged_from cap f tree' op :: staged in
+          (match last_edit w rest with
+           | OSome _ -> performer_handed_the_plan w cap f rest tree' staged1
+           | ONone -> plan_ops_no_edit w cap (OSome f) rest tree' staged1)))

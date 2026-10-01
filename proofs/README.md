@@ -32,12 +32,80 @@ with the leg that checks them and the seam that ties each model back to the code
 
 **"Formally verified" appears in this repository in exactly one place — the ladders below — and
 it is spent on the laws in the four ladders and nothing else** — the fold's four, each stated over
-the generic view and again at the UI witness, the budget's five, the staging theorem's four and the
-effect gate's three. What is proved is narrow and
+the generic view and again at the UI witness, the budget's five, the staging theorem's four with
+the op-channel guard's two and the performer's one beside them (Phase 1974), and the effect gate's
+three. What is proved is narrow and
 stated precisely;
 what is not is stated just as precisely, because an unstated exclusion reads, to whoever finds
 it later, as a claim that failed. `proofs.json` at the repository root is the same ladders as
 data, for a reader that is a program.
+
+## The three axes — which theorem names which member (Phase 1974)
+
+Phase 1974 cuts `ProgramWitness` into three records (`DECISIONS.md` D20): a required **state** axis
+(`StateWitness` — `Stream`, `Reach`, `AbsoluteTarget`, `Canonical`, `Diff`, and `View`, the
+op-channel guard's classification), an optional **walk** axis (`WalkWitness` — `Nodes`, `Traverse`,
+`Cost`, `QueryReaders`) and an optional **dispatch** axis (`DispatchWitness` — `Handlers`, `Events`,
+`Resolve`, and the `Action`, `Expr`, `Store` and `Effect` sub-records). D14 says the model comes
+first; this section is that restatement, written before a `.fs` file moved. It answers one question
+per theorem: which members does it name, and so which axes must a witness fill for it to say
+anything about that witness.
+
+| Model | Theorems | Members the theorems name (model field → F# member) | Axis |
+|---|---|---|---|
+| `BoundedFold.fst` | `fold_total`, `fold_blind`, `run_action_blind`, `sequence_homomorphism`, `fold_reserved_untouched`, `fold_no_require_no_halt`, and their UI corollaries | `w_view` → `Action.View`; `w_lower` → `Action.Lower`; `w_describe` → `Action.Describe`; `w_resolve` → `Expr.Resolve`; `w_is_reserved` / `w_reserved_prefix` → `Store.IsReserved` / `ReservedPrefix`; `answer` → the placement's `HandlerArm` (not a witness member) | **dispatch** only |
+| `Budget.fst` | `sat_monotone` | none — the saturating arithmetic | none |
+| `Budget.fst` | `treecost_exact_below_ceiling`, `treecost_strict_above_ceiling`, `treecost_terminates` | `kids` → `Nodes.Children`; `cost_shape` → `Cost` (the host's projection of it) | **walk** |
+| `Budget.fst` | `breach_pure` | the UI driver's `step` over `action_cascade_cost` → `Action.View` and the walk above | **walk + dispatch** (the UI adapter's driver) |
+| `Staging.fst` | `plan_pure`, `residual_is_prefix`, `performed_in_order`, `commit_is_total_prefix`, `plan_halt_performs_nothing` | `w_apply` → `Stream.Apply`, `w_op_view` → `View` (**state**); `w_compute` → the fold over `Action` / `Expr` / `Store`, `w_query` → `Store.LandQuery`, `w_assign` → `Store.Assign`, `w_slot_refused` → `Store.IsReserved` / `ReservedPrefix` (**dispatch**) | **state**, with the dispatch members as hypotheses a dispatch-less witness discharges (below) |
+| `Staging.fst` | `guard_holds_moves_nothing`, `guard_refusal_halts` (the op-channel guard, F-GUARD) | `w_apply`, `w_op_view` | **state** only |
+| `Staging.fst` | `performer_handed_the_plan` (F-PERFORM) | `w_apply`, `w_op_view`, and the registry's `r_op_perform` | **state** only |
+| `EffectGate.fst` | `gate_before_perform`, `gate_refusal_halts_run`, `policy_sufficient`, `return_contract` | the staging witness, quantified over every one, plus the registry | **state**, on the staging theorem's terms |
+
+**A witness filling ONLY the state axis satisfies every theorem that names no dispatch member.**
+Read off the table: the budget's walk theorems do not apply to it (it has no walk to price, and the
+budget is never asked about it), the fold's five do not apply (it has no action, so no fold runs),
+and what remains is the staging model, the op-channel guard's two, the performer's one and the
+effect gate's four. Each of those is quantified over EVERY staging witness, and a state-only
+composition is one of them with its dispatch members fixed as follows, by the composition and not by
+the domain: `w_compute` is unreachable, because a handler under a witness with no dispatch axis
+holds no compute stage — its action type has no values (`Nothing`), so the stage cannot be written;
+`w_query` answers the refusal `no-binding-channel` for every query, before the query is evaluated;
+`w_slot_refused` answers the same refusal for every landing slot; and `w_assign` is unreachable,
+because the only path to it is a landing slot the plan phase has already refused. Under those four
+the staging theorems' statements are unchanged — a plan that halts on a refused landing is a plan
+that halts (`plan_halt_performs_nothing`), and nothing else in the statements names a binding — so a
+dispatch-less witness inherits all of them, and the op-channel guard and the performer's state are
+the two capabilities it gains.
+
+**A witness filling state + walk satisfies, in addition, every theorem that names no handler, event,
+store or effect** — the three walk theorems of the budget, whose only members are the structural
+children and the per-node cost. Nothing else changes for it: `breach_pure` names the UI driver,
+which is a dispatch fact, and the fold's laws name the action view.
+
+**The dispatch axis carries the fold, and only the fold.** Every member the fold's laws name is on
+it, and none of them names the state or the walk: the fold never touches the tree (K4 is a dispatch
+fact — the binding store the fold writes is the dispatch axis's `Store`, not the state the ops apply
+to). That is why the fold's theorems are restated over nothing here: their statements and proofs are
+over the same witness record, which is now one axis's members rather than a slice of the whole.
+
+**What the restatement moved, and why it is the state axis.** Two capabilities the third witness
+found missing are on the state axis, because the thing they read is the state:
+
+- **The op-channel guard (F-GUARD).** `View op = Require` makes an op a guard: it is resolved against
+  the state AS OF THAT POINT IN THE PLAN through the op's own `Apply` — `Ok` holds and the state does
+  not move, `Error reason` halts the effect with `reason` verbatim — and it is never staged and never
+  performed. The fold's `Require` resolves against the dispatch axis's store and cannot see a tree;
+  this one resolves against the tree and cannot see a store, and each is the right guard for the
+  domain whose guards are over that thing.
+- **The performer is handed the state (F-PERFORM).** `r_op_perform` answers the token and argument
+  to stage FROM the state as of the op — the planned state with that op applied — and the op. The
+  last edit's staged state is the plan's final state, so a tail that persists the state the plan
+  produced is handed it rather than re-deriving it.
+
+Both are clauses of the ONE `ApplyOps` arm the staging model already had; neither adds a stage kind,
+an effect arm or a diagnostic (a guard's refusal is the `Failed (ApplyOps, reason)` an apply refusal
+already was), which is why no wire member moves.
 
 ## The fold theorem
 

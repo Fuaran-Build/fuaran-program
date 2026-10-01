@@ -383,72 +383,94 @@ let __proj__Mkbounded_outcome__item__bo_diagnostics = (fun ( projectee  :  bound
      bo_diagnostics
      end))
 
-type witness<'t, 'b, 'v, 'o, 'q, 'a, 'eff, 'd> = {w_compute : Prims.string  ->  'a  ->  'b  ->  bounded_outcome<'b, 'eff, 'd>; w_query : Prims.string  ->  'q  ->  'b  ->  res<'b>; w_apply : 'o  ->  't  ->  res<'t>; w_assign : Prims.string  ->  'v  ->  'b  ->  'b; w_is_reserved : Prims.string  ->  Prims.bool; w_reserved_prefix : Prims.string}
+type op_view =
+| OEdit
+| ORequire
+
+
+let uu___is_OEdit : op_view  ->  Prims.bool = (fun ( projectee  :  op_view ) -> (match (projectee) with
+| OEdit -> begin
+     true
+     end
+| uu___ -> begin
+     false
+     end))
+
+
+let uu___is_ORequire : op_view  ->  Prims.bool = (fun ( projectee  :  op_view ) -> (match (projectee) with
+| ORequire -> begin
+     true
+     end
+| uu___ -> begin
+     false
+     end))
+
+type witness<'t, 'b, 'v, 'o, 'q, 'a, 'eff, 'd> = {w_compute : Prims.string  ->  'a  ->  'b  ->  bounded_outcome<'b, 'eff, 'd>; w_query : Prims.string  ->  'q  ->  'b  ->  res<'b>; w_apply : 'o  ->  't  ->  res<'t>; w_op_view : 'o  ->  op_view; w_assign : Prims.string  ->  'v  ->  'b  ->  'b; w_slot_refused : Prims.string  ->  opt<Prims.string>}
 
 
 let __proj__Mkwitness__item__w_compute = (fun ( projectee  :  witness<'t, 'b, 'v, 'o, 'q, 'a, 'eff, 'd> ) -> (match (projectee) with
-| {w_compute = w_compute; w_query = w_query; w_apply = w_apply; w_assign = w_assign; w_is_reserved = w_is_reserved; w_reserved_prefix = w_reserved_prefix} -> begin
+| {w_compute = w_compute; w_query = w_query; w_apply = w_apply; w_op_view = w_op_view; w_assign = w_assign; w_slot_refused = w_slot_refused} -> begin
      w_compute
      end))
 
 
 let __proj__Mkwitness__item__w_query = (fun ( projectee  :  witness<'t, 'b, 'v, 'o, 'q, 'a, 'eff, 'd> ) -> (match (projectee) with
-| {w_compute = w_compute; w_query = w_query; w_apply = w_apply; w_assign = w_assign; w_is_reserved = w_is_reserved; w_reserved_prefix = w_reserved_prefix} -> begin
+| {w_compute = w_compute; w_query = w_query; w_apply = w_apply; w_op_view = w_op_view; w_assign = w_assign; w_slot_refused = w_slot_refused} -> begin
      w_query
      end))
 
 
 let __proj__Mkwitness__item__w_apply = (fun ( projectee  :  witness<'t, 'b, 'v, 'o, 'q, 'a, 'eff, 'd> ) -> (match (projectee) with
-| {w_compute = w_compute; w_query = w_query; w_apply = w_apply; w_assign = w_assign; w_is_reserved = w_is_reserved; w_reserved_prefix = w_reserved_prefix} -> begin
+| {w_compute = w_compute; w_query = w_query; w_apply = w_apply; w_op_view = w_op_view; w_assign = w_assign; w_slot_refused = w_slot_refused} -> begin
      w_apply
      end))
 
 
+let __proj__Mkwitness__item__w_op_view = (fun ( projectee  :  witness<'t, 'b, 'v, 'o, 'q, 'a, 'eff, 'd> ) -> (match (projectee) with
+| {w_compute = w_compute; w_query = w_query; w_apply = w_apply; w_op_view = w_op_view; w_assign = w_assign; w_slot_refused = w_slot_refused} -> begin
+     w_op_view
+     end))
+
+
 let __proj__Mkwitness__item__w_assign = (fun ( projectee  :  witness<'t, 'b, 'v, 'o, 'q, 'a, 'eff, 'd> ) -> (match (projectee) with
-| {w_compute = w_compute; w_query = w_query; w_apply = w_apply; w_assign = w_assign; w_is_reserved = w_is_reserved; w_reserved_prefix = w_reserved_prefix} -> begin
+| {w_compute = w_compute; w_query = w_query; w_apply = w_apply; w_op_view = w_op_view; w_assign = w_assign; w_slot_refused = w_slot_refused} -> begin
      w_assign
      end))
 
 
-let __proj__Mkwitness__item__w_is_reserved = (fun ( projectee  :  witness<'t, 'b, 'v, 'o, 'q, 'a, 'eff, 'd> ) -> (match (projectee) with
-| {w_compute = w_compute; w_query = w_query; w_apply = w_apply; w_assign = w_assign; w_is_reserved = w_is_reserved; w_reserved_prefix = w_reserved_prefix} -> begin
-     w_is_reserved
+let __proj__Mkwitness__item__w_slot_refused = (fun ( projectee  :  witness<'t, 'b, 'v, 'o, 'q, 'a, 'eff, 'd> ) -> (match (projectee) with
+| {w_compute = w_compute; w_query = w_query; w_apply = w_apply; w_op_view = w_op_view; w_assign = w_assign; w_slot_refused = w_slot_refused} -> begin
+     w_slot_refused
      end))
 
-
-let __proj__Mkwitness__item__w_reserved_prefix = (fun ( projectee  :  witness<'t, 'b, 'v, 'o, 'q, 'a, 'eff, 'd> ) -> (match (projectee) with
-| {w_compute = w_compute; w_query = w_query; w_apply = w_apply; w_assign = w_assign; w_is_reserved = w_is_reserved; w_reserved_prefix = w_reserved_prefix} -> begin
-     w_reserved_prefix
-     end))
-
-type registry<'v, 'o, 'q, 'p> = {r_gate : Prims.string  ->  Prims.bool; r_policy : server_effect<'v, 'o, 'q>  ->  opt<Prims.string>; r_lookup : Prims.string  ->  opt<'p>; r_perf : 'p  ->  'v  ->  res<'v>; r_op_perform : opt<('o  ->  ('p * 'v))>}
+type registry<'t, 'v, 'o, 'q, 'p> = {r_gate : Prims.string  ->  Prims.bool; r_policy : server_effect<'v, 'o, 'q>  ->  opt<Prims.string>; r_lookup : Prims.string  ->  opt<'p>; r_perf : 'p  ->  'v  ->  res<'v>; r_op_perform : opt<('t  ->  'o  ->  ('p * 'v))>}
 
 
-let __proj__Mkregistry__item__r_gate = (fun ( projectee  :  registry<'v, 'o, 'q, 'p> ) -> (match (projectee) with
+let __proj__Mkregistry__item__r_gate = (fun ( projectee  :  registry<'t, 'v, 'o, 'q, 'p> ) -> (match (projectee) with
 | {r_gate = r_gate; r_policy = r_policy; r_lookup = r_lookup; r_perf = r_perf; r_op_perform = r_op_perform} -> begin
      r_gate
      end))
 
 
-let __proj__Mkregistry__item__r_policy = (fun ( projectee  :  registry<'v, 'o, 'q, 'p> ) -> (match (projectee) with
+let __proj__Mkregistry__item__r_policy = (fun ( projectee  :  registry<'t, 'v, 'o, 'q, 'p> ) -> (match (projectee) with
 | {r_gate = r_gate; r_policy = r_policy; r_lookup = r_lookup; r_perf = r_perf; r_op_perform = r_op_perform} -> begin
      r_policy
      end))
 
 
-let __proj__Mkregistry__item__r_lookup = (fun ( projectee  :  registry<'v, 'o, 'q, 'p> ) -> (match (projectee) with
+let __proj__Mkregistry__item__r_lookup = (fun ( projectee  :  registry<'t, 'v, 'o, 'q, 'p> ) -> (match (projectee) with
 | {r_gate = r_gate; r_policy = r_policy; r_lookup = r_lookup; r_perf = r_perf; r_op_perform = r_op_perform} -> begin
      r_lookup
      end))
 
 
-let __proj__Mkregistry__item__r_perf = (fun ( projectee  :  registry<'v, 'o, 'q, 'p> ) -> (match (projectee) with
+let __proj__Mkregistry__item__r_perf = (fun ( projectee  :  registry<'t, 'v, 'o, 'q, 'p> ) -> (match (projectee) with
 | {r_gate = r_gate; r_policy = r_policy; r_lookup = r_lookup; r_perf = r_perf; r_op_perform = r_op_perform} -> begin
      r_perf
      end))
 
 
-let __proj__Mkregistry__item__r_op_perform = (fun ( projectee  :  registry<'v, 'o, 'q, 'p> ) -> (match (projectee) with
+let __proj__Mkregistry__item__r_op_perform = (fun ( projectee  :  registry<'t, 'v, 'o, 'q, 'p> ) -> (match (projectee) with
 | {r_gate = r_gate; r_policy = r_policy; r_lookup = r_lookup; r_perf = r_perf; r_op_perform = r_op_perform} -> begin
      r_op_perform
      end))
@@ -586,9 +608,18 @@ let halt = (fun ( cap  :  Prims.string ) ( reason  :  Prims.string ) ( acc  :  a
 let deny = (fun ( why  :  denial ) ( acc  :  accumulator<'t, 'b, 'v, 'o, 'eff, 'd, 'p> ) -> {ac_store = acc.ac_store; ac_halted = true; ac_performed = acc.ac_performed; ac_externally = acc.ac_externally; ac_staged = acc.ac_staged; ac_patches = acc.ac_patches; ac_notifications = acc.ac_notifications; ac_client_effects = acc.ac_client_effects; ac_diagnostics = (Denied (why))::acc.ac_diagnostics})
 
 
-let rec apply_all = (fun ( w  :  witness<'t, 'b, 'v, 'o, 'q, 'a, 'eff, 'd> ) ( ops  :  Prims.list<'o> ) ( tree  :  't ) -> (match (ops) with
+let staged_from = (fun ( cap  :  Prims.string ) ( f  :  't  ->  'o  ->  ('p * 'v) ) ( tree  :  't ) ( op  :  'o ) -> (
+
+let uu___ = (f tree op)
+in (match (uu___) with
+| (tok, args) -> begin
+     {sc_capability = cap; sc_performer = tok; sc_args = args; sc_into = ONone}
+     end)))
+
+
+let rec plan_ops = (fun ( w  :  witness<'t, 'b, 'v, 'o, 'q, 'a, 'eff, 'd> ) ( cap  :  Prims.string ) ( stage1  :  opt<('t  ->  'o  ->  ('p * 'v))> ) ( ops  :  Prims.list<'o> ) ( tree  :  't ) ( staged  :  Prims.list<staged_call<'v, 'p>> ) -> (match (ops) with
 | [] -> begin
-     ROk (tree)
+     ROk (((tree), (staged)))
      end
 | (op)::rest -> begin
      (match ((w.w_apply op tree)) with
@@ -596,7 +627,19 @@ let rec apply_all = (fun ( w  :  witness<'t, 'b, 'v, 'o, 'q, 'a, 'eff, 'd> ) ( o
      RErr (code)
      end
 | ROk (tree') -> begin
-     (apply_all w rest tree')
+     (match ((w.w_op_view op)) with
+| ORequire -> begin
+     (plan_ops w cap stage1 rest tree staged)
+     end
+| OEdit -> begin
+     (match (stage1) with
+| ONone -> begin
+     (plan_ops w cap stage1 rest tree' staged)
+     end
+| OSome (f) -> begin
+     (plan_ops w cap stage1 rest tree' (((staged_from cap f tree' op))::staged))
+     end)
+     end)
      end)
      end))
 
@@ -610,31 +653,16 @@ let rec map_bounded = (fun ( ds  :  Prims.list<'d> ) -> (match (ds) with
      end))
 
 
-let reserved_slot = (fun ( w  :  witness<'t, 'b, 'v, 'o, 'q, 'a, 'eff, 'd> ) ( into  :  opt<Prims.string> ) -> (match (into) with
+let slot_refused = (fun ( w  :  witness<'t, 'b, 'v, 'o, 'q, 'a, 'eff, 'd> ) ( into  :  opt<Prims.string> ) -> (match (into) with
 | OSome (key) -> begin
-     (w.w_is_reserved key)
+     (w.w_slot_refused key)
      end
 | ONone -> begin
-     false
+     ONone
      end))
 
 
-let rec stage_ops = (fun ( cap  :  Prims.string ) ( stage1  :  'o  ->  ('p * 'v) ) ( ops  :  Prims.list<'o> ) ( staged  :  Prims.list<staged_call<'v, 'p>> ) -> (match (ops) with
-| [] -> begin
-     staged
-     end
-| (op)::rest -> begin
-     (
-
-let uu___ = (stage1 op)
-in (match (uu___) with
-| (tok, args) -> begin
-     (stage_ops cap stage1 rest (({sc_capability = cap; sc_performer = tok; sc_args = args; sc_into = ONone})::staged))
-     end))
-     end))
-
-
-let plan_effect = (fun ( w  :  witness<'t, 'b, 'v, 'o, 'q, 'a, 'eff, 'd> ) ( reg  :  registry<'v, 'o, 'q, 'p> ) ( e  :  server_effect<'v, 'o, 'q> ) ( acc  :  accumulator<'t, 'b, 'v, 'o, 'eff, 'd, 'p> ) -> (
+let plan_effect = (fun ( w  :  witness<'t, 'b, 'v, 'o, 'q, 'a, 'eff, 'd> ) ( reg  :  registry<'t, 'v, 'o, 'q, 'p> ) ( e  :  server_effect<'v, 'o, 'q> ) ( acc  :  accumulator<'t, 'b, 'v, 'o, 'eff, 'd, 'p> ) -> (
 
 let cap = (capability e)
 in  
@@ -663,11 +691,11 @@ in {st_tree = uu___.st_tree; st_bindings = bindings}); ac_halted = performed.ac_
      end)
      end
 | ApplyOps (ops) -> begin
-     (match ((apply_all w ops performed.ac_store.st_tree)) with
+     (match ((plan_ops w cap reg.r_op_perform ops performed.ac_store.st_tree acc.ac_staged)) with
 | RErr (code) -> begin
      (halt cap code acc)
      end
-| ROk (tree) -> begin
+| ROk (tree, staged) -> begin
      (match (reg.r_op_perform) with
 | ONone -> begin
      {ac_store = (
@@ -675,11 +703,11 @@ in {st_tree = uu___.st_tree; st_bindings = bindings}); ac_halted = performed.ac_
 let uu___ = performed.ac_store
 in {st_tree = tree; st_bindings = uu___.st_bindings}); ac_halted = performed.ac_halted; ac_performed = performed.ac_performed; ac_externally = performed.ac_externally; ac_staged = performed.ac_staged; ac_patches = performed.ac_patches; ac_notifications = performed.ac_notifications; ac_client_effects = performed.ac_client_effects; ac_diagnostics = performed.ac_diagnostics}
      end
-| OSome (stage1) -> begin
+| OSome (uu___) -> begin
      {ac_store = (
 
-let uu___ = acc.ac_store
-in {st_tree = tree; st_bindings = uu___.st_bindings}); ac_halted = acc.ac_halted; ac_performed = acc.ac_performed; ac_externally = acc.ac_externally; ac_staged = (stage_ops cap stage1 ops acc.ac_staged); ac_patches = acc.ac_patches; ac_notifications = acc.ac_notifications; ac_client_effects = acc.ac_client_effects; ac_diagnostics = acc.ac_diagnostics}
+let uu___1 = acc.ac_store
+in {st_tree = tree; st_bindings = uu___1.st_bindings}); ac_halted = acc.ac_halted; ac_performed = acc.ac_performed; ac_externally = acc.ac_externally; ac_staged = staged; ac_patches = acc.ac_patches; ac_notifications = acc.ac_notifications; ac_client_effects = acc.ac_client_effects; ac_diagnostics = acc.ac_diagnostics}
      end)
      end)
      end
@@ -689,12 +717,13 @@ in {st_tree = tree; st_bindings = uu___.st_bindings}); ac_halted = acc.ac_halted
      (deny (Unregistered (cap)) acc)
      end
 | OSome (performer) -> begin
-      
-if (reserved_slot w into) then begin
-     (halt cap (Prims.strcat "landing slot is under the host-reserved \'" (Prims.strcat w.w_reserved_prefix "\' namespace")) acc)
-     end else begin
-     {ac_store = acc.ac_store; ac_halted = acc.ac_halted; ac_performed = acc.ac_performed; ac_externally = acc.ac_externally; ac_staged = ({sc_capability = cap; sc_performer = performer; sc_args = args; sc_into = into})::acc.ac_staged; ac_patches = acc.ac_patches; ac_notifications = acc.ac_notifications; ac_client_effects = acc.ac_client_effects; ac_diagnostics = acc.ac_diagnostics}
+     (match ((slot_refused w into)) with
+| OSome (reason) -> begin
+     (halt cap reason acc)
      end
+| ONone -> begin
+     {ac_store = acc.ac_store; ac_halted = acc.ac_halted; ac_performed = acc.ac_performed; ac_externally = acc.ac_externally; ac_staged = ({sc_capability = cap; sc_performer = performer; sc_args = args; sc_into = into})::acc.ac_staged; ac_patches = acc.ac_patches; ac_notifications = acc.ac_notifications; ac_client_effects = acc.ac_client_effects; ac_diagnostics = acc.ac_diagnostics}
+     end)
      end)
      end
 | EmitPatch (ops) -> begin
@@ -707,7 +736,7 @@ if (reserved_slot w into) then begin
      end))
 
 
-let plan_stage = (fun ( w  :  witness<'t, 'b, 'v, 'o, 'q, 'a, 'eff, 'd> ) ( reg  :  registry<'v, 'o, 'q, 'p> ) ( node_id  :  Prims.string ) ( s  :  stage<'a, 'v, 'o, 'q> ) ( acc  :  accumulator<'t, 'b, 'v, 'o, 'eff, 'd, 'p> ) -> (match (s) with
+let plan_stage = (fun ( w  :  witness<'t, 'b, 'v, 'o, 'q, 'a, 'eff, 'd> ) ( reg  :  registry<'t, 'v, 'o, 'q, 'p> ) ( node_id  :  Prims.string ) ( s  :  stage<'a, 'v, 'o, 'q> ) ( acc  :  accumulator<'t, 'b, 'v, 'o, 'eff, 'd, 'p> ) -> (match (s) with
 | SCompute (action) -> begin
      (
 
@@ -722,7 +751,7 @@ in {st_tree = uu___.st_tree; st_bindings = out.bo_store}); ac_halted = acc.ac_ha
      end))
 
 
-let rec plan = (fun ( w  :  witness<'t, 'b, 'v, 'o, 'q, 'a, 'eff, 'd> ) ( reg  :  registry<'v, 'o, 'q, 'p> ) ( node_id  :  Prims.string ) ( stages  :  Prims.list<stage<'a, 'v, 'o, 'q>> ) ( acc  :  accumulator<'t, 'b, 'v, 'o, 'eff, 'd, 'p> ) -> (match (stages) with
+let rec plan = (fun ( w  :  witness<'t, 'b, 'v, 'o, 'q, 'a, 'eff, 'd> ) ( reg  :  registry<'t, 'v, 'o, 'q, 'p> ) ( node_id  :  Prims.string ) ( stages  :  Prims.list<stage<'a, 'v, 'o, 'q>> ) ( acc  :  accumulator<'t, 'b, 'v, 'o, 'eff, 'd, 'p> ) -> (match (stages) with
 | [] -> begin
      acc
      end
@@ -736,7 +765,7 @@ if acc.ac_halted then begin
      end))
 
 
-let rec perform = (fun ( w  :  witness<'t, 'b, 'v, 'o, 'q, 'a, 'eff, 'd> ) ( reg  :  registry<'v, 'o, 'q, 'p> ) ( staged  :  Prims.list<staged_call<'v, 'p>> ) ( acc  :  accumulator<'t, 'b, 'v, 'o, 'eff, 'd, 'p> ) -> (match (staged) with
+let rec perform = (fun ( w  :  witness<'t, 'b, 'v, 'o, 'q, 'a, 'eff, 'd> ) ( reg  :  registry<'t, 'v, 'o, 'q, 'p> ) ( staged  :  Prims.list<staged_call<'v, 'p>> ) ( acc  :  accumulator<'t, 'b, 'v, 'o, 'eff, 'd, 'p> ) -> (match (staged) with
 | [] -> begin
      acc
      end
@@ -769,7 +798,7 @@ in (perform w reg rest landed)))
 let start = (fun ( s  :  store<'t, 'b> ) -> {ac_store = s; ac_halted = false; ac_performed = []; ac_externally = []; ac_staged = []; ac_patches = []; ac_notifications = []; ac_client_effects = []; ac_diagnostics = []})
 
 
-let run = (fun ( w  :  witness<'t, 'b, 'v, 'o, 'q, 'a, 'eff, 'd> ) ( reg  :  registry<'v, 'o, 'q, 'p> ) ( node_id  :  Prims.string ) ( stages  :  Prims.list<stage<'a, 'v, 'o, 'q>> ) ( s  :  store<'t, 'b> ) -> (
+let run = (fun ( w  :  witness<'t, 'b, 'v, 'o, 'q, 'a, 'eff, 'd> ) ( reg  :  registry<'t, 'v, 'o, 'q, 'p> ) ( node_id  :  Prims.string ) ( stages  :  Prims.list<stage<'a, 'v, 'o, 'q>> ) ( s  :  store<'t, 'b> ) -> (
 
 let planned = (plan w reg node_id stages (start s))
 in (
