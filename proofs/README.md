@@ -24,8 +24,10 @@ with the leg that checks them and the seam that ties each model back to the code
   nothing.
 - **[Two-phase staging](#the-staging-theorem)** — `Staging.fst`, four theorems (Phase 1717),
   re-proved over a staged list that holds ops as well as host calls since a placement can register
-  an op performer (Phase 1967). Bounded RESIDUE: what a handler that reaches outside can leave
-  behind is exactly the prefix of staged calls that ran.
+  an op performer (Phase 1967), and restated over an `ApplyOps` arm that carries the op-channel
+  guard and hands the performer the planned state, with three theorems for those beside the four
+  (Phase 1974). Bounded RESIDUE: what a handler that reaches outside can leave behind is exactly the
+  prefix of staged calls that ran.
 - **[The effect gate](#the-effect-gate-theorem)** — `EffectGate.fst`, three theorems (Phase 1759),
   proved over the staging model. A CONSTRAINED boundary: policy before the effect, contract on
   return, against an arbitrary performer.
@@ -66,7 +68,7 @@ anything about that witness.
 Read off the table: the budget's walk theorems do not apply to it (it has no walk to price, and the
 budget is never asked about it), the fold's five do not apply (it has no action, so no fold runs),
 and what remains is the staging model, the op-channel guard's two, the performer's one and the
-effect gate's four. Each of those is quantified over EVERY staging witness, and a state-only
+effect gate's three. Each of those is quantified over EVERY staging witness, and a state-only
 composition is one of them with its dispatch members fixed as follows, by the composition and not by
 the domain: `w_compute` is unreachable, because a handler under a witness with no dispatch axis
 holds no compute stage — its action type has no values (`Nothing`), so the stage cannot be written;
@@ -596,6 +598,15 @@ below is stated over the staged list as before and re-proves unchanged; `plan_pu
 clause that matters, that the plan phase reads only WHETHER a performer is registered and what it
 stages, never what it answers. Without one (`ONone`, the UI tier) the arm is exactly what it was.
 
+**Since Phase 1974 the `ApplyOps` arm is one fold, `plan_ops`, over the state axis** (D20). Each op
+is resolved through `w_apply` against the state the ops before it left. An op the state witness
+views as a guard (`w_op_view` = `ORequire`) holds without moving the state and is never staged; an
+edit moves it and, under a registered performer, is staged FROM THE STATE IT PRODUCED (`r_op_perform`
+now takes the state and the op — production's `fun _ -> perform state op`). The landing-slot check
+reads one arrow, `w_slot_refused`, so a composition with no binding channel refuses every slot
+through the clause a reserved slot is refused through. The four theorems below are restated over
+the arm as it now is and keep their statements; three more sit beside them (5–7).
+
 ### 1. `plan_pure` — nothing external runs in the plan phase
 
 The plan phase's output is a function of the entry state, the program, the witness and the
@@ -632,6 +643,37 @@ whole behaviour of the perform phase, stated once by induction) feeds.
 When every staged call succeeds the handler commits, and `Performed` is the plan phase's
 capabilities in stage order followed by the WHOLE staged list in declaration order.
 
+### 5. `guard_holds_moves_nothing` — a guard that holds is invisible to the plan (Phase 1974)
+
+For an op sequence with a guard at ANY position — whatever ops precede it, against the state they
+left — if the guard holds there, the sequence plans exactly as the sequence without it: the ops after
+it are planned against the same state, and nothing is staged for it. Holding is the guard's own
+apply answering `ROk`, whatever state that apply answered — a guard's answer is discarded, so it
+cannot write by construction rather than by the witness's discipline.
+
+### 6. `guard_refusal_halts` — a guard that refuses, refuses the effect with its own reason
+
+For a guard at any position that refuses against the state the ops before it PLANNED — the plan, not
+the entry state — the `ApplyOps` effect comes back halted with exactly one new diagnostic, `Failed
+ApplyOps reason`, the reason the guard's own, verbatim; every other field of the accumulator is the
+one it was handed, whatever follows the guard. So a typed refusal rendered into the reason crosses
+intact (D19's W5), and `plan_halt_performs_nothing` lifts it to the handler: rolled back, nothing
+performed, under every performer.
+
+### 7. `performer_handed_the_plan` — the last edit is staged from the final planned state
+
+Under a registered performer, an op sequence that plans stages its last EDIT from the sequence's
+final planned state: the head of the staged list is the call the performer staged from that state
+and that op. So the state a performer is handed with the last op it performs is the state the plan
+produced, and a tail that persists it — renders the document, commits the ops — folds nothing
+itself. Each earlier edit is staged from the state as of it, by `plan_ops`'s own clause.
+
+`plan_ops_app` (planning a concatenation is planning its parts in turn), `plan_ops_unstaged` (with no
+performer nothing is staged), `plan_ops_no_edit` (a sequence of guards leaves state and staged list
+alone) and `last_edit` (ghost) support them; `plan_ops_nil` / `plan_ops_cons` state one step of the
+fold as equations the recursive lemmas call, because the solver does not unfold `plan_ops` itself
+inside a recursive lemma (the same query succeeds outside one).
+
 ### The supporting clause — `plan_halt_performs_nothing`
 
 A handler that halted while planning rolls back to the entry store and reports nothing
@@ -644,8 +686,9 @@ The handler is generic in its tree, bindings, values, ops, actions and client ef
 model keeps every one a type parameter; what production does WITH them reaches it through two
 records of arrows, and both are the assumed rung:
 
-- **the witness** — `LandQuery`, `Assign`, `IsReserved`, `ReservedPrefix`, the op stream's
-  `Apply`, the shared fold's `runInert` (Phase 1715's subject, so opaque here), and the query
+- **the witness** — `LandQuery`, `Assign`, the landing-slot refusal (`IsReserved` rendered with
+  `ReservedPrefix`, or `no-binding-channel` for a composition with no dispatch axis — Phase 1974), the
+  state axis's `Apply` and `View`, the shared fold's `runInert` (Phase 1715's subject, so opaque here), and the query
   evaluator. The evaluator and `LandQuery` arrive as ONE arrow, because one opaque composed with
   another is one opaque and the clause the handler owns is halt-or-land; the evaluator's error
   reaches the model already reduced to its discriminator, as `Handler.evalErrorKind` reduces it;
@@ -664,6 +707,11 @@ The denial sink (`OnDenied`) is a unit-returning observer and is not modelled.
 3. **`Performed` is execution order, for every performer** — `performed_in_order`, with
    `perform_spec` as the inductive core.
 4. **Success performs the whole staged list** — `commit_is_total_prefix`.
+5. **An op-channel guard that holds moves nothing and stages nothing** — `guard_holds_moves_nothing`.
+6. **An op-channel guard that refuses halts the effect on its own reason, over the planned state** —
+   `guard_refusal_halts`.
+7. **The performer is handed the plan: the last edit is staged from the final planned state** —
+   `performer_handed_the_plan`.
 
 No `admit`, no `assume`; `--report_assumes error` is on for this module exactly as it is for
 the other two.
@@ -678,7 +726,14 @@ those cases do not reach (an unregistered performer, a refused argument policy, 
 landing slot, an apply refusal, an unresolvable query), and since Phase 1967 the OP-PERFORMER
 cases: one handler run in memory and again under a registered op performer, two ops in one stage
 beside a landing host call, a plan that halts after ops were staged, and an op sequence the policy
-refuses — each at every failure position, counted across ops and host calls together. Each case runs with a SCRIPTED
+refuses — each at every failure position, counted across ops and host calls together; and since
+Phase 1974 the OP-CHANNEL GUARD cases, at a composition of the UI witness whose state witness views
+`UpdateStyle` as a guard (a style no corpus node carries, so a guard that wrote would be seen): a guard
+that holds under a performer and in memory, and one that refuses after an edit removed the node it
+names. Each run also compares the STATE the op performer was handed with each op, canonically encoded,
+across production and the model. Two go-red checks were run while the cases were written and not
+committed: production's guard clause edited to move the state lost the comparison, and so did its
+performer handed the pre-op state. Each case runs with a SCRIPTED
 performer that counts its invocations and refuses at one position, at every position of the
 staged list and once with no refusal at all. Three things are compared: the two outcomes
 (projected as the durable parity leg projects them), the two performers' logs of what they

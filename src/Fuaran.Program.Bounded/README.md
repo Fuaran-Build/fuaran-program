@@ -10,6 +10,12 @@ program's state store — plus the server placement of the program loop that dri
 > (`BoundedActions.runBoundedAction`, `Resolve.resolveTree` over a UI tree, …), and the UI transport
 > loop (`BoundedDriver`, `BoundedConnection`) — is the `Fuaran.Program.UI` adapter, released in the
 > same version. The sections below describe the UI instantiation where they name UI types.
+>
+> **Since Phase 1974 the witness is three records** (`DECISIONS.md` D20): a required state axis
+> (`StateWitness`), and optional walk (`WalkWitness`) and dispatch (`DispatchWitness`) axes, composed
+> as `ProgramWitness<'Node, 'Op, 'Walk, 'Dispatch>` with `Unfilled` in a position a domain does not
+> fill. Each function's signature names the axes it reads; `docs/generic-tier.md` §3 says which, and
+> `docs/migrations/phase-1974.md` is the one-page move.
 
 ## What this package is for
 

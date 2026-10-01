@@ -842,3 +842,102 @@ is a witness defect, not a vocabulary one.
 are the test for whether its parallel machinery can now be deleted; re-running it against 0.7.0 is
 that domain's act. The in-repo second witness — a verb over an in-memory file map, with an adversary
 per finding — is this repository's own, and runs in the ordinary gate.
+
+## D20 — The contract is cut THREE ways: a required state axis, an optional walk axis, an optional dispatch axis; the guard and the performer move onto the state (2026-10-01)
+
+**2026-10-01. Phase 1974. Supersedes D18's single `ProgramWitness` record and amends D19 decisions 1
+and 3; rereads K4 of `docs/generic-tier.md` §3.7.**
+
+Three witnesses have now measured the contract: the UI tier, which fills every member; a verb
+(D19), which filled six of thirty-one meaningfully; and a document pipeline under a server placement
+— a domain whose state is its tree — which filled fourteen of thirty-two. The members vacuous for
+both non-UI witnesses are the same set. This entry cuts the contract along it.
+
+**1. Three records, composed; the composition's type says which are filled.** `StateWitness<'Node,
+'Op>` is REQUIRED — `Stream`, `Reach`, `AbsoluteTarget`, `Canonical`, `Diff`, `View`: the state the
+ops apply to, what an op reaches, its canonical form, how a refusal crosses (D19 decision 4,
+unchanged), and which ops are guards. `WalkWitness<'Node>` is OPTIONAL — `Nodes`, `Traverse`,
+`Cost`, `QueryReaders`: the read-only walks, independent of dispatch, which is why it is an axis and
+not half of the next one. `DispatchWitness<'Node, 'Action, 'Expr, 'Store, 'Effect>` is OPTIONAL —
+`Handlers`, `Events`, `Resolve` and the `Action`, `Expr`, `Store` and `Effect` sub-records: what an
+event-driven fold over a tree needs, so a domain that fills it is saying it has events.
+`ProgramWitness<'Node, 'Op, 'Walk, 'Dispatch>` composes them, an unfilled position holding
+`Unfilled`. A core path names the axes it reads in its signature, so a path that reads an axis a
+composition does not fill is a COMPILE error, never a runtime default standing in for a member nobody
+wrote. The paths that must run under every composition — the fold, the server handler, the server
+demanded projection — read the dispatch position through `IDispatchPosition`, which `Unfilled`
+answers at action and effect types that have no values (`Nothing`) and a `unit` store: a handler
+there cannot hold a compute stage, because there is nothing to put in one, and a landing slot has no
+binding channel to land in, so it is refused while planning (`no-binding-channel`).
+
+**2. Why the two-axis proposal was wrong, on two data points.** The verb suggested "tree optional,
+ops required" because the verb had no tree. The document has a tree and fills six of its eleven tree
+members faithfully — and nothing on its path reads them to any effect but the walk and the hash: no
+handler is reached from a document node, nothing budgets one by its handlers, nothing re-resolves one
+from a store. (a) That cut would have had the document fill a whole axis for nothing, because the
+members it lacks — handlers, events, the action view, the store, the effects — are not the tree; they
+are DISPATCH. (b) It would have left both capabilities the document actually lacked where they were:
+the guard, which resolved against the store and could not see the tree, and the performer, which was
+handed the op and never the state. Both are about the STATE, and the cut that puts them there is the
+one that names a state axis.
+
+**3. The guard moves onto the state: `OpView.Require` (F-GUARD; amends D19 decision 1).** D19 put the
+halting refusal in the action view and had it read the state channel, saying a domain that keeps its
+model in the tree exposes what its guards read through the channel. The document showed what that
+costs: nothing moves the planned tree into the store, so a handler that planned a banned edit and then
+required the pack committed and published it, while the same check as an op refused it. The op
+channel now has a guard shape: an op the state witness views as `Require` is resolved through the
+op's own apply against the state AS OF ITS POSITION IN THE PLAN — `Ok` holds and the state does not
+move (the answer is discarded, so a guard cannot write), `Error reason` halts with `reason` verbatim as
+the `ApplyOps` arm's existing `Failed`, the same W5 crossing — and it is never staged and never
+performed. Its demanded-projection contribution is its reach under `ApplyOps`, as an edit's is, so
+the argument policy binds a guard on the same terms. The fold's `Require` stays: it is the right guard
+for a domain whose guards are over the binding store. No view shape, stage kind, effect arm or
+diagnostic was added. `guard_holds_moves_nothing` and `guard_refusal_halts` in `Staging.fst`.
+
+**4. The performer is handed the state (F-PERFORM; amends D19 decision 3).**
+`OpPerformance.Performed` is `'Node -> 'Op -> Result<unit, string>`: each edit is staged with the
+planned state with that edit applied. For a verb whose op is the act this is unused; for a tail that
+persists what the plan produced — render the document, commit the ops — it is the difference between
+being handed the plan and folding the ops again from the entry state in the trusted base, which is
+the plan phase run twice, once inside Program and once outside it. `Performed`, the `PerformFailed`
+prefix report and the two-phase discipline are unchanged; `performer_handed_the_plan` proves the last
+edit's state is the plan's final state, and `plan_pure` still holds because the plan reads only what
+the registered performer STAGES.
+
+**5. K4 is a dispatch-axis fact.** One mutable state channel beside the tree is what an event-driven
+fold writes; the verb has no such channel and the document keeps its bound values inside itself. The
+channel lives on the dispatch axis and nowhere else.
+
+**What a fourth domain reads, per axis.**
+
+- **State — always.** Six members, every one meaningful for any domain with ops: apply / encode /
+  decode, reach, absolute target (replay), canonical form (the signed envelope's hash), diff (the
+  session loop's; an empty diff is legal and stated), and which ops are guards (`OpView.edits` if
+  none). Obligations: the apply is total and pure; the encoder is canonical (K6); a typed refusal
+  renders canonically into the reason and parses back (W5); a reach value is a name the op reaches,
+  never what it writes (D19).
+- **Walk — if the state is a tree you want priced, walked or projected.** Obligations: `Children` and
+  `ReplaceChildren` invert each other; ids have a faithful string form (K1); `Cost` is the node's own
+  data cost, and the saturating arithmetic is the core's.
+- **Dispatch — only if nodes carry handlers that events dispatch.** Obligations: the view unfolds a
+  finite tree and its laws are the fold's (K2, K3, K5, K8); a leaf writes no store; the reserved
+  namespace is the witness's predicate. A domain without events fills `Unfilled`: its reads and
+  guards are ops, and its tail is a performer handed the plan.
+
+**D14 applied a third time:** `proofs/README.md` gained "The three axes" — each theorem's members and
+so the axes it needs — before a `.fs` file moved; `Staging.fst` restated its `ApplyOps` arm as one
+fold and gained the three theorems above, every earlier statement unchanged; `EffectGate.fst`
+followed.
+
+**What this forecloses.** A member added to the contract names its axis, and a new core path names
+the axes it reads; a path that reads dispatch "if present" is the defect this entry removes. A guard
+that must thread a store through sub-actions is still a view shape and a model change under D14 (K2's
+falsifier stands), on the dispatch axis.
+
+**Version.** Rides the `0.7.0` draft: the slot is untagged, publicly unpinned and already breaking,
+and a draft moves only for a change of a higher class (`STABILITY.md`). No wire member moved
+(`docs/generic-tier.md` §6). The in-repo witnesses are the regression test: the UI adapter
+byte-identical through the parity suite, the verb filling the state axis only, and a document
+pipeline filling state and walk, with the third instantiation's two guard tests inverted and its
+performer's re-fold removed (`tests/Fuaran.Program.Tests/`).

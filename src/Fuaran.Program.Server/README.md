@@ -136,7 +136,11 @@ registers an op performer — `Handler.runWith … (OpPerformance.performedBy pe
 ops are applied in memory while planning and performed after the plan commits, one staged call per op
 in plan order beside the host calls, with `Performed` naming `ApplyOps` once per op that ran and a
 part-way failure reported as the prefix that did. `Handler.run` is `runWith` in memory, the UI tier's
-placement and the default. The argument policy reads what an op REACHES through the op witness's
+placement and the default. Since Phase 1974 (D20) the performer is handed the planned state as of
+each op beside the op (`'Node -> 'Op -> Result<unit, string>`), an op the state witness views as a
+guard (`OpView.Require`) is resolved against the plan and never staged, and a handler runs under a
+witness that fills no dispatch axis — effect stages only, with a landing slot refused while planning
+as `no-binding-channel`. The argument policy reads what an op REACHES through the state witness's
 `Reach`, so an `AllowList` or a `Ceiling` on `ApplyOps` binds, and the demanded document carries the
 reach beside the capability.
 

@@ -1,7 +1,7 @@
 # The generic tier — inventory, witness contract, adapter home
 
-**Status: design note for Phase 1895.** The binding parts are in [`DECISIONS.md`](../DECISIONS.md)
-D18. This note holds the evidence behind them: the inventory the contract is sized against, the
+**Status: design note for Phase 1895, amended by Phases 1967 and 1974.** The binding parts are in
+[`DECISIONS.md`](../DECISIONS.md) D18, D19 and D20; §3 is written around the three axes D20 cut. This note holds the evidence behind them: the inventory the contract is sized against, the
 contract itself member by member, why each assumption it keeps is kept, the two adapter homes with
 their costs, and the consumers the change reaches. Phase 1896 cuts the core against §3; Phase 1897
 builds the adapter against §4 and migrates the consumers in §5.
@@ -154,23 +154,63 @@ them into Core would repeat D4's error one layer down, where it would cost more 
 
 ## 3. The witness contract
 
-The core is parameterised by one record, `ProgramWitness`. It is built from sub-records so that a
-placement needing only part of it (the browser client never touches the handler codecs) can take
-only that part. The type names below are the ones Phase 1896 introduces. The shapes are binding;
-the spellings are the implementer's choice.
+**Since Phase 1974 (D20) the contract is three records, composed.** Three witnesses have now measured
+it — the UI tier, a store-mutating verb, a document pipeline whose state is its tree — and what they
+share is not the tree: it is a **state** with an op algebra over it, a canonical form, a reach and a
+refusal. What only the UI tier has is **dispatch from the tree**: handlers and events on nodes, a
+binding store beside the tree the fold writes into, client effects. And what a domain with a tree
+but no events has is a **walk**: the read-only passes over its structure. So:
 
 ```fsharp
-/// What the algebra asks of a domain, and nothing more.
-type ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect> =
-    { Tree:    TreeWitness<'Node, 'Action, 'Store>      // §3.1
-      Action:  ActionWitness<'Action, 'Expr, 'Store, 'Effect>   // §3.2
-      Expr:    ExprWitness<'Expr, 'Store>                // §3.3
-      Store:   StoreWitness<'Store>                      // §3.4
-      Op:      OpWitness<'Node, 'Op>                     // §3.5
-      Effect:  EffectWitness<'Effect> }                  // §3.6
+type StateWitness<'Node, 'Op> =                     // REQUIRED — §3.5
+    { Stream: StreamWitness<'Op, 'Node, string>     // Core, reused: Apply / Encode / Decode
+      Reach: 'Op -> OpReach
+      AbsoluteTarget: 'Op -> string option
+      Canonical: 'Node -> string
+      Diff: 'Node -> 'Node -> 'Op list
+      View: 'Op -> OpView }                          // Edit | Require — the op-channel guard
+
+type WalkWitness<'Node> =                            // optional — §3.1
+    { Nodes: NodeWitness<'Node, string>; Traverse: 'Node -> 'Node list
+      Cost: 'Node -> int; QueryReaders: 'Node -> QueryReader list }
+
+type DispatchWitness<'Node, 'Action, 'Expr, 'Store, 'Effect> =   // optional — §3.2–§3.4, §3.6
+    { Handlers: 'Node -> (string * 'Action) list; Events: 'Node -> string list
+      Resolve: 'Store -> 'Node -> 'Node
+      Action: ActionWitness<'Action, 'Expr, 'Store, 'Effect>
+      Expr: ExprWitness<'Expr, 'Store>; Store: StoreWitness<'Store>; Effect: EffectWitness<'Effect> }
+
+type ProgramWitness<'Node, 'Op, 'Walk, 'Dispatch> =
+    { State: StateWitness<'Node, 'Op>; Walk: 'Walk; Dispatch: 'Dispatch }   // 'Walk / 'Dispatch: the axis, or Unfilled
 ```
 
-### 3.1 The tree
+**The type says which axes a domain filled, and a core path's signature says which it reads.** A
+function that reads the walk takes `ProgramWitness<'Node, 'Op, WalkWitness<'Node>, 'Dispatch>`; one
+that reads handlers on nodes takes `FullWitness<…>` (all three); one that reads only ops takes the
+composition at any `'Walk` and `'Dispatch`. Handing a composition that does not fill an axis to a
+path that reads it is a **compile error**, not a runtime default. The paths that must run under
+EVERY composition — the fold (`BoundedActions.run`), the server handler (`Handler.run` /
+`runWith`), the server tier of the demanded projection (`ServerDemanded.ofHandler`) — read the
+dispatch position through `IDispatchPosition`, which `DispatchWitness` answers with its fold
+sub-records and `Unfilled` answers with nothing, at action and effect types that have **no values**
+(`Nothing`) and a `unit` store. So a handler under a dispatch-less composition cannot hold a compute
+stage (there is nothing to put in one), and its one reachable consequence is that there is no
+binding channel: a landing slot (`RunQuery`, a `HostCall`'s `into`) is refused while planning as
+`no-binding-channel`.
+
+| Axis | Who fills it | Read by |
+|---|---|---|
+| **state** (required) | every domain | the handler's op arm, the argument policy, the server demanded projection's reach, the signed envelope's tree hash (`Canonical`), replay's op classification, the session diff |
+| **walk** (optional) | a domain whose state is a tree it wants priced or walked — the UI tier, the document pipeline | the budget, the query-reader census, re-resolution's structure, the client demanded projection |
+| **dispatch** (optional) | a domain with events — the UI tier, the toy | the fold, compute stages, handlers and events on nodes, re-resolution's per-node step, landing slots, the action and client-effect codecs |
+
+The sub-sections below keep their Phase 1896 numbering. Each says which axis it now belongs to.
+
+### 3.1 The tree — now the WALK axis, and three members of dispatch
+
+_Phase 1974: `Nodes`, `Traverse`, `Cost` and `QueryReaders` are the walk axis; `Handlers`, `Events`
+and `Resolve` read a node to DISPATCH from it and moved to the dispatch axis; `Canonical` is the
+state's canonical form and moved to the state axis. The Phase 1896 shape, for the record:_
 
 ```fsharp
 type TreeWitness<'Node, 'Action, 'Store> =
@@ -189,7 +229,12 @@ also the reason `Cost` and `QueryReaders` are per node. It is the same projectio
 already takes for the budget, where "the per-node classification reaches the model as a
 `cost_shape`". The model never carried the node vocabulary, so the contract does not either.
 
-### 3.2 The action view — the centre of the contract
+### 3.2 The action view — the centre of the DISPATCH axis
+
+_Phase 1974: the action view is the dispatch axis's, and so is the fold. Its laws name no state and no
+walk member (`proofs/README.md`, "The three axes"). It was called the centre of the contract when the
+contract had one witness; three witnesses later the centre they share is the state axis, and the
+view is the centre of the axis only an event-driven domain fills._
 
 ```fsharp
 type ActionView<'Action, 'Expr> =
@@ -251,7 +296,7 @@ tag walk. Today's walk only ever runs on `encodeAction`'s output (`HandlerWire.f
 whose `ops` is not an array cannot be encoded. The string coupling to `"Call"`, `"Chain"`/`"ops"` and
 `"SetState"`/`"valueFrom"` then disappears.
 
-### 3.3 Expressions
+### 3.3 Expressions — dispatch axis
 
 ```fsharp
 type Resolution = Resolved of JVal | NotResolved | Errored of string   // program-owned
@@ -264,7 +309,11 @@ Today's `Resolution` has a fourth case, `I18nUnresolved`. Only `TextSource` reso
 and only inside the UI leaves (`Navigate`, `WriteToClipboard`). The core never sees it, so the core's
 type has three cases and the adapter maps the fourth inside its own `Lower`.
 
-### 3.4 The store
+### 3.4 The store — dispatch axis
+
+_Phase 1974: the binding store is K4's state channel, and K4 turned out to be a dispatch-axis fact
+(§3.7): a verb has no binding store, and a document keeps its bound values inside the document. A
+composition with no dispatch axis has no store at all — its `ServerStore` bindings are `unit`._
 
 ```fsharp
 type StoreWitness<'Store> =
@@ -277,7 +326,10 @@ type StoreWitness<'Store> =
 `Assign` takes a `JVal`. Converting it to the store's internal representation (the UI's
 `JValObj.toObj`) is the store's own business.
 
-### 3.5 Ops
+### 3.5 Ops — the STATE axis (required)
+
+_Phase 1974: `OpWitness` became `StateWitness`, gaining `Canonical` (from the tree) and `View` (the
+op-channel guard below). It is the one record every domain fills._
 
 ```fsharp
 type OpReach =                                              // what one op REACHES (Phase 1967, D19)
@@ -336,7 +388,28 @@ refusal renders itself canonically (`Canon.render` over its own JSON) into the s
 or a guard's `Errored` carries, and parses itself back on the far side; the in-repo second witness
 pins that crossing.
 
-### 3.6 Effects and claims
+**The op-channel guard (Phase 1974, D20 — the third witness's F-GUARD).** `View: 'Op -> OpView` says
+which ops are guards. `OpView.Require` makes an op one: the handler resolves it through the op's own
+`Stream.Apply` against the state AS OF ITS POSITION IN THE PLAN — the state the ops before it
+produced, not the entry state. `Ok` holds and the state does NOT move (the answer is discarded, so a
+guard cannot write); `Error reason` halts the handler with `reason` verbatim as the `ApplyOps`
+arm's `Failed`, which is how a domain's typed refusal reaches the halt through the same W5 crossing
+an apply refusal takes. A guard is never staged and never performed. Its demanded-projection
+contribution is its reach, under `ApplyOps`, exactly as an edit's: the names it reads (a pack, a
+path), which the argument policy binds on the same terms, so the document and the enforcement stay
+one enumeration. The fold's `ActionView.Require` stays for a domain whose guards are over the
+binding store; the two are not alternatives but the guards of two different states, and a domain
+uses the one over the thing its guards read. Proved: `guard_holds_moves_nothing`,
+`guard_refusal_halts` (`Staging.fst`).
+
+**The performer is handed the state (Phase 1974 — F-PERFORM).** `OpPerformance.Performed` is
+`'Node -> 'Op -> Result<unit, string>`: each edit is staged with the planned state WITH THAT EDIT
+APPLIED, and the state handed with the last edit performed is the state the plan produced
+(`performer_handed_the_plan`). A tail that renders or commits what the plan produced is handed it,
+rather than folding the ops a second time from the entry state in the trusted base. `Performed` and
+the `PerformFailed` prefix report are unchanged in shape.
+
+### 3.6 Effects and claims — dispatch axis
 
 ```fsharp
 type EffectWitness<'Effect> =
@@ -370,6 +443,20 @@ with the evidence that would show it to be wrong.
 | K6 | **Referenced vocabularies have one canonical encoder, and the core splices its output verbatim.** | Rule 1 of the wire specification's §3. It is the whole basis for the invariance claim in §6. | A witness whose encoder is not canonical. The composite documents stop being byte-stable, and the codec corpus goes red. |
 | K7 | **`Fuaran.Core`'s `Hash.sha256Hex` is byte-identical to `Fuaran.UI.Hashing.sha256Hex`.** | Both are SHA-256 over the UTF-8 bytes, rendered as lowercase hex. Taking Core's version removes a UI reference from `SignedEnvelope`. | An envelope signed before the cut that fails to verify after it. Phase 1896 pins one such envelope as a test before the swap. |
 | K8 | **An event is dispatched by the transport, not by the algebra.** | `Validation.validate` (its gate, its reject reasons, `LiveEvent`) is UI transport. The algebra begins at the point where an action has already been chosen. | None. This is where the line between the core and the adapter is drawn. |
+
+**Read against three witnesses (Phase 1974).** The table above was written with one witness; the
+verb and the document pipeline have read it since. What each assumption is now a fact about:
+
+| # | Reading after three witnesses |
+|---|---|
+| K1 | **Holds, and is a walk/state fact.** The document pipeline's ids are TYPED and have a faithful string form through the domain's own id witness; the verb names files by path. Neither is the falsifier. |
+| K2 | **Holds as amended (1967), and is a dispatch fact.** Control structure in the ACTION view is the fold's. A domain with no actions has no K2 to meet; its guard is the op channel's (`OpView.Require`), which is not a view shape. |
+| K3 | **Dispatch fact.** Not reached by either non-UI witness — neither has leaves. |
+| K4 | **A dispatch-axis fact, not a Program fact.** The verb uses no binding store; the document pipeline keeps its bound values INSIDE the document. The state channel is what an event-driven fold writes beside its tree, and only a domain that fills the dispatch axis has one. The 1967 sentence "a domain that keeps its model in the tree exposes what its guards read through the channel" is withdrawn: such a domain now guards on the op channel, against the state itself. |
+| K5 | **Dispatch fact.** The reserved namespace is a namespace of the binding store; a composition without one has nothing reserved and refuses every landing slot instead. |
+| K6 | **Holds, state fact.** Both non-UI witnesses' op bytes splice into the envelopes verbatim. |
+| K7 | **Not reached** by either. |
+| K8 | **Holds trivially**, and is the dispatch axis's boundary: a domain without events has no transport to dispatch them. |
 
 **Deliberately not kept:** the fourteen-case `Action` DU, `NodeKind`, `BindingSources` as a type,
 `TreeOp`, `ClientEffect`, `LiveEvent`, `DomPatch`, the UI's four-case `Resolution`, `WireTree`, and
@@ -413,6 +500,20 @@ And four more since 0.7.0 (Phase 1967, D19), each forced by the second witness r
   interpreter runs in memory and journals no performed op — stated, not covered.
 - **The demanded document is at version 5**, with `reach` on the server tier (§6).
 
+And the cut itself (Phase 1974, D20), forced by the third witness:
+
+- **`ProgramWitness` is `{ State; Walk; Dispatch }`**, with the walk and dispatch positions typed by
+  what fills them (§3). Counted as 0.7.0's census counted (`Stream`, `Nodes` and every sub-record
+  member by member), its 32 members plus the new `View` are now 8 required (state: the three
+  `Stream` members, `Reach`, `AbsoluteTarget`, `Canonical`, `Diff`, `View` — six top-level fields), 7
+  optional on the walk axis and 18 optional on the dispatch axis. `FullWitness` abbreviates the
+  all-three shape.
+- **`StateWitness` gains `Canonical` and `View`; `OpPerformance` gains the state** (§3.5). The signed
+  envelope's tree hash reads `State.Canonical` and nothing else of the witness, so `SignedEnvelope`
+  takes the state axis — a correction to the phase's own statement, which named it a walk reader.
+- **The landing-slot refusal for a dispatch-less composition** (`no-binding-channel`) is the one new
+  halt reason. No wire member moved.
+
 ### 3.8 How D14 applies to this cut
 
 D14 says that when the generic tier is cut, its model comes first. The fold's model already exists:
@@ -433,6 +534,12 @@ keep their names and statements; the generic sequence homomorphism gains a halti
 `fold_no_require_no_halt` makes vacuous for every view without a guard, which is how the UI corollary
 stays unconditional — BEFORE the port that added the shape. `Staging.fst` was extended the same way
 for the op performer, before the handler was.
+
+D14 applied a third time at Phase 1974. `proofs/README.md` gained "The three axes" — which members
+each theorem names, and so which axes a witness must fill for it to say anything — before a `.fs`
+file moved; `Staging.fst` restated the `ApplyOps` arm as one fold (`plan_ops`) carrying the guard and
+the performer's state, and gained `guard_holds_moves_nothing`, `guard_refusal_halts` and
+`performer_handed_the_plan`, with every earlier statement unchanged; `EffectGate.fst` followed.
 
 ### 3.10 The second witness (Phase 1967)
 
@@ -468,6 +575,52 @@ The in-repo witness that stands for that domain — a verb over an in-memory fil
 adversary per finding — is `tests/Fuaran.Program.Tests/VerbDomain.fs`, in the project that references
 no UI package. That domain's own differential and adversaries are the regression test for whether its
 parallel machinery can now be deleted; re-running it is that domain's act, not this repository's.
+
+### 3.11 The third witness (Phase 1974)
+
+The third instantiation was the opposite corner from the verb: a document pipeline under a server
+placement — a domain whose state is its tree. A full typed tree with a fourteen-case op algebra,
+typed ids, a typed op rejection, a default-deny block gate, and no action algebra at all; stages
+that read, guard, mutate, render and commit. It ran under the unmodified 0.7.0 `Handler.runWith`,
+byte-identical to the hand-composed pipeline over its whole corpus, and Program's gate decided what
+the domain's gate decided. Its census of the contract:
+
+| Witness | Meaningful | Vacuous | Unfillable |
+|---|---|---|---|
+| UI tier | 32 | 0 | 0 |
+| verb (1967) | 6 | 24 | 1 |
+| document pipeline | 14 | 17 | 1 |
+
+The tree half went from one meaningful member (the verb) to six (the document) — ids, children,
+replace-children, traverse, canonical — and nothing on the pipeline's path read them to any effect
+but the walk and the hash. **The members vacuous for both non-UI witnesses are the same set, and it
+is not the tree: it is dispatch.** That is why the two-axis proposal the verb suggested — tree
+optional, ops required — was wrong, on two data points: it would have had the document fill a whole
+axis for nothing, and it would have left the two capabilities the document actually lacked where
+they were.
+
+| Finding | What the domain built beside Program | What Program now has (D20) |
+|---|---|---|
+| **F-GUARD** — `Require` resolves against the binding store, and nothing moves the planned tree into it: a handler that planned a banned edit and then required the pack committed and published the term | its guard as an op whose apply refuses | `OpView.Require`: a guard on the op channel, over the state as planned (§3.5) |
+| **F-PERFORM** — the op performer was handed the op and never the planned state | a performer that folds the ops again from the entry document, in the trusted base | the state as of each op, handed with it (§3.5) |
+| **F-DENY** — no deny-list clause | an allow-list over an id universe that an insert makes stale | `DenyList` (Phase 1975, §3.5) |
+| **F-NODE / F-STATE** — one `'Node` for the walked tree and the op state; the state is in the tree, so K4's channel is empty | — | the axes themselves; K4 reread as a dispatch fact (§3.7) |
+
+The in-repo witness that stands for this domain is `tests/Fuaran.Program.Tests/DocDomain.fs`: a tree
+whose bound values live in the document, typed ids with a faithful string form, a typed rejection
+crossing as canonical JSON, no events and no handlers, a pack-style guard, and a render-and-commit
+tail. It fills the state and walk axes. Its two guard tests are the third instantiation's,
+inverted — the op-channel guard refuses the planned banned edit — and its performer's re-fold is gone:
+the sink holds no copy of the document and its rendering is of the document it was handed
+(`DocWitnessTests.fs`). The verb (`VerbDomain.fs`) now fills the state axis only: six members, where
+0.7.0 asked it for thirty-two.
+
+**What a fourth domain reads first.** Fill `StateWitness` — six members, every one meaningful for any
+domain with ops. Fill `WalkWitness` if the state is a tree you want priced, walked or projected
+client-side. Fill `DispatchWitness` only if nodes carry handlers that events dispatch; if they do not,
+your guards are ops (`OpView.Require`), your reads are ops, and your tail is a performer handed the
+plan. The signatures tell you, before a line is written, which Program functions your composition
+can reach.
 
 ---
 
@@ -636,3 +789,11 @@ The one sentence of the specification a registered op performer reads past — �
 is staged" — describes the in-memory placement every conformant host had and every UI host still has.
 Carrying the performer case into the normative text would be a specification act across all five
 artefacts, and it is not taken here; it is recorded as the specification's own follow-on.
+
+**Phase 1974 moved nothing at all.** The three-way cut is a cut of the package surface: no schema,
+no fixture byte, no rule of the program wire specification and no byte of the demanded document
+moved. The op-channel guard is a reading of the domain's own op through its own apply, and its
+refusal is the `Failed` an apply refusal always was; the performer's state is an argument to host
+code, not to any wire; and the one new halt reason (`no-binding-channel`) is reachable only under a
+composition with no dispatch axis, which no UI host is. The UI adapter's codec families, its
+driver scenarios, the parity suite and the Fable leg pass byte for byte.

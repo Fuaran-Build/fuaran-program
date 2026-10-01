@@ -121,6 +121,53 @@ finding; this records what it costs.
   under every producer that wrote version 5, and a reader built before it refuses a document carrying
   one at the clause rather than misreading it. Envelopes signed under the draft need no re-sign.
 
+### Rides the draft: the contract's three-way cut (Phase 1974)
+
+**Class: breaking**, for every consumer that constructs a witness, registers an op performer, or
+names the witness types — the same class this slot already carries, so it rides rather than
+advancing. `v0.6.0` is the newest tag and nothing public pins `0.7.0`; a draft slot moves only for a
+change of a HIGHER class than it carries. (The phase that filed this change expected `0.8.0`; the
+draft-slot rule above is what decides, and it says ride.) The third witness (`docs/generic-tier.md`
+§3.11) measured the contract and found its centre is a state with an op algebra over it, not the
+tree; `DECISIONS.md` D20 records the cut.
+
+- **`ProgramWitness` is `{ State; Walk; Dispatch }`, typed `ProgramWitness<'Node, 'Op, 'Walk,
+  'Dispatch>`.** `StateWitness<'Node, 'Op>` (required — `Stream`, `Reach`, `AbsoluteTarget`,
+  `Canonical`, `Diff`, `View`) replaces `OpWitness`; `WalkWitness<'Node>` (`Nodes`, `Traverse`,
+  `Cost`, `QueryReaders`) and `DispatchWitness<'Node, 'Action, 'Expr, 'Store, 'Effect>` (`Handlers`,
+  `Events`, `Resolve`, `Action`, `Expr`, `Store`, `Effect`) replace `TreeWitness` and the top-level
+  sub-records. An unfilled position holds `Unfilled`. `FullWitness<…>` names the all-three shape.
+  `TreeWitness` and `OpWitness` are gone.
+- **Every core signature names the axes it reads.** The walk readers (`Budget.treeCost`,
+  `QuerySchema.readersOfTree`) take a composition with a `WalkWitness`; the tree readers that also
+  read handlers (`Demanded.ofTree` / `check`, `Resolve.resolveTree`, `ServerDemanded.ofTreeAndHandlers`
+  and the signing/verifying wrappers, `Replay.ofTreeAndHandlers`, `Harvest.ofProgram`,
+  `ServerServices.Witness`) take a `FullWitness`; the action and client-effect codecs, `HandlerWire`,
+  `Replay.admit` / `postureOf` / `withPostures` and `Harvest.ofRegistration` take a composition with a
+  `DispatchWitness`; `BoundedActions.run` / `runInert`, `Budget.actionCascadeCost`,
+  `Demanded.ofAction`, `Handler.run` / `runWith`, `Durable.run` and `ServerDemanded.ofHandler` /
+  `ofHandlers` run under every composition, reading the dispatch position through the new
+  `IDispatchPosition` (`DispatchPosition.fold`). `SignedEnvelope.sign` / `verify` / `treeHash` take
+  the `StateWitness`; `ServerArgumentPolicy.*` takes the `StateWitness`.
+- **The op-channel guard.** `OpView` (`Edit | Require`) and `StateWitness.View`; a guard is resolved
+  against the planned state, never staged or performed, and its refusal is the `ApplyOps` arm's
+  `Failed` with the domain's reason verbatim. `OpView.edits` fills `View` for a domain with none.
+- **The performer is handed the state.** `OpPerformance<'Node, 'Op>`; `Performed of ('Node -> 'Op ->
+  Result<unit, string>)`; `performedBy` takes the same. The state is the planned state with the op
+  applied. `Performed` and the `PerformFailed` prefix report are unchanged.
+- **A dispatch-less composition** runs handlers of `Handler<Nothing, 'Op>` over `ServerStore<'Node,
+  unit>`; a landing slot there is refused while planning as `Handler.NoBindingChannel`
+  (`"no-binding-channel"`), the one new halt reason.
+- **The UI adapter** exposes `UiWitness.state`, `.walk` and `.dispatch` in place of `.ops` and
+  `.tree`; `UiProgramWitness` is a `FullWitness`.
+
+**What did NOT change:** no wire member, no fixture byte, no demanded-document byte for any
+composition that fills the dispatch axis, no proof statement (the staging model gained three
+theorems and restated its arm; every earlier theorem keeps its statement), and the UI tier's
+behaviour, byte for byte through the parity suite and the Fable leg. No envelope needs re-signing.
+
+**What a consumer does about it:** `docs/migrations/phase-1974.md` — one page, a diff per file.
+
 The slot stays a DRAFT: tagging `v0.7.0` is the release gesture, a separate recorded act.
 
 ## 0.6.0 — RELEASED (tagged `v0.6.0`, 2026-09-28) — the core becomes domain-generic (Phase 1896)

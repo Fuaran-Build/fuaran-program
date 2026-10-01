@@ -26,7 +26,7 @@
   "kind": "proofs",
   "version": 1,
   "subject": "Fuaran-Program",
-  "$scope": "the proved models under proofs/: the shared bounded fold — BoundedActions.runBoundedActionWith, the one interpreter every placement runs, over the closed Action union, its State store, its closure-free client effects and its diagnostics (Phase 1715), restated over the generic tier's ActionView and the fold-read members of the ProgramWitness contract (DECISIONS.md D18) and re-proved there before the generic core is written, with the fourteen-arm union kept as the UI witness seen through the view (Phase 1898), and restated over the view's fifth shape — the halting guard Require the second witness needed — before the port that added it, with a fifth theorem that only a guard halts and the UI tier never does (Phase 1967); and the interaction budget — Budget.satAdd/satMul, Budget.actionCascadeCost, Budget.treeCost and the G2 stage of BoundedDriver.step that refuses on them (Phase 1716); and two-phase staging — Handler.run's plan phase, phase boundary and perform phase with the performer abstract, DECISIONS.md D8's law that the residual of a failed handler is exactly the prefix of staged calls that ran (Phase 1717), over a staged list that since Phase 1967 holds ops as well as host calls under a registered op performer. and the effect gate — ServerEffectRegistry.Gate consulted before any performer, the policy an operator declares over the trace of performed effects, and the return contract ServerEffectRegistry.registerChecked composes with a performer, proved over the staging model with the performer abstract (Phase 1759). Bounded code and bounded cost, the two halves of running an untrusted generated tree on shared infrastructure; bounded residue, what a handler that reaches outside can leave behind; and a constrained boundary, what reaches a performer and what it can hand back.",
+  "$scope": "the proved models under proofs/: the shared bounded fold — BoundedActions.runBoundedActionWith, the one interpreter every placement runs, over the closed Action union, its State store, its closure-free client effects and its diagnostics (Phase 1715), restated over the generic tier's ActionView and the fold-read members of the ProgramWitness contract (DECISIONS.md D18) and re-proved there before the generic core is written, with the fourteen-arm union kept as the UI witness seen through the view (Phase 1898), and restated over the view's fifth shape — the halting guard Require the second witness needed — before the port that added it, with a fifth theorem that only a guard halts and the UI tier never does (Phase 1967); and the interaction budget — Budget.satAdd/satMul, Budget.actionCascadeCost, Budget.treeCost and the G2 stage of BoundedDriver.step that refuses on them (Phase 1716); and two-phase staging — Handler.run's plan phase, phase boundary and perform phase with the performer abstract, DECISIONS.md D8's law that the residual of a failed handler is exactly the prefix of staged calls that ran (Phase 1717), over a staged list that since Phase 1967 holds ops as well as host calls under a registered op performer, and since Phase 1974 over an ApplyOps arm that carries the op-channel guard and hands the performer the planned state. and the effect gate — ServerEffectRegistry.Gate consulted before any performer, the policy an operator declares over the trace of performed effects, and the return contract ServerEffectRegistry.registerChecked composes with a performer, proved over the staging model with the performer abstract (Phase 1759). Bounded code and bounded cost, the two halves of running an untrusted generated tree on shared infrastructure; bounded residue, what a handler that reaches outside can leave behind; and a constrained boundary, what reaches a performer and what it can hand back.",
   "claims": [
     {
       "id": "fold-totality",
@@ -687,6 +687,73 @@
           "all_ok"
         ],
         "note": "since Phase 1967 the staged list may hold ops as well as host calls — a placement that registers an op performer (`r_op_perform`; `OpPerformance.Performed` in F#) makes ApplyOps a staged arm, one staged call per op in plan order — and the theorem is stated over that list unchanged"
+      }
+    },
+    {
+      "id": "op-guard-holds-moves-nothing",
+      "level": "proved",
+      "phase": "Phase 1974",
+      "claim": "An op-channel guard — an op the state witness views as Require — that holds at its position in an ApplyOps sequence, against the state the ops before it planned, is invisible to the plan: the sequence plans exactly as the sequence without it, so the ops after it are planned against the same state and nothing is staged for it. A guard's answer is discarded, so it cannot write.",
+      "evidence": {
+        "theorem": "guard_holds_moves_nothing",
+        "model": "proofs/Staging.fst",
+        "prover": "proofs/fstar-pin.json",
+        "supporting": [
+          "plan_ops_app",
+          "plan_ops_nil",
+          "plan_ops_cons",
+          "app_cons"
+        ],
+        "definitions": [
+          "plan_ops",
+          "op_view",
+          "staged_from"
+        ],
+        "note": "the third witness's F-GUARD (DECISIONS.md D20): the guard reads the STATE as planned, where the fold's Require reads the binding store"
+      }
+    },
+    {
+      "id": "op-guard-refusal-halts",
+      "level": "proved",
+      "phase": "Phase 1974",
+      "claim": "An op-channel guard that refuses at its position, against the PLANNED state, refuses the whole ApplyOps effect with its own reason verbatim: the accumulator comes back halted with exactly one new diagnostic, Failed ApplyOps reason, and every other field is the one it was handed, whatever follows the guard. With plan_halt_performs_nothing the handler rolls back and performs nothing, under every performer.",
+      "evidence": {
+        "theorem": "guard_refusal_halts",
+        "model": "proofs/Staging.fst",
+        "prover": "proofs/fstar-pin.json",
+        "supporting": [
+          "plan_ops_app",
+          "plan_halt_performs_nothing"
+        ],
+        "definitions": [
+          "plan_ops",
+          "plan_effect",
+          "halt"
+        ],
+        "note": "a typed refusal rendered into the reason crosses intact — D19's W5, unchanged"
+      }
+    },
+    {
+      "id": "op-performer-handed-the-plan",
+      "level": "proved",
+      "phase": "Phase 1974",
+      "claim": "Under a registered op performer, an op sequence that plans stages its last edit from the sequence's final planned state: the head of the staged list is the call the performer staged from that state and that op. The state a performer is handed with the last op it performs is the state the plan produced, so a tail that persists it folds nothing itself.",
+      "evidence": {
+        "theorem": "performer_handed_the_plan",
+        "model": "proofs/Staging.fst",
+        "prover": "proofs/fstar-pin.json",
+        "supporting": [
+          "plan_ops_no_edit",
+          "last_edit",
+          "plan_ops_nil",
+          "plan_ops_cons"
+        ],
+        "definitions": [
+          "plan_ops",
+          "staged_from",
+          "registry"
+        ],
+        "note": "the third witness's F-PERFORM (DECISIONS.md D20); production's OpPerformance.Performed takes the state as of the op beside the op"
       }
     },
     {
