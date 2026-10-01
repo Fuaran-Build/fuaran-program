@@ -235,19 +235,60 @@ discharges it — under EVERY predicate — for the placements that run no handl
 the theorem from being a conditional nobody has met. `reserved_untouched` is the UI corollary, at
 the host's `isHostReserved`.
 
-### 5. `fold_no_require_no_halt` / `ui_never_halts` — only a guard halts (Phase 1967)
+### 5. `fold_no_halting_shape_no_halt` / `fold_no_require_no_halt` / `ui_never_halts` — which shapes halt (Phase 1967, widened by Phase 1976)
 
-A view with no `Require` in it, at its root or inside a sequence at any depth, folds to an outcome
-that is not halted, under every witness and every placement arm. With `fold_total`'s clause that a
-halted step is a `Require` step, this is the whole account of halting: a guard, and nothing else. An
-answered call never halts either — `handler_answer` carries no halt, by its type, because a handler
-is its own atomicity unit (D8) and one that failed rolled ITSELF back while the fold carries on.
+A view with no guard, no selection and no repeat in it, at its root or inside a sequence, an arm or
+a body at any depth, folds to an outcome that is not halted, under every witness and every placement
+arm (`fold_no_halting_shape_no_halt`). With `fold_total`'s clause that a halted non-composition step
+is a `Require` step, this is the whole account of halting: a guard that does not hold, a branch
+whose condition cannot be decided or whose exit assertion is violated, a repeat whose bound cannot be
+read or is over its range — and nothing else. An answered call never halts either —
+`handler_answer` carries no halt, by its type, because a handler is its own atomicity unit (D8) and
+one that failed rolled ITSELF back while the fold carries on.
 
-`ui_view_no_require` proves the UI witness's `View` produces no `VRequire` at any depth, and
-`ui_never_halts` is the corollary: the UI tier never halts, so a leaf's refusal is a diagnostic and
-the chain carries on, exactly as before the shape existed. It is this lemma, not a convention, that
-lets `run_total`, `run_no_closure`, `chain_homomorphism` and `reserved_untouched` keep their
-pre-1967 statements word for word.
+Phase 1967's statement, "a view with no guard never halts", is FALSE over the widened view (a branch
+with no guard halts on an undecided condition), so `fold_no_require_no_halt` keeps its name as the
+corollary for a view without the new shapes — the extra hypothesis is exactly what 1976 changed.
+
+`ui_view_no_require` and `ui_view_no_flow` prove the UI witness's `View` produces no `VRequire`, no
+`VChoose` and no `VRepeat` at any depth, and `ui_never_halts` is the corollary: the UI tier never
+halts, so a leaf's refusal is a diagnostic and the chain carries on, exactly as before either shape
+existed. It is these lemmas, not a convention, that let `run_total`, `run_no_closure`,
+`chain_homomorphism` and `reserved_untouched` keep their pre-1967 statements word for word.
+
+### 6. `reverse_run` / `reversible_run_undoes` — the reversible fragment undoes itself (Phase 1976)
+
+For every program in the REVERSIBLE FRAGMENT — `reversible`, decided from the tree alone: sequence,
+assign, the guard, a branch WITH an exit assertion, a repeat with a LITERAL bound; never a call or a
+leaf — and every store it runs on (the traced run from that store does not halt, and its trace is
+`restorable`: every write overwrote a PRESENT key), folding the inverse of the run from the store the
+run left gives back the store it started from, and does not halt. In the shard's words, `run (reverse
+p) (run p s) = s`, with `reverse` applied to the RUN — the program and the trace `fold_traced`
+recorded for it — which is what the Bennett embedding of `Assign` makes it: an assignment destroys
+the value it overwrites, so a reversible run records that value and the inverse restores it with an
+ordinary assignment (`write_restore`). `traced_agrees` says the traced fold IS the fold: the outcome
+and the placement are equal at every view, which is what "the forward run records nothing" rests on.
+
+**Conditional**, and named as such: on `restorable`. A key that was absent before the run cannot be
+restored by an assignment — the store has no delete (K4) — so the theorem says nothing about such a
+run, and the code refuses the inverse rather than building it wrong. Everything else is quantified
+over the witness's members as total arrows.
+
+### 7. `fold_steps_within_cost` — a run's work is bounded by the view's cost (Phase 1976)
+
+The steps a run takes, read off its trace (one per non-composition step), never exceed `view_cost`
+— `Budget.actionCascadeCost` over the view, exactly: a sequence sums, a selection is one step and the
+MORE EXPENSIVE arm, a repeat is one step and its body times its bound (a parameter bound at the top
+of its range, so the price needs no store). So the budget's price, computed from the tree before the
+run, bounds the work the run does. Unconditional. The arithmetic is written over the count (`times`)
+so nothing non-linear reaches the solver.
+
+### 8. `repeat_is_unrolling` — a repeat is the sequence of its body (Phase 1976)
+
+A literal repeat folds exactly as the sequence of `n` copies of its body — outcome and placement —
+so `sequence_homomorphism` and every other sequence law is a law about repeats, and the inverse of a
+repeat is the inverse of that sequence (which is why `reverse` answers a sequence for it: each
+iteration overwrote different values and has its own inverse body). Unconditional.
 
 ### Phase 1715's lemmas, one by one
 
@@ -332,22 +373,32 @@ Over the generic tier's view, for every witness (Phase 1898):
    handler-free placements.
 5. **No closure invocation, for any witness that meets its obligation** — `run_action_blind`.
    **Conditional** on `blind_to`: the witness's `View` sends related actions to same-shaped views.
-6. **Only a guard halts** — `fold_no_require_no_halt`, with `fold_total`'s guard clause (Phase 1967).
+6. **Which shapes halt** — `fold_no_halting_shape_no_halt`, with `fold_total`'s guard clause
+   (Phase 1967, widened by Phase 1976: a guard, a branch, a repeat, and nothing else);
+   `fold_no_require_no_halt` kept as the corollary for a view without the new shapes.
    Unconditional.
+7. **The reversible fragment undoes itself** — `reverse_run` / `reversible_run_undoes`, with
+   `traced_agrees` (the traced fold is the fold) and `write_restore` (Phase 1976). **Conditional**
+   on `restorable`: every key the run overwrote was present before it.
+8. **A run's work is within the view's cost** — `fold_steps_within_cost` (Phase 1976).
+   Unconditional.
+9. **A repeat is the sequence of its body** — `repeat_is_unrolling` (Phase 1976). Unconditional.
 
 At the UI witness (Phase 1715's five, each a corollary of the generic theorem above it):
 
-6. **Totality over the closed union** — `run_total`.
-7. **No closure invocation** — `run_no_closure`, with `ui_blind_to_closures` discharging the
-   obligation, so the theorem is unconditional again.
-8. **`Chain` is the fold's homomorphism** — `chain_homomorphism`.
-9. **Host-reserved keys untouched** — `reserved_untouched`, conditional on the same seam
-   hypothesis as 4, discharged the same way.
-10. **The UI tier never halts** — `ui_never_halts`, through `ui_view_no_require` (Phase 1967).
-    Unconditional; it is what keeps 6–9 at their pre-1967 statements.
+10. **Totality over the closed union** — `run_total`.
+11. **No closure invocation** — `run_no_closure`, with `ui_blind_to_closures` discharging the
+    obligation, so the theorem is unconditional again.
+12. **`Chain` is the fold's homomorphism** — `chain_homomorphism`.
+13. **Host-reserved keys untouched** — `reserved_untouched`, conditional on the same seam
+    hypothesis as 4, discharged the same way.
+14. **The UI tier never halts** — `ui_never_halts`, through `ui_view_no_require` (Phase 1967) and
+    `ui_view_no_flow` (Phase 1976: no UI arm views as a branch or a repeat). Unconditional; it is
+    what keeps 10–13 at their pre-1967 statements.
 
 **The conditional theorems, named:** `fold_reserved_untouched` and `reserved_untouched` (on the
-placement seam); `run_action_blind` (on the witness's blindness). Every other theorem is quantified
+placement seam); `run_action_blind` (on the witness's blindness); `reverse_run` and
+`reversible_run_undoes` (on the trace's restorability). Every other theorem is quantified
 over the witness's members as total arrows — the table under "Every parameter of the model is an
 assumption" — and on nothing else. A domain instantiating the generic tier inherits 1–3
 outright, 4 once its arm preserves its reserved keys, and 5 once it proves — or differentially
@@ -710,8 +761,23 @@ The denial sink (`OnDenied`) is a unit-returning observer and is not modelled.
 5. **An op-channel guard that holds moves nothing and stages nothing** — `guard_holds_moves_nothing`.
 6. **An op-channel guard that refuses halts the effect on its own reason, over the planned state** —
    `guard_refusal_halts`.
-7. **The performer is handed the plan: the last edit is staged from the final planned state** —
-   `performer_handed_the_plan`.
+7. **The performer is handed the plan: the last edit of a FLAT sequence is staged from the final
+   planned state** — `performer_handed_the_plan` (`last_edit` answers `ONone` on a sequence with a
+   branch or a repeat in it, so the statement is vacuous there and 11 is the one that holds).
+8. **A branch plans as the arm its entry condition picks, when its exit assertion is absent or
+   agrees** — `choose_plans_the_taken_arm` (Phase 1976).
+9. **A violated exit assertion refuses the effect, after the arm planned, with the assertion
+   named** — `exit_violation_halts` (Phase 1976).
+10. **A repeat plans as its body written out `count` times** — `repeat_plans_as_unrolling`
+    (Phase 1976).
+11. **Whatever the shapes, the head of the staged list was staged from the final planned state** —
+    `staged_from_the_final_state` (Phase 1976): F-PERFORM over branches and repeats, whose last
+    edit is the run's rather than the tree's.
+
+Since Phase 1976 the op view is taken to EXHAUSTION (`op_view o`, `views`), as the action view has
+been since Phase 1898: `plan_ops` plans the views (`plan_views` / `plan_view` / `plan_repeat`), so
+planning terminates structurally and the obligation that `View` unfolds finitely sits on the
+witness. Every earlier theorem keeps its statement over the op sequence.
 
 No `admit`, no `assume`; `--report_assumes error` is on for this module exactly as it is for
 the other two.

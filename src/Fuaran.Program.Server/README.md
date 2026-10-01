@@ -142,7 +142,12 @@ guard (`OpView.Require`) is resolved against the plan and never staged, and a ha
 witness that fills no dispatch axis — effect stages only, with a landing slot refused while planning
 as `no-binding-channel`. The argument policy reads what an op REACHES through the state witness's
 `Reach`, so an `AllowList` or a `Ceiling` on `ApplyOps` binds, and the demanded document carries the
-reach beside the capability.
+reach beside the capability. Since Phase 1976 (D21) an op the state witness views as a branch
+(`OpView.Choose`) plans as the arm its entry condition picks — the condition is an op applied for its
+answer, `Ok` the true arm and `Error` the false — and is refused, with the assertion named, when its
+exit assertion disagrees with the arm it took; one viewed as a repeat (`OpView.Repeat`) plans its
+body that many times. The policy and the demanded document read an op's reach over itself and every
+op beneath it, both arms included.
 
 The question the note left open — **idempotency on replay** — is answered by the second interpreter
 below, and answered with its boundary attached rather than in general. The note itself

@@ -984,6 +984,170 @@
         "document": "docs/performer-boundary.md"
       },
       "reason": "a performer is handed VALUES and no reference — its argument is a JVal and the store it lands into is the handler's own immutable record, updated through Assign on its behalf — so at the handler seam the 'only shareable references are modified' theorem is vacuous and a label would be a second mechanism for what the performer's type already fixes; at the extension hook (withExtensions / IHostedService), where the ledger would want it, the state is higher-order and the paper's own first-order restriction excludes the model. The hook stays host-trust territory, per the escape-hatch inventory; the decision and what would reopen it are in the design note."
+    },
+    {
+      "id": "flow-shapes-halting",
+      "level": "proved",
+      "phase": "Phase 1976",
+      "claim": "Over the view widened with selection (Choose) and bounded iteration (Repeat), a view with no guard, no branch and no repeat in it never halts, under every witness and every placement arm; the three are the whole account of halting, and Phase 1967's guard-only statement is kept as the corollary for a view without the new shapes.",
+      "evidence": {
+        "theorem": "fold_no_halting_shape_no_halt",
+        "model": "proofs/BoundedFold.fst",
+        "prover": "proofs/fstar-pin.json",
+        "supporting": [
+          "fold_no_require_no_halt",
+          "fold_total",
+          "ui_view_no_flow",
+          "ui_never_halts"
+        ],
+        "definitions": [
+          "has_require",
+          "has_flow",
+          "may_halt",
+          "composition"
+        ],
+        "note": "fold_total's structural characterisation now excludes the three COMPOSITION shapes (sequence, selection, repeat) rather than the one; the UI tier views nothing as either new shape (ui_view_no_flow), so every UI theorem keeps its pre-1967 statement word for word"
+      }
+    },
+    {
+      "id": "reversible-fragment-undoes-itself",
+      "level": "proved",
+      "phase": "Phase 1976",
+      "claim": "For every program in the reversible fragment — sequence, assign, the guard, a branch with an exit assertion, a repeat with a literal bound; decided from the tree alone — and every store it runs on whose overwritten keys were present, folding the inverse of the run (the program and its Bennett trace) from the store the run left restores the starting store and does not halt: run (reverse p) (run p s) = s.",
+      "evidence": {
+        "theorem": "reverse_run",
+        "model": "proofs/BoundedFold.fst",
+        "prover": "proofs/fstar-pin.json",
+        "supporting": [
+          "reversible_run_undoes",
+          "traced_agrees",
+          "write_restore",
+          "sequence_homomorphism"
+        ],
+        "definitions": [
+          "reversible",
+          "restorable",
+          "trace",
+          "fold_traced",
+          "reverse",
+          "reverse_many",
+          "replicate"
+        ],
+        "note": "the inverse is built from the RUN: an assignment destroys the value it overwrites, so a reversible run records it (fold_traced) and the inverse restores it with an ordinary assignment; the forward fold records nothing and traced_agrees proves the two agree in outcome"
+      },
+      "conditional_on": "restorable: every key the run assigned was present before it. A key that was absent cannot be restored by an assignment (the store has no delete, K4), so the trace says so and the code refuses the inverse rather than building it wrong."
+    },
+    {
+      "id": "run-within-cost",
+      "level": "proved",
+      "phase": "Phase 1976",
+      "claim": "The steps a run takes never exceed the view's cost as the budget prices it: a sequence sums, a selection is one step plus the more expensive arm, a repeat is one step plus its body times its bound (a parameter bound at the top of its range), so the price computed from the tree before the run bounds the work the run does.",
+      "evidence": {
+        "theorem": "fold_steps_within_cost",
+        "model": "proofs/BoundedFold.fst",
+        "prover": "proofs/fstar-pin.json",
+        "supporting": [
+          "times_monotone"
+        ],
+        "definitions": [
+          "view_cost",
+          "trace_steps",
+          "times"
+        ],
+        "note": "Budget.actionCascadeCost computes view_cost in saturating arithmetic; the model's figure is the exact one it saturates"
+      }
+    },
+    {
+      "id": "repeat-is-unrolling",
+      "level": "proved",
+      "phase": "Phase 1976",
+      "claim": "A literal repeat folds exactly as the sequence of its body written out that many times — outcome and placement — so every sequence law is a law about repeats, and the inverse of a repeat is the inverse of that sequence.",
+      "evidence": {
+        "theorem": "repeat_is_unrolling",
+        "model": "proofs/BoundedFold.fst",
+        "prover": "proofs/fstar-pin.json",
+        "definitions": [
+          "fold_repeat",
+          "replicate"
+        ]
+      }
+    },
+    {
+      "id": "op-branch-plans-as-its-arm",
+      "level": "proved",
+      "phase": "Phase 1976",
+      "claim": "On the op axis a branch whose exit assertion is absent or agrees with the arm its entry condition picked plans exactly as that arm: the entry condition and the exit assertion move nothing and stage nothing, and a repeat plans exactly as its body written out count times.",
+      "evidence": {
+        "theorem": "choose_plans_the_taken_arm",
+        "model": "proofs/Staging.fst",
+        "prover": "proofs/fstar-pin.json",
+        "supporting": [
+          "repeat_plans_as_unrolling",
+          "plan_views_app",
+          "plan_ops_app"
+        ],
+        "definitions": [
+          "op_view",
+          "views",
+          "plan_views",
+          "plan_view",
+          "plan_repeat",
+          "plan_ops",
+          "unroll"
+        ],
+        "note": "the op view is taken to exhaustion since this phase, as the action view has been since Phase 1898; every Phase-1974 theorem keeps its statement over the op sequence"
+      }
+    },
+    {
+      "id": "op-exit-violation-halts",
+      "level": "proved",
+      "phase": "Phase 1976",
+      "claim": "On the op axis a branch whose exit assertion disagrees with the arm it took — held after the false arm, or refused after the true arm — refuses the whole ApplyOps effect after the arm planned, with the assertion named (the assertion's own refusal text after the true arm), and the handler halts on that reason with nothing performed.",
+      "evidence": {
+        "theorem": "exit_violation_halts",
+        "model": "proofs/Staging.fst",
+        "prover": "proofs/fstar-pin.json",
+        "supporting": [
+          "plan_halt_performs_nothing",
+          "plan_view_choose"
+        ],
+        "definitions": [
+          "exit_violation_reason"
+        ]
+      }
+    },
+    {
+      "id": "staged-from-the-final-state",
+      "level": "proved",
+      "phase": "Phase 1976",
+      "claim": "Under a registered op performer, an op sequence of any shape that plans and stages anything stages its last staged edit from the sequence's final planned state: F-PERFORM over branches and repeats, whose last edit is the run's rather than the tree's.",
+      "evidence": {
+        "theorem": "staged_from_the_final_state",
+        "model": "proofs/Staging.fst",
+        "prover": "proofs/fstar-pin.json",
+        "supporting": [
+          "performer_handed_the_plan"
+        ],
+        "definitions": [
+          "handed",
+          "flat",
+          "last_edit"
+        ],
+        "note": "performer_handed_the_plan keeps its statement and is vacuous on a sequence with a branch or a repeat in it (last_edit answers ONone there); this is the statement that holds for those"
+      }
+    },
+    {
+      "id": "flow-shapes-model-agrees-with-shipped-code",
+      "level": "tested",
+      "phase": "Phase 1976",
+      "claim": "The shipped fold and the extracted model agree, step for step, on every arm and every halt of the two flow shapes — the true and false arms with and without an exit assertion, each exit violation, an undecided condition, a literal and a parameter bound, an over-bound and an unreadable count, a halt inside a body, and the shapes nested — over the toy witness's corpus.",
+      "evidence": {
+        "family": "the toy corpus's Phase-1976 cases",
+        "host": "tests/Fuaran.Program.Parity.Tests/ProofOracleTests.fs",
+        "cases": "19 flow cases in toyCorpus, run in sequence against BoundedFold.run_action",
+        "runner": "proofs/check.ps1, step 6",
+        "note": "the differential compares store, effects, diagnostics, halt and placement after every case; the verb witness's tests (tests/Fuaran.Program.Tests/VerbWitnessTests.fs) cover the op axis end to end under Handler.runWith"
+      }
     }
   ]
 }

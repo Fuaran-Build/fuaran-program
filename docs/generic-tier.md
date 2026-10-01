@@ -242,7 +242,13 @@ type ActionView<'Action, 'Expr> =
     | Assign   of key: string * value: JVal option * from: 'Expr option   // today: SetState
     | Call     of endpoint: string * declaresTarget: bool    // today: Call; a declared target is refused (D9)
     | Require  of condition: 'Expr                           // the HALTING guard (Phase 1967, D19); no UI arm
+    | Choose   of entry: 'Expr * whenTrue: 'Action * whenFalse: 'Action * exit: 'Expr option   // SELECTION (Phase 1976, D21); no UI arm
+    | Repeat   of bound: Bound<'Expr> * body: 'Action        // BOUNDED ITERATION (Phase 1976, D21); no UI arm
     | Leaf     of LeafDeclaration                            // every other domain act
+
+type Bound<'Expr> =                                          // D2's bound (Phase 1976)
+    | Literal   of count: int                                // known from the tree: the reversible fragment's
+    | Parameter of count: 'Expr * lo: int * hi: int          // resolved once at entry, range-checked, else halts
 
 type LeafDeclaration =                                       // static, for the demanded projection
     { EffectKinds: string list                               // client-effect kinds it may emit
@@ -276,6 +282,25 @@ does not roll back on a halt: the store is the store as of the halt, and the pla
 back is the handler, whose atomicity unit it is (D8). A guard reads the STATE CHANNEL (K4): a domain
 whose guards need to see its model exposes what they read through the channel.
 
+**`Choose` and `Repeat` are the sixth and seventh shapes, added by Phase 1976 (D21) — the
+selection and the bounded iteration D1 and D2 charter, which the second witness's re-run found
+missing and had to carry beside the core.** A branch's entry condition resolves exactly as a
+guard's: the boolean `true` takes the true arm, any other value the false arm, and an unresolved or
+errored condition HALTS before either arm. Its EXIT assertion, when carried, resolves against the
+store the arm left and must hold after the true arm and fail after the false arm (the Janus
+discipline that lets an inverse pick the arm to undo): violated, unresolved or errored it halts
+AFTER the arm, with the assertion named; absent, the branch runs forwards the same and is outside the
+reversible fragment. A repeat runs its body `bound` times as a sequence (`repeat_is_unrolling`), sees
+no index, and halts before its first iteration when a parameter bound resolves outside `[lo, hi]` —
+the over-bound refusal — or to no count. Both are COMPOSITION shapes, so `fold_total`'s structural
+characterisation excludes them as it excludes a sequence, and three shapes now halt
+(`fold_no_halting_shape_no_halt`). The REVERSIBLE FRAGMENT — sequence, assign, guard, a branch with
+an exit, a literal repeat — is decided from the tree (`BoundedActions.reversible`); a reversible run
+(`runTraced`) records each overwritten value through `StoreWitness.Read`, the forward run records
+nothing, and the inverse of a run (`reverse`, `runReversed`) restores the starting store
+(`reverse_run`, proved; `proofs/README.md` section 6). No UI arm views as either shape
+(`ui_view_no_flow`, proved and tested).
+
 The UI adapter's `View` is the total match over the closed 14-case `Action` DU. It carries the
 `#nowarn "44"` scope that `BoundedActions.fs` holds today. Exhaustiveness is still checked by the
 compiler; the check now sits in the adapter. `Confirm`, `Notify`, `AiTool`, `Invoke`, `Dispatch` and
@@ -285,11 +310,16 @@ declare their host channels in `HostCalls`, so `Demanded` sees them exactly as i
 
 **Three walks move from the wire tags onto the view:**
 
-- `Budget.actionCascadeCost` counts `Sequence`.
-- `Demanded` reads `Assign`, `Call` and `LeafDeclaration`.
+- `Budget.actionCascadeCost` counts `Sequence`; since Phase 1976 it prices a `Choose` at one step
+  plus the dearer arm and a `Repeat` at one step plus its body times its bound (a parameter bound at
+  the top of its range), and `fold_steps_within_cost` proves a run stays within the price.
+- `Demanded` reads `Assign`, `Call`, `Require` and `LeafDeclaration`; since Phase 1976 a `Choose`
+  demands the union of its entry, BOTH arms and its exit, and a `Repeat` its bound and its body once.
 - The replay classification maps `Call` to no defect, `Sequence` to the distinct union of its
-  parts, a literal `Assign` to no defect, `Assign … from` to `NonLiteralWrite`, and `Leaf` to
-  `UndecidableAction`.
+  parts, a literal `Assign` to no defect, `Assign … from` to `NonLiteralWrite`, `Require` to
+  `UndecidableAction`, and `Leaf` to `UndecidableAction`; since Phase 1976 a `Choose` to
+  `UndecidableAction` beside both arms' defects, and a `Repeat` to its body's (plus
+  `UndecidableAction` for a parameter bound).
 
 For every action the encoder can produce, that classification returns the same defects as today's
 tag walk. Today's walk only ever runs on `encodeAction`'s output (`HandlerWire.fs`), and a `Chain`
@@ -402,6 +432,22 @@ binding store; the two are not alternatives but the guards of two different stat
 uses the one over the thing its guards read. Proved: `guard_holds_moves_nothing`,
 `guard_refusal_halts` (`Staging.fst`).
 
+**The op-channel branch and repeat (Phase 1976, D21).** `OpView<'Op>` has two more shapes.
+`Choose(entry, whenTrue, whenFalse, exit)`: the entry condition is an op applied for its ANSWER,
+exactly as a guard is — `Ok` takes the true arm, `Error` the false arm, so on this channel a domain's
+typed refusal is the false value and never a halt (the channel has two answers and no third); the
+arm plans as the ops of an `ApplyOps` effect plan; the exit assertion, when carried, is applied
+against the state the arm left and must hold after the true arm and fail after the false arm, or the
+whole effect is refused with the assertion named, after the arm planned. Neither condition is applied
+for its state, staged or performed. `Repeat(count, body)` plans its body `count` times as a sequence;
+the count is a literal the view produces — the state axis has no value channel to read a parameter
+from, so D2's range check is the domain's at its codec, and a deployer's ceiling is the argument
+policy's, through a `count` argument on the repeat's reach. The demanded projection and the argument
+policy read an op's reach over itself AND every op beneath it (`OpView.beneath`), so an untaken arm's
+reach is still reach and the document and the enforcement stay one enumeration. Proved:
+`choose_plans_the_taken_arm`, `exit_violation_halts`, `repeat_plans_as_unrolling`,
+`staged_from_the_final_state` (`Staging.fst`).
+
 **The performer is handed the state (Phase 1974 — F-PERFORM).** `OpPerformance.Performed` is
 `'Node -> 'Op -> Result<unit, string>`: each edit is staged with the planned state WITH THAT EDIT
 APPLIED, and the state handed with the last edit performed is the state the plan produced
@@ -436,7 +482,7 @@ with the evidence that would show it to be wrong.
 | # | Assumption kept | Why it is kept | What would falsify it |
 |---|---|---|---|
 | K1 | **Node ids are strings.** | The wire fixes it. `invocation.nodeId`, a scenario event's `nodeId`, `ClientEffect.ReadFileBody`'s node and every diagnostic carry a string. A generic `'Id` would be converted to a string at every one of those boundaries and buy nothing. | A second domain whose ids have no faithful string form. Core's `IdWitness` is then where the conversion goes. |
-| K2 | **Control structure is sequence + assign + call + require, and everything else is a leaf.** _(Amended by Phase 1967: the second witness found halting missing — a verb's refusal must stop the sequence where a UI event handler's never needs to — and `Require` is the shape that halts.)_ | This is D1: control structure belongs to the evaluator, and vocabulary lowers to it. Today's fold already treats ten of the fourteen UI cases as leaves, and none of them as a guard. | A domain act that must thread the store through sub-actions, the way `Confirm`'s continuations would with a return leg, or a conditional with two non-refusal arms. That is a new view case plus a model change under D14, never a leaf that recurses. |
+| K2 | **Control structure is sequence + assign + call + require + choose + repeat, and everything else is a leaf.** _(Amended by Phase 1967: the second witness found halting missing — a verb's refusal must stop the sequence where a UI event handler's never needs to — and `Require` is the shape that halts. Amended again by Phase 1976: the second witness's re-run found the selection and the bounded iteration D1 and D2 charter missing, and carried a two-arm branch beside the core; `Choose` and `Repeat` are the shapes, on both axes, designed for reversal — D21.)_ | This is D1: control structure belongs to the evaluator, and vocabulary lowers to it. Today's fold already treats ten of the fourteen UI cases as leaves, and none of them as a guard. | A domain act that must thread the store through sub-actions, the way `Confirm`'s continuations would with a return leg, or a conditional with two non-refusal arms. That is a new view case plus a model change under D14, never a leaf that recurses. |
 | K3 | **A leaf emits at most one effect, and it never writes the store.** | `run_total` in `proofs/README.md` proves "at most one client effect and … one key" per non-composite step. A leaf that could write, or emit a list, would make the theorem false without making it fail. | A leaf that needs two effects. It has to be written as a `Sequence` of two leaves. |
 | K4 | **One mutable state channel plus one query-result channel.** | That is everything the fold and the handler write today (`SetState`; `RunQuery`'s landing; a handler's `into`). The other fields of `BindingSources` (filters, selections, i18n) are read only by UI resolution, which sits behind `ExprWitness`. Since Phase 1967 the channel is also what a GUARD reads: a verb's arguments and read results land there, and a domain that keeps its model in the tree exposes what its guards need through the channel. | A second domain that writes somewhere other than a keyed state channel. The first second witness used no state channel at all and so could not have had a guard; that is a reading of K4, not a falsification. |
 | K5 | **A reserved key namespace exists, and the fold refuses to write into it.** | The refusal is a property of the program loop: "the tree is untrusted" does not depend on the domain. Only the namespace's *spelling* (`host.`) is the UI tier's policy, so the witness supplies the predicate and the core owns the refusal. | A domain with no reserved keys. It supplies `fun _ -> false`, which is legal. |
@@ -450,7 +496,7 @@ verb and the document pipeline have read it since. What each assumption is now a
 | # | Reading after three witnesses |
 |---|---|
 | K1 | **Holds, and is a walk/state fact.** The document pipeline's ids are TYPED and have a faithful string form through the domain's own id witness; the verb names files by path. Neither is the falsifier. |
-| K2 | **Holds as amended (1967), and is a dispatch fact.** Control structure in the ACTION view is the fold's. A domain with no actions has no K2 to meet; its guard is the op channel's (`OpView.Require`), which is not a view shape. |
+| K2 | **Holds as amended (1967, 1976), on both axes.** Control structure in the ACTION view is the fold's; since Phase 1976 the op channel has the same three structures (`OpView.Require`, `.Choose`, `.Repeat`), mirrored rather than shared because the two axes' condition channels differ (D21). A domain with no actions meets K2 on the op channel alone. |
 | K3 | **Dispatch fact.** Not reached by either non-UI witness — neither has leaves. |
 | K4 | **A dispatch-axis fact, not a Program fact.** The verb uses no binding store; the document pipeline keeps its bound values INSIDE the document. The state channel is what an event-driven fold writes beside its tree, and only a domain that fills the dispatch axis has one. The 1967 sentence "a domain that keeps its model in the tree exposes what its guards read through the channel" is withdrawn: such a domain now guards on the op channel, against the state itself. |
 | K5 | **Dispatch fact.** The reserved namespace is a namespace of the binding store; a composition without one has nothing reserved and refuses every landing slot instead. |
@@ -513,6 +559,21 @@ And the cut itself (Phase 1974, D20), forced by the third witness:
   takes the state axis — a correction to the phase's own statement, which named it a walk reader.
 - **The landing-slot refusal for a dispatch-less composition** (`no-binding-channel`) is the one new
   halt reason. No wire member moved.
+
+And the flow algebra itself (Phase 1976, D21), forced by the second witness's re-run:
+
+- **`ActionView` has `Choose` and `Repeat`, with `Bound<'Expr>`; `OpView<'Op>` has `Choose` and
+  `Repeat` over ops** (§3.2, §3.5). Mirrored per axis, not shared: the condition channels differ and
+  the state axis has no value channel for a parameter bound.
+- **`StoreWitness` gains `Read`**, the one member a reversible run uses; the forward fold never calls
+  it. `BoundedActions.runTraced` / `reversible` / `reverse` / `runReversed` and `Trace` are the
+  reversible fragment's surface; `run` and `runInert` are unchanged.
+- **`OpView.beneath`** enumerates the ops under a flow op, and `ServerArgumentPolicy.reachOfOp`
+  reads an op's reach over itself and those — both arms. `OpReach.Destination` stays single-valued
+  (D21's B2 answer): the arms name their own destinations.
+- **The budget prices the shapes** (one step plus the dearer arm; one step plus bound times body),
+  and `fold_steps_within_cost` proves a run stays within the price. No wire member moved; the
+  demanded document stays at version 5.
 
 ### 3.8 How D14 applies to this cut
 

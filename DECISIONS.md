@@ -941,3 +941,128 @@ and a draft moves only for a change of a higher class (`STABILITY.md`). No wire 
 byte-identical through the parity suite, the verb filling the state axis only, and a document
 pipeline filling state and walk, with the third instantiation's two guard tests inverted and its
 performer's re-fold removed (`tests/Fuaran.Program.Tests/`).
+
+## D21 — The core algebra gains selection and bounded iteration on BOTH axes, designed for reversal; the reversible fragment is decided from the tree and undone by trace (2026-10-01)
+
+**2026-10-01. Phase 1976. Fulfils D1 and D2; takes the route D19 named for a conditional ("a new
+view case … under D14"), for selection and bounded iteration together; amends K2 of
+`docs/generic-tier.md` §3.7 a second time; leaves B2 (`OpReach.Destination`) single-valued, with the
+reason below.**
+
+D1 fixes the core as sequencing + typed branching + named effects and D2 permits bounded iteration,
+yet the generic tier's view had sequence, a store write, a call, a halting guard and the domain's
+leaves — one structured-programming construct, plus abort. It went unnoticed because the only
+witness was the UI tier, which branches in the TREE and repeats through data binding. The second
+witness's re-run — a domain whose handler is a store-mutating verb — met the gap at its first verb
+with an arm that does not refuse, and had to carry its own two-arm construct beside Program: the
+parallel-machinery drift D19 existed to remove. This entry closes it, under D14 (the model first,
+`proofs/BoundedFold.fst` and `proofs/Staging.fst` restated and re-proved before a `.fs` moved), and
+records what the model argued for.
+
+**1. Two shapes, on both axes, MIRRORED rather than shared.** `ActionView` gains `Choose(entry,
+whenTrue, whenFalse, exit)` and `Repeat(bound, body)`; `OpView<'Op>` gains `Choose(entry, whenTrue,
+whenFalse, exit)` over ops and `Repeat(count, body)`. The phase's default was the op axis alone, so
+a state-only domain reaches them; the model argued for both, because the second witness's branch is
+over OPS while the reversal theorem the phase charters is about the STORE the dispatch fold writes
+(`Assign` is the one destructive step, and the one that needs a trace). One shared definition was
+considered and rejected: the condition channel differs per axis — an expression resolved against the
+binding store to a value, versus a guard op applied for its answer — and the state axis has no value
+channel a parameter bound could be read from, so a shared shape would offer a case one axis must
+refuse. D20 set the precedent with two guards, one per axis, "the guards of two different states";
+the two selections and the two repeats are the same thing. D1's "one core algebra" is kept where it
+matters: one evaluator per axis, one law set, and `repeat_is_unrolling` / `repeat_plans_as_unrolling`
+tie each repeat to the sequence of its body so no sequence law is restated.
+
+**2. Conditions, and the exit assertion.** On the dispatch axis the entry condition resolves exactly
+as a guard's: the boolean `true` takes the true arm, any other value the false arm, and an unresolved
+or errored condition HALTS before either arm (a branch that cannot decide is a defect, not a default;
+the phase's "argue against halting" was argued and lost — the alternative, a default arm, silently
+turns a resolver fault into a chosen branch). On the op axis the channel has two answers and no
+third: `Ok` is true, `Error` is false, so a domain's typed refusal is the false value and never a halt
+— the shape the verb's "already migrated / not yet" arms want, and the one a guard's protocol already
+reads. The EXIT assertion (Janus; Lutz and Yokoyama) is optional, resolves against the store the arm
+left, and must hold after the true arm and fail after the false arm; violated, unresolved or errored
+it halts AFTER the arm with the assertion named in the reason — the arm's writes and effects stand as
+of the halt, the handler rolls back (D8). Forwards it costs a program nothing to omit; omitted, the
+branch is outside the reversible fragment, because nothing then says which arm to undo.
+
+**3. The bound, and no index.** On the dispatch axis `Bound<'Expr>` is a literal count or a
+parameter resolved ONCE at entry to a `JInt` and checked against `[lo, hi]`, outside which the repeat
+halts before its first iteration — the over-bound refusal — so the budget can price it at `hi`
+without the store. On the op axis the count is a literal the view produces: D2's range check is the
+domain's, at its codec, and a deployer's ceiling is the argument policy's, through a `count` argument
+on the repeat's reach (the verb witness does exactly this, and an off-list count is refused before
+anything performs). The body sees no index: its one channel to state is the store it writes, and an
+index it could overwrite would not be a function of the bound alone, which running the inverse the
+same number of times rests on. A negative count is refused on both axes — the one guard the model,
+whose count is a `nat`, cannot express, so it is the code's and is said to be.
+
+**4. The budget.** A branch is priced at one step (its condition) plus the MORE EXPENSIVE arm; a
+repeat at one step (its bound) plus its body times the bound, a parameter bound at the top of its
+range. `fold_steps_within_cost` proves a run never takes more steps than this prices, so the price
+computed from the tree before the run bounds the work the run does — "safe to run untrusted" extended
+to the two shapes.
+
+**5. The demanded union, the policy, and B2.** A branch demands the union of its entry, BOTH arms
+and its exit; a repeat its bound and its body once. `OpView.beneath` enumerates the ops under a flow
+op, and `ServerArgumentPolicy.reachOfOp` reads an op's reach over itself and those, so an untaken
+arm's reach is still reach and a sequence that reaches an off-list path in either arm is refused.
+B2 — whether `OpReach.Destination` becomes a set because a branch's arms may reach two destinations
+— is answered NO: a branch reaches nothing of its own, each op beneath it names one destination, and
+the policy reads them one by one; a set on the branch would be a second enumeration of what the arms
+already say. The verb's `Branch` reaches `OpReach.nothing`.
+
+**6. Reversibility, designed in; `Assign` by trace.** The reversible fragment is SYNTACTIC —
+`reversible` reads the tree and nothing else: sequence, assign, the guard (its own inverse), a branch
+WITH an exit assertion, a repeat with a LITERAL bound; never a call or a leaf (effects are a property
+of the op and a later phase's). `Assign` destroys the old value, so it joins the fragment BY TRACE
+rather than by construction (the Bennett embedding): a reversible run records, at each write, the
+value it overwrote, and the inverse restores it with an ordinary assignment. This is the one place
+trace is preferred over construction, and the reason is that the alternative — a reversible
+assignment, `x += e` — is a different store algebra than K4's keyed channel, which every witness
+already fills. WHERE the trace lives: beside the outcome of `BoundedActions.runTraced`, which the
+plan phase holds exactly as it holds the pre-state; the forward `run` records nothing and reads
+nothing, because the two are ONE fold with a tracing flag (D1's one evaluating `match` is kept; the
+model has `fold` and `fold_traced` and proves them equal in outcome). WHAT it costs the contract:
+`StoreWitness.Read`, the one new member, called by the reversible run alone, with K4's
+read-after-write law as the witness's obligation. WHAT it refuses: a key that was absent before the
+run cannot be restored by an assignment (the store has no delete), so the trace says so and
+`Trace.restorable` refuses the inverse rather than building it wrong — `reverse_run` is conditional
+on it, and named as such in the ladder. The inverse of a run is a program the core folds through the
+same evaluator (`Reversed`, `runReversed`): a sequence inverts to its members' inverses in reverse
+order; a branch to the branch whose entry is the exit assertion and whose exit is the entry
+condition, the arm that ran inverted and the other EMPTY (nothing was recorded for it, and the exit
+assertion is what guarantees the inverse never takes it); a repeat to the SEQUENCE of its
+iterations' inverses, because each iteration overwrote different values.
+
+**7. What halts.** Three shapes now halt — a guard, a branch (an undecided condition, a violated
+exit assertion), a repeat (an unreadable or over-bound count) — so Phase 1967's "only a guard halts"
+is false over the widened view. `fold_no_halting_shape_no_halt` is the general statement and
+`fold_no_require_no_halt` keeps its name as the corollary for a view without the new shapes, which
+is every view the UI witness produces (`ui_view_no_flow`, proved; tested over the arm-complete
+corpus) — so every UI theorem keeps its unconditional form and the UI tier is byte-identical through
+the parity suite and the Fable leg.
+
+**8. D14 applied a fourth time, and two findings for the next restatement.** The op view in
+`Staging.fst` is now taken to exhaustion, as the action view has been since Phase 1898, so planning
+terminates structurally and the finite-unfolding obligation sits on the witness's `View`. Two things
+the restatement found about the prover, recorded so they are not re-found: inside a RECURSIVE lemma,
+an application with many implicit type arguments (`plan_view w cap stage x tree staged`) does not get
+its result's inversion — a `match` on it fails as "patterns are incomplete" — and a let-binding with
+an explicit type repairs it; and an extractable definition keeps its tuple patterns (`ROk (tree',
+staged')`) because `fst`/`snd` would extract to a runtime name the `Prims` shim deliberately does not
+carry, while the lemma bodies that reason about it project with `fst`/`snd`.
+
+**Version.** Rides the `0.7.0` draft: the slot is untagged, publicly unpinned and already breaking,
+and this is breaking of the same class — every exhaustive match over `ActionView` or `OpView`,
+`OpView` becoming `OpView<'Op>`, `StoreWitness` gaining `Read`. No wire member moved (`docs/
+generic-tier.md` §6); the demanded document stays at version 5, carrying both arms' reach only when
+a program uses a branch. `STABILITY.md` has the consumer's account and `docs/migrations/phase-1976.md`
+the diff.
+
+**What this forecloses, and what it leaves.** Whether an OP can be undone is a property of the op,
+declared on the state witness by the phase that owns the undo posture; this entry gives the flow
+algebra its inverse and nothing else. An op-axis parameter bound would be a value channel on the
+state axis — a D20-class change, not a view case. The UI adapter adopts neither shape; a UI handler
+that would genuinely benefit lands as a finding against `ui_view_no_flow`'s test, never as an
+adoption here.

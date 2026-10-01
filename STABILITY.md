@@ -170,6 +170,57 @@ behaviour, byte for byte through the parity suite and the Fable leg. No envelope
 
 The slot stays a DRAFT: tagging `v0.7.0` is the release gesture, a separate recorded act.
 
+### Rides the draft: selection and bounded iteration (Phase 1976)
+
+**Class: breaking**, for every consumer that matches exhaustively on `ActionView` or `OpView`,
+constructs a `StoreWitness`, or names `OpView` in a signature — the class this slot already carries,
+so it rides rather than advancing. `v0.6.0` is the newest tag and nothing public pins `0.7.0`. The
+second witness's re-run found the core had sequence and abort but neither the selection nor the
+bounded iteration D1 and D2 charter, and `DECISIONS.md` D21 records what was decided; this entry
+records what a consumer pays.
+
+- **`ActionView` has two more shapes:** `Choose of entry: 'Expr * whenTrue: 'Action * whenFalse:
+  'Action * exit: 'Expr option` and `Repeat of bound: Bound<'Expr> * body: 'Action`, with
+  `Bound<'Expr> = Literal of count: int | Parameter of count: 'Expr * lo: int * hi: int`. Every
+  exhaustive match over the view gains two arms (the fold, the budget, the demanded projection and
+  the replay classification in this repository; any consumer's own walk).
+- **`OpView` is `OpView<'Op>`** and has two more shapes: `Choose of entry: 'Op * whenTrue: 'Op list
+  * whenFalse: 'Op list * exit: 'Op option` and `Repeat of count: int * body: 'Op list`.
+  `StateWitness.View` is `'Op -> OpView<'Op>`; `OpView.edits` still fills it for a domain with none,
+  and `OpView.beneath` enumerates the ops under a flow op.
+- **`StoreWitness` gains `Read: string -> 'Store -> JVal option`** — the one member a reversible run
+  uses, and the only reader of it. `Map.tryFind` for a map-shaped store; the UI adapter reads its
+  `State` key back through the binding resolver.
+- **The fold's new halt reasons**, each a `BoundedDiagnostic.Refused` carrying the branch's or the
+  repeat's own description: `the branch condition did not resolve to a value`, an errored condition's
+  own text, `the exit assertion did not hold after the true arm`, `the exit assertion held after the
+  false arm`, `the exit assertion did not resolve to a value`, `the exit assertion errored: …`,
+  `the repeat's bound is outside its declared range`, `… did not resolve to a count`, `… did not
+  resolve to a value`, `the repeat's bound is negative`. On the op channel the `ApplyOps` arm's
+  `Failed` carries `the exit assertion did not hold after the true arm: <the assertion's refusal>`,
+  `the exit assertion held after the false arm`, and `the repeat's count is negative`.
+- **The budget prices the shapes:** a branch at `1 + max(arms)`, a repeat at `1 + bound × body` (a
+  parameter bound at the top of its range), in the saturating arithmetic the module already used.
+  `Budget.satAdd` / `satMul` are unchanged in meaning and now sit above `actionCascadeCost`.
+- **The argument policy reads beneath a flow op:** `ServerArgumentPolicy.reachOfOp` returns the
+  reach of the op AND every op beneath it, so a branch whose untaken arm reaches an off-list path is
+  refused, and the demanded document's `reach` carries both arms.
+- **The reversible fragment is new API on `BoundedActions`:** `runTraced` (the fold with its
+  `Trace`), `reversible` (decided from the tree), `reverse` (the inverse of a run, a `Reversed`
+  program) and `runReversed`; `Trace` and `Trace.restorable` sit in `Witness.fs`. `run` and
+  `runInert` are unchanged in signature and behaviour.
+- **The oracle differentials** map the two shapes (`tests/*/ProofOracleTests.fs`) and the toy
+  corpus covers every arm and halt of both; a consumer that mirrors those hosts gains the same arms.
+
+**What did NOT change:** no wire member, no fixture byte, no demanded-document byte for any program
+that uses neither shape (the document stays at version 5), no envelope needs re-signing, and the UI
+tier's behaviour, byte for byte through the parity suite and the Fable leg — it views nothing as
+either shape, proved (`ui_view_no_flow`) and tested over the arm-complete corpus. Every earlier proof
+statement keeps its form except Phase 1967's "only a guard halts", which is kept as a corollary for
+a view without the new shapes and generalised as `fold_no_halting_shape_no_halt`.
+
+**What a consumer does about it:** `docs/migrations/phase-1976.md` — one page, a diff per file.
+
 ## 0.6.0 — RELEASED (tagged `v0.6.0`, 2026-09-28) — the core becomes domain-generic (Phase 1896)
 
 **Class: breaking**, for `Fuaran.Program.Bounded`, `Fuaran.Program.Runtime` and
