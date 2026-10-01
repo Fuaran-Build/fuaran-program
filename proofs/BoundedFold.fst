@@ -26,13 +26,23 @@
 /// **The generic tier** — a model of the fold the generic core will run,
 /// `BoundedActions.run witness` (Phase 1896 writes it): one `match` over
 /// the shapes of D18's `ActionView` — four at the cut, FIVE since Phase
-/// 1967 added the halting guard `Require` (the second witness's F1) —
+/// 1967 added the halting guard `Require` (the second witness's F1),
+/// SEVEN since Phase 1976 added the selection `Choose` and the bounded
+/// iteration `Repeat` that D1 and D2 charter (the second witness's
+/// re-run found the core had sequence and abort but neither) —
 /// parameterised by a WITNESS record that is the fold-read members of
 /// `ProgramWitness`. Phase 1896 wrote the F# against the four-shape
 /// model; Phase 1967 restated and re-proved this model over five shapes
 /// BEFORE the port that followed (D14 again), and the one law the fifth
 /// shape changes is the sequence homomorphism, which gains a halting
-/// clause that is vacuous for every view without a guard.
+/// clause that is vacuous for every view without a guard. Phase 1976
+/// restated it again over seven, before its port: the two new shapes
+/// are COMPOSITION shapes, so the structural characterisation
+/// (`fold_total`) excludes them as it excludes a sequence; the halting
+/// clause now has three sources (`fold_no_halting_shape_no_halt`); a
+/// repeat is its own unrolling (`repeat_is_unrolling`); and the fragment
+/// of the view that can run BACKWARDS is named, decided from the tree,
+/// and proved to undo itself (`reverse_run`, section 6 below).
 /// Every definition is captioned with the D18 contract member it models
 /// (§3.2 the action view, §3.3 expressions, §3.4 the store).
 ///
@@ -195,6 +205,18 @@ type resolution (v: Type0) =
   | NotResolved : resolution v
   | Errored : message: string -> resolution v
 
+/// The bound of a repeat (Phase 1976; D2: a literal count, or a parameter
+/// checked against a range). `BLiteral` is known from the tree alone,
+/// which is what admits a repeat to the reversible fragment
+/// (`reversible`). `BParameter` resolves at dispatch through `w_resolve`,
+/// is read as a count through `w_as_count`, and halts outside `[lo, hi]`
+/// BEFORE the first iteration — the over-bound refusal — so the budget
+/// can price it at `hi` without consulting the store (`view_cost`).
+/// F#: `Bound<'Expr>`.
+type bound (e: Type0) =
+  | BLiteral : count: nat -> bound e
+  | BParameter : count: e -> lo: nat -> hi: nat -> bound e
+
 /// D18 §3.2 `ActionView<'Action, 'Expr>`, taken TO EXHAUSTION. The F#
 /// `View` is one level — `Sequence of 'Action list` — and the F# fold
 /// re-views each child as it reaches it. This model views the whole tree
@@ -203,6 +225,13 @@ type resolution (v: Type0) =
 /// `w_view` field (a `Tot` arrow) rather than on a fuel the code does not
 /// have. `act` is the action the F# fold holds in hand when it views it,
 /// carried here so `w_describe` and `w_lower` can be given it.
+///
+/// SEVEN shapes since Phase 1976: the five of Phase 1967, and the
+/// selection and the bounded iteration D1 and D2 charter, which the
+/// second witness's re-run found missing (it had to carry a two-arm
+/// branch beside the core). Three are COMPOSITION shapes — `VSequence`,
+/// `VChoose`, `VRepeat` — whose step is their members' steps; the other
+/// four are one step each, and `fold_total` characterises them.
 type action_view (a: Type0) (e: Type0) (v: Type0) =
   /// `Sequence of 'Action list` — the composition arm (today: `Chain`).
   | VSequence : act: a -> ops: list (action_view a e v) -> action_view a e v
@@ -220,6 +249,27 @@ type action_view (a: Type0) (e: Type0) (v: Type0) =
   /// the one shape that halts (`fold_total`), and the one a view with no
   /// guard never reaches (`fold_no_require_no_halt`).
   | VRequire : act: a -> condition: e -> action_view a e v
+  /// `Choose of entry: 'Expr * whenTrue: 'Action * whenFalse: 'Action *
+  /// exit: 'Expr option` — SELECTION (Phase 1976). The entry condition
+  /// resolves exactly as a guard's does: the boolean true takes
+  /// `when_true`, any other value takes `when_false`, and an unresolved or
+  /// an errored condition HALTS as a guard's would (a branch that cannot
+  /// decide is a defect, not a default). The EXIT assertion, when carried,
+  /// is resolved against the store the arm left and must HOLD after the
+  /// true arm and FAIL after the false arm (Janus): violated, unresolved
+  /// or errored, it halts with the assertion named in the reason, after
+  /// the arm's effects, which the handler rolls back (D8). Absent, the
+  /// branch runs forwards exactly the same and is outside the reversible
+  /// fragment (`reversible`), because nothing then says which arm to undo.
+  | VChoose : act: a -> entry: e -> when_true: action_view a e v -> when_false: action_view a e v -> exit: opt e -> action_view a e v
+  /// `Repeat of bound: Bound<'Expr> * body: 'Action` — BOUNDED ITERATION
+  /// (Phase 1976, D2). The body runs `count` times in sequence, stopping at
+  /// the first halt, and sees NO index: an index is state, the body's one
+  /// channel to state is the store it writes, and an index the body could
+  /// overwrite would not be a function of the bound alone, which is what
+  /// running the inverse the same number of times rests on. A repeat IS
+  /// its unrolling (`repeat_is_unrolling`), so every sequence law covers it.
+  | VRepeat : act: a -> count: bound e -> body: action_view a e v -> action_view a e v
   /// `Leaf of LeafDeclaration` — every other domain act. The declaration
   /// is the DEMANDED projection's business and the fold never reads it,
   /// so it is not carried; what the fold does with a leaf is `w_lower`.
@@ -259,6 +309,12 @@ noeq type witness (a: Type0) (e: Type0) (v: Type0) (eff: Type0) = {
   /// the test arrives as an arrow the differential host wires to that
   /// comparison. Nothing proved here depends on what it answers.
   w_is_true: v -> bool;
+  /// The bound's count test (Phase 1976): whether a resolved value is a
+  /// non-negative integer, and which. The same kind of arrow as
+  /// `w_is_true`, for the same reason — the core owns `JVal` and reads
+  /// `JInt n` itself; here `v` is abstract. Nothing proved here depends
+  /// on what it answers.
+  w_as_count: v -> opt nat;
 }
 
 /// F#: `BoundedDiagnostic` — program-owned, so not generic. The action
@@ -326,6 +382,19 @@ let halted (#v: Type0) (#eff: Type0)
   : bounded_outcome v eff =
   { o_store = s; o_effects = []; o_diagnostics = [ DRefused node_id description reason ]; o_halted = true }
 
+/// F#: `BoundedActions.haltedAfter` (Phase 1976) — a halt that follows an
+/// ARM that ran: the arm's store, effects and diagnostics kept, the halt's
+/// diagnostic appended, and the flag. A violated exit assertion is this:
+/// the arm's writes stand as of the halt (the fold never rolls back; the
+/// handler does, D8), and the outcome says which assertion failed.
+let halted_after (#v: Type0) (#eff: Type0)
+                 (o: bounded_outcome v eff) (node_id: string) (description: string) (reason: string)
+  : bounded_outcome v eff =
+  { o_store = o.o_store;
+    o_effects = o.o_effects;
+    o_diagnostics = app o.o_diagnostics [ DRefused node_id description reason ];
+    o_halted = true }
+
 /// F#: the `Result<JVal option, string>` the `Assign` arm computes.
 type jval_payload (v: Type0) =
   | POk : value: opt v -> jval_payload v
@@ -338,16 +407,19 @@ type jval_payload (v: Type0) =
    target, D7's handler-effect arm, and — since Phase 1967 — the halting
    guard. It never recurses into a leaf.
 
-   Termination is structural on the view. `fold` and `fold_many` are
-   mutually recursive with the tree/forest lexicographic measure: the
-   list inside `VSequence` is a strict subterm of the view, and each
-   element is a strict subterm of the list.
+   Termination is structural on the view. `fold`, `fold_many` and
+   `fold_repeat` are mutually recursive with a three-place lexicographic
+   measure: the list inside `VSequence` and the arms of `VChoose` are
+   strict subterms of the view, each element is a strict subterm of the
+   list, and a repeat descends into its body (a strict subterm) with the
+   remaining count as the last place — so a bounded iteration terminates
+   by its bound, as D2 says it must, with no fuel the code does not have.
    ─────────────────────────────────────────────────────────────────── *)
 
 let rec fold (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
              (w: witness a e v eff) (ar: handler_arm v eff p)
              (node_id: string) (x: action_view a e v) (s: store v) (pl: p)
-  : Tot (bounded_outcome v eff & p) (decreases %[x; 0]) =
+  : Tot (bounded_outcome v eff & p) (decreases %[x; 0; 0]) =
   match x with
 
   // The one store mutation: write the state channel. The reserved
@@ -421,6 +493,66 @@ let rec fold (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
      | Decline -> declined node_id (w.w_describe act) s),
     pl
 
+  // SELECTION (Phase 1976). The entry condition resolves against the
+  // store exactly as a guard's does, and picks the arm: the boolean true
+  // takes `when_true`, any other value `when_false`; unresolved or errored
+  // halts, as a guard would, before either arm runs. The arm runs as a
+  // member of a sequence would (its halt is the branch's halt). Then the
+  // EXIT assertion, when carried, is resolved against the store the arm
+  // left: it must hold after the true arm and fail after the false arm —
+  // the assertion that lets the inverse branch pick the arm to undo
+  // (`reverse`) — and violated, unresolved or errored it halts AFTER the
+  // arm, keeping what the arm did, with the failure named.
+  | VChoose act entry when_true when_false exit ->
+    (match w.w_resolve s entry with
+     | Resolved jv ->
+       let took_true = w.w_is_true jv in
+       let (o1, p1) =
+         if took_true then fold w ar node_id when_true s pl
+         else fold w ar node_id when_false s pl
+       in
+       if o1.o_halted then (o1, p1)
+       else
+         (match exit with
+          | ONone -> (o1, p1)
+          | OSome assertion ->
+            (match w.w_resolve o1.o_store assertion with
+             | Resolved jv' ->
+               if w.w_is_true jv' = took_true then (o1, p1)
+               else
+                 (halted_after o1 node_id (w.w_describe act)
+                    (if took_true then "the exit assertion did not hold after the true arm"
+                     else "the exit assertion held after the false arm"),
+                  p1)
+             | NotResolved ->
+               (halted_after o1 node_id (w.w_describe act) "the exit assertion did not resolve to a value", p1)
+             | Errored m ->
+               (halted_after o1 node_id (w.w_describe act) (strcat "the exit assertion errored: " m), p1)))
+     | NotResolved ->
+       (halted node_id (w.w_describe act) "the branch condition did not resolve to a value" s, pl)
+     | Errored m -> (halted node_id (w.w_describe act) m s, pl))
+
+  // BOUNDED ITERATION (Phase 1976). A literal bound runs the body that
+  // many times; a parameter bound is resolved against the store ONCE, at
+  // entry, read as a count, and checked against its declared range — an
+  // over-bound repeat halts here, before the first iteration, which is
+  // what lets the budget price it at the range's top without the store.
+  // The body sees no index.
+  | VRepeat act count body ->
+    (match count with
+     | BLiteral n -> fold_repeat w ar node_id body n s pl
+     | BParameter expr lo hi ->
+       (match w.w_resolve s expr with
+        | Resolved jv ->
+          (match w.w_as_count jv with
+           | OSome n ->
+             if lo <= n && n <= hi then fold_repeat w ar node_id body n s pl
+             else (halted node_id (w.w_describe act) "the repeat's bound is outside its declared range" s, pl)
+           | ONone -> (halted node_id (w.w_describe act) "the repeat's bound did not resolve to a count" s, pl))
+        | NotResolved ->
+          (halted node_id (w.w_describe act) "the repeat's bound did not resolve to a value" s, pl)
+        | Errored m -> (halted node_id (w.w_describe act) m s, pl)))
+
   // Compose: fold in order, threading the store AND the placement's
   // accumulation, concatenating effects and diagnostics — and stopping
   // at the first member that halts.
@@ -429,7 +561,7 @@ let rec fold (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
 and fold_many (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
               (w: witness a e v eff) (ar: handler_arm v eff p)
               (node_id: string) (ops: list (action_view a e v)) (s: store v) (pl: p)
-  : Tot (bounded_outcome v eff & p) (decreases %[ops; 1]) =
+  : Tot (bounded_outcome v eff & p) (decreases %[ops; 1; 0]) =
   match ops with
   | [] -> store_only s, pl
   | x :: rest ->
@@ -437,6 +569,27 @@ and fold_many (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
     if o1.o_halted then (o1, p1)
     else
       let (o2, p2) = fold_many w ar node_id rest o1.o_store p1 in
+      { o_store = o2.o_store;
+        o_effects = app o1.o_effects o2.o_effects;
+        o_diagnostics = app o1.o_diagnostics o2.o_diagnostics;
+        o_halted = o2.o_halted },
+      p2
+
+/// The body of a repeat, `n` times, composed exactly as a sequence
+/// composes its members (the store threaded, the lists concatenated, the
+/// first halt the whole answer). `repeat_is_unrolling` says so as an
+/// equation: this IS `fold_many` over `n` copies of the body, written
+/// over the count so that termination is the bound.
+and fold_repeat (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
+                (w: witness a e v eff) (ar: handler_arm v eff p)
+                (node_id: string) (body: action_view a e v) (n: nat) (s: store v) (pl: p)
+  : Tot (bounded_outcome v eff & p) (decreases %[body; 2; n]) =
+  if n = 0 then (store_only s, pl)
+  else
+    let (o1, p1) = fold w ar node_id body s pl in
+    if o1.o_halted then (o1, p1)
+    else
+      let (o2, p2) = fold_repeat w ar node_id body (n - 1) o1.o_store p1 in
       { o_store = o2.o_store;
         o_effects = app o1.o_effects o2.o_effects;
         o_diagnostics = app o1.o_diagnostics o2.o_diagnostics;
@@ -474,7 +627,16 @@ let handled_view (#a: Type0) (#e: Type0) (#v: Type0) (x: action_view a e v) : bo
   | VAssign _ _ _ _ -> true
   | VCall _ _ _ -> true
   | VRequire _ _ -> true
+  | VChoose _ _ _ _ _ -> true
+  | VRepeat _ _ _ -> true
   | VLeaf _ -> true
+
+/// The COMPOSITION shapes (Phase 1976): the three whose step is their
+/// members' steps, and which the structural characterisation below
+/// therefore does not speak for — a sequence, a selection, a repeat.
+[@@ noextract_to "FSharp"]
+let composition (#a: Type0) (#e: Type0) (#v: Type0) (x: action_view a e v) : bool =
+  VSequence? x || VChoose? x || VRepeat? x
 
 [@@ noextract_to "FSharp"]
 let at_most_one (#a: Type0) (l: list a) : bool =
@@ -498,19 +660,25 @@ let answered_view (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
 /// **`fold_total`.** The fold is defined on every shape of the view —
 /// delivered by the `Tot` effect and the `decreases` clause on `fold`,
 /// and by `handled_view` naming every constructor without a wildcard —
-/// and one step that is neither the composition shape nor a call the
-/// placement answered is characterised structurally: the placement is
-/// untouched, the store is either unchanged or written at exactly one
-/// key the reserved predicate rejects, at most one effect and at most
-/// one diagnostic are emitted, and ONLY A GUARD HALTS. For a leaf that
-/// is K3 made a theorem: whatever `w_lower` answers, this is the most it
-/// can do. For a guard it is the Phase-1967 clause: it writes nothing,
-/// emits nothing, and is the one shape whose step can halt.
+/// and one step that is neither a COMPOSITION shape (a sequence, a
+/// selection, a repeat: Phase 1976 widened the exclusion from the one
+/// shape to the three, since a branch's step is its arm's and a repeat's
+/// is its body's) nor a call the placement answered is characterised
+/// structurally: the placement is untouched, the store is either
+/// unchanged or written at exactly one key the reserved predicate
+/// rejects, at most one effect and at most one diagnostic are emitted,
+/// and ONLY A GUARD HALTS among them. For a leaf that is K3 made a
+/// theorem: whatever `w_lower` answers, this is the most it can do. For a
+/// guard it is the Phase-1967 clause: it writes nothing, emits nothing,
+/// and is the one non-composition shape whose step can halt. (A branch
+/// and a repeat halt too — on a condition that cannot be decided, a
+/// violated exit assertion, an over-bound count — and
+/// `fold_no_halting_shape_no_halt` names all three.)
 let fold_total (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
                (w: witness a e v eff) (ar: handler_arm v eff p)
                (node_id: string) (x: action_view a e v) (s: store v) (pl: p)
   : Lemma
-      (requires (not (VSequence? x)) /\ (not (answered_view ar node_id x s pl)))
+      (requires (not (composition x)) /\ (not (answered_view ar node_id x s pl)))
       (ensures
         (handled_view x /\
          (let (o, pl') = fold w ar node_id x s pl in
@@ -550,6 +718,8 @@ let fold_total (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
      | Refuse _ -> ()
      | Decline -> ())
   | VSequence _ _ -> ()
+  | VChoose _ _ _ _ _ -> ()
+  | VRepeat _ _ _ -> ()
 
 // ─── 2. The fold is blind to everything but the view ─────────────────
 
@@ -571,6 +741,11 @@ let rec same_shape (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0)
     w.w_describe ax == w.w_describe ay /\ e1 == e2 /\ t1 == t2
   | VRequire ax c1, VRequire ay c2 ->
     w.w_describe ax == w.w_describe ay /\ c1 == c2
+  | VChoose ax e1 t1 f1 x1, VChoose ay e2 t2 f2 x2 ->
+    w.w_describe ax == w.w_describe ay /\ e1 == e2 /\ x1 == x2 /\
+    same_shape w t1 t2 /\ same_shape w f1 f2
+  | VRepeat ax c1 b1, VRepeat ay c2 b2 ->
+    w.w_describe ax == w.w_describe ay /\ c1 == c2 /\ same_shape w b1 b2
   | VLeaf ax, VLeaf ay ->
     w.w_describe ax == w.w_describe ay /\
     (forall (n: string) (st: store v). w.w_lower n ax st == w.w_lower n ay st)
@@ -598,11 +773,33 @@ let rec fold_blind (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
                    (s: store v) (pl: p)
   : Lemma (requires same_shape w x y)
           (ensures fold w ar node_id x s pl == fold w ar node_id y s pl)
-          (decreases %[x; 0]) =
+          (decreases %[x; 0; 0]) =
   match x, y with
   | VSequence _ xs, VSequence _ ys -> fold_blind_list w ar node_id xs ys s pl
   | VLeaf ax, VLeaf ay ->
     assert (w.w_lower node_id ax s == w.w_lower node_id ay s)
+  // A branch: the same condition picks the same arm, the arms fold alike
+  // by induction, and the exit assertion is then resolved against equal
+  // stores. The carried actions describe alike, so the halt's diagnostic
+  // is equal too.
+  | VChoose _ entry t1 f1 _, VChoose _ _ t2 f2 _ ->
+    (match w.w_resolve s entry with
+     | Resolved jv ->
+       if w.w_is_true jv then fold_blind w ar node_id t1 t2 s pl
+       else fold_blind w ar node_id f1 f2 s pl
+     | _ -> ())
+  // A repeat: the same bound resolves to the same count, and the bodies
+  // fold alike that many times.
+  | VRepeat _ count b1, VRepeat _ _ b2 ->
+    (match count with
+     | BLiteral n -> fold_blind_repeat w ar node_id b1 b2 n s pl
+     | BParameter expr lo hi ->
+       (match w.w_resolve s expr with
+        | Resolved jv ->
+          (match w.w_as_count jv with
+           | OSome n -> if lo <= n && n <= hi then fold_blind_repeat w ar node_id b1 b2 n s pl else ()
+           | ONone -> ())
+        | _ -> ()))
   | _, _ -> ()
 
 and fold_blind_list (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
@@ -612,7 +809,7 @@ and fold_blind_list (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0
                     (s: store v) (pl: p)
   : Lemma (requires same_shape_list w xs ys)
           (ensures fold_many w ar node_id xs s pl == fold_many w ar node_id ys s pl)
-          (decreases %[xs; 1]) =
+          (decreases %[xs; 1; 0]) =
   match xs, ys with
   | [], [] -> ()
   | x1 :: r1, x2 :: r2 ->
@@ -620,6 +817,21 @@ and fold_blind_list (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0
     let (o1, p1) = fold w ar node_id x1 s pl in
     if o1.o_halted then () else fold_blind_list w ar node_id r1 r2 o1.o_store p1
   | _, _ -> ()
+
+and fold_blind_repeat (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
+                      (w: witness a e v eff) (ar: handler_arm v eff p)
+                      (node_id: string)
+                      (b1: action_view a e v) (b2: action_view a e v) (n: nat)
+                      (s: store v) (pl: p)
+  : Lemma (requires same_shape w b1 b2)
+          (ensures fold_repeat w ar node_id b1 n s pl == fold_repeat w ar node_id b2 n s pl)
+          (decreases %[b1; 2; n]) =
+  if n = 0 then ()
+  else begin
+    fold_blind w ar node_id b1 b2 s pl;
+    let (o1, p1) = fold w ar node_id b1 s pl in
+    if o1.o_halted then () else fold_blind_repeat w ar node_id b1 b2 (n - 1) o1.o_store p1
+  end
 
 /// **The witness obligation.** A witness is BLIND TO a relation on
 /// actions when its `w_view` sends related actions to same-shaped views.
@@ -770,7 +982,7 @@ let rec fold_reserved_untouched (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0
                                 (kk: key)
   : Lemma (requires arm_preserves_reserved w.w_is_reserved ar /\ w.w_is_reserved kk)
           (ensures lookup (fst (fold w ar node_id x s pl)).o_store kk == lookup s kk)
-          (decreases %[x; 0]) =
+          (decreases %[x; 0; 0]) =
   match x with
   | VAssign _ state_key value value_from ->
     if w.w_is_reserved state_key then ()
@@ -791,6 +1003,26 @@ let rec fold_reserved_untouched (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0
      | Resolved jv -> if w.w_is_true jv then () else ()
      | NotResolved -> ()
      | Errored _ -> ())
+  // A branch writes only through the arm it took; the exit assertion
+  // reads the arm's store and never writes it (`halted_after` keeps it).
+  | VChoose _ entry when_true when_false _ ->
+    (match w.w_resolve s entry with
+     | Resolved jv ->
+       if w.w_is_true jv then fold_reserved_untouched w ar node_id when_true s pl kk
+       else fold_reserved_untouched w ar node_id when_false s pl kk
+     | _ -> ())
+  // A repeat writes only through its body, however many times.
+  | VRepeat _ count body ->
+    (match count with
+     | BLiteral n -> fold_reserved_untouched_repeat w ar node_id body n s pl kk
+     | BParameter expr lo hi ->
+       (match w.w_resolve s expr with
+        | Resolved jv ->
+          (match w.w_as_count jv with
+           | OSome n ->
+             if lo <= n && n <= hi then fold_reserved_untouched_repeat w ar node_id body n s pl kk else ()
+           | ONone -> ())
+        | _ -> ()))
   | VLeaf act ->
     (match w.w_lower node_id act s with
      | Emit _ -> ()
@@ -803,13 +1035,27 @@ and fold_reserved_untouched_list (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type
                                  (s: store v) (pl: p) (kk: key)
   : Lemma (requires arm_preserves_reserved w.w_is_reserved ar /\ w.w_is_reserved kk)
           (ensures lookup (fst (fold_many w ar node_id ops s pl)).o_store kk == lookup s kk)
-          (decreases %[ops; 1]) =
+          (decreases %[ops; 1; 0]) =
   match ops with
   | [] -> ()
   | x :: rest ->
     fold_reserved_untouched w ar node_id x s pl kk;
     let (o1, p1) = fold w ar node_id x s pl in
     if o1.o_halted then () else fold_reserved_untouched_list w ar node_id rest o1.o_store p1 kk
+
+and fold_reserved_untouched_repeat (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
+                                   (w: witness a e v eff) (ar: handler_arm v eff p)
+                                   (node_id: string) (body: action_view a e v) (n: nat)
+                                   (s: store v) (pl: p) (kk: key)
+  : Lemma (requires arm_preserves_reserved w.w_is_reserved ar /\ w.w_is_reserved kk)
+          (ensures lookup (fst (fold_repeat w ar node_id body n s pl)).o_store kk == lookup s kk)
+          (decreases %[body; 2; n]) =
+  if n = 0 then ()
+  else begin
+    fold_reserved_untouched w ar node_id body s pl kk;
+    let (o1, p1) = fold w ar node_id body s pl in
+    if o1.o_halted then () else fold_reserved_untouched_repeat w ar node_id body (n - 1) o1.o_store p1 kk
+  end
 
 /// The inert arm preserves reserved keys under EVERY predicate — it
 /// declines every call, so there is no store for it to have written.
@@ -819,16 +1065,18 @@ and fold_reserved_untouched_list (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type
 let inert_preserves_reserved (#v: Type0) (#eff: Type0) (#p: Type0) (is_reserved: key -> bool)
   : Lemma (arm_preserves_reserved is_reserved (inert_arm #v #eff #p)) = ()
 
-// ─── 5. Only a guard halts (Phase 1967) ──────────────────────────────
+// ─── 5. Which shapes halt (Phase 1967; widened by Phase 1976) ────────
 
-/// A view holds a guard somewhere: at its root, or inside a sequence at
-/// any depth. The one syntactic fact the halting clause keys on.
+/// A view holds a guard somewhere: at its root, or inside a sequence, an
+/// arm or a body at any depth.
 [@@ noextract_to "FSharp"]
 let rec has_require (#a: Type0) (#e: Type0) (#v: Type0) (x: action_view a e v)
   : Tot bool (decreases %[x; 0]) =
   match x with
   | VSequence _ ops -> has_require_list ops
   | VRequire _ _ -> true
+  | VChoose _ _ when_true when_false _ -> has_require when_true || has_require when_false
+  | VRepeat _ _ body -> has_require body
   | VAssign _ _ _ _ -> false
   | VCall _ _ _ -> false
   | VLeaf _ -> false
@@ -839,20 +1087,56 @@ and has_require_list (#a: Type0) (#e: Type0) (#v: Type0) (ops: list (action_view
   | [] -> false
   | x :: rest -> has_require x || has_require_list rest
 
-/// **`fold_no_require_no_halt`.** A view with no guard in it never
-/// halts, under every witness and every placement arm — so the halting
-/// clause of `sequence_homomorphism` is vacuous for it, and a domain
-/// whose `View` produces no `Require` (the UI tier, `ui_view_no_require`)
-/// inherits every pre-1967 statement unchanged. An answered call never
-/// halts either: `handler_answer` carries no halt, by its type, because
-/// a handler is its own atomicity unit (D8) and a handler that failed
-/// rolled ITSELF back and the fold carries on.
-let rec fold_no_require_no_halt (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
-                                (w: witness a e v eff) (ar: handler_arm v eff p)
-                                (node_id: string) (x: action_view a e v) (s: store v) (pl: p)
-  : Lemma (requires not (has_require x))
+/// A view holds one of Phase 1976's shapes somewhere — a selection or a
+/// repeat, at any depth. The syntactic fact "a view without the new
+/// shapes folds exactly as before" keys on: `ui_view_no_flow` discharges
+/// it for the UI witness, which views nothing as either.
+[@@ noextract_to "FSharp"]
+let rec has_flow (#a: Type0) (#e: Type0) (#v: Type0) (x: action_view a e v)
+  : Tot bool (decreases %[x; 0]) =
+  match x with
+  | VSequence _ ops -> has_flow_list ops
+  | VChoose _ _ _ _ _ -> true
+  | VRepeat _ _ _ -> true
+  | VRequire _ _ -> false
+  | VAssign _ _ _ _ -> false
+  | VCall _ _ _ -> false
+  | VLeaf _ -> false
+
+and has_flow_list (#a: Type0) (#e: Type0) (#v: Type0) (ops: list (action_view a e v))
+  : Tot bool (decreases %[ops; 1]) =
+  match ops with
+  | [] -> false
+  | x :: rest -> has_flow x || has_flow_list rest
+
+/// The shapes whose step can halt: a guard that does not hold; a
+/// selection whose condition cannot be decided or whose exit assertion is
+/// violated; a repeat whose bound cannot be read or is over its range.
+[@@ noextract_to "FSharp"]
+let may_halt (#a: Type0) (#e: Type0) (#v: Type0) (x: action_view a e v) : bool =
+  has_require x || has_flow x
+
+[@@ noextract_to "FSharp"]
+let may_halt_list (#a: Type0) (#e: Type0) (#v: Type0) (ops: list (action_view a e v)) : bool =
+  has_require_list ops || has_flow_list ops
+
+/// **`fold_no_halting_shape_no_halt`.** A view with no guard, no selection
+/// and no repeat in it never halts, under every witness and every
+/// placement arm — so the halting clause of `sequence_homomorphism` is
+/// vacuous for it, and a domain whose `View` produces none of the three
+/// (the UI tier: `ui_view_no_require`, `ui_view_no_flow`) inherits every
+/// pre-1967 statement unchanged. An answered call never halts either:
+/// `handler_answer` carries no halt, by its type, because a handler is its
+/// own atomicity unit (D8) and a handler that failed rolled ITSELF back
+/// and the fold carries on. Phase 1976 widened this from the guard alone
+/// (`fold_no_require_no_halt`, kept below as the corollary it now is) to
+/// the three halting shapes.
+let rec fold_no_halting_shape_no_halt (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
+                                      (w: witness a e v eff) (ar: handler_arm v eff p)
+                                      (node_id: string) (x: action_view a e v) (s: store v) (pl: p)
+  : Lemma (requires not (may_halt x))
           (ensures not (fst (fold w ar node_id x s pl)).o_halted)
-          (decreases %[x; 0]) =
+          (decreases %[x; 0; 0]) =
   match x with
   | VAssign _ state_key value value_from ->
     if w.w_is_reserved state_key then ()
@@ -874,22 +1158,726 @@ let rec fold_no_require_no_halt (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0
      | Emit _ -> ()
      | Refuse _ -> ()
      | Decline -> ())
-  | VSequence _ ops -> fold_no_require_no_halt_list w ar node_id ops s pl
+  | VSequence _ ops -> fold_no_halting_shape_no_halt_list w ar node_id ops s pl
   | VRequire _ _ -> ()
+  | VChoose _ _ _ _ _ -> ()
+  | VRepeat _ _ _ -> ()
 
-and fold_no_require_no_halt_list (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
-                                 (w: witness a e v eff) (ar: handler_arm v eff p)
-                                 (node_id: string) (ops: list (action_view a e v))
-                                 (s: store v) (pl: p)
-  : Lemma (requires not (has_require_list ops))
+and fold_no_halting_shape_no_halt_list (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
+                                       (w: witness a e v eff) (ar: handler_arm v eff p)
+                                       (node_id: string) (ops: list (action_view a e v))
+                                       (s: store v) (pl: p)
+  : Lemma (requires not (may_halt_list ops))
           (ensures not (fst (fold_many w ar node_id ops s pl)).o_halted)
-          (decreases %[ops; 1]) =
+          (decreases %[ops; 1; 0]) =
   match ops with
   | [] -> ()
   | x :: rest ->
-    fold_no_require_no_halt w ar node_id x s pl;
+    fold_no_halting_shape_no_halt w ar node_id x s pl;
     let (o1, p1) = fold w ar node_id x s pl in
-    fold_no_require_no_halt_list w ar node_id rest o1.o_store p1
+    fold_no_halting_shape_no_halt_list w ar node_id rest o1.o_store p1
+
+/// **`fold_no_require_no_halt`** — Phase 1967's statement, now a corollary
+/// for a view WITHOUT the Phase-1976 shapes: with no guard it never halts.
+/// The extra hypothesis is what Phase 1976 changed: over the widened view
+/// a guard is no longer the only shape that halts, so the 1967 statement
+/// as written is false there, and this is the form that stays true — at
+/// any view without a selection or a repeat, which is every view the UI
+/// witness produces (`ui_view_no_flow`), it is exactly the old theorem.
+let fold_no_require_no_halt (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
+                            (w: witness a e v eff) (ar: handler_arm v eff p)
+                            (node_id: string) (x: action_view a e v) (s: store v) (pl: p)
+  : Lemma (requires not (has_require x) /\ not (has_flow x))
+          (ensures not (fst (fold w ar node_id x s pl)).o_halted) =
+  fold_no_halting_shape_no_halt w ar node_id x s pl
+
+// ─── 6. The reversible fragment (Phase 1976) ─────────────────────────
+
+(* ───────────────────────────────────────────────────────────────────
+   Selection and iteration are where a reversible language needs
+   structure a forward-only one does not, so the two shapes were designed
+   for reversal from the start (the Janus model, Lutz and Yokoyama): a
+   branch carries an EXIT assertion that picks the arm to undo, and a
+   repeat's bound is a function of the tree alone. `Assign` is not
+   reversible by construction — it destroys the old value — so it joins
+   the fragment BY TRACE: a reversible run records, at each write, the
+   value it overwrote (the Bennett embedding), and the inverse program
+   restores it with an ordinary `Assign`. Nothing is recorded by a run
+   that is not asked to trace (`fold` carries no trace, `traced_agrees`
+   says the two runs agree), so a program that never reverses pays
+   nothing.
+
+   The fragment is SYNTACTIC — `reversible` reads the tree and nothing
+   else — and it is: sequence, assign, the guard, a branch WITH an exit
+   assertion, a repeat with a LITERAL bound. A call and a leaf are effects
+   and are 1977's boundary; a branch without an exit assertion has nothing
+   to say which arm to undo; a parameter bound is read from the store the
+   body may have overwritten. The one thing the fragment cannot decide
+   from the tree is whether every key a run assigned was PRESENT before
+   it: a key that was absent cannot be restored by an assignment (the
+   store has no delete, K4), so the trace says `TWrote ONone` and
+   `restorable` refuses it. That is a property of the run, carried by
+   the trace, and `reverse_run` is conditional on it — named as such in
+   the ladder.
+   ─────────────────────────────────────────────────────────────────── *)
+
+/// The trace of one run, mirroring the view: one leaf entry per
+/// non-composition step, `TWrote old` for an assignment that wrote (with
+/// the value it overwrote, `ONone` if the key was absent), `TNothing` for
+/// every other step and for an assignment that was refused; the members
+/// that RAN of a sequence or a repeat (a halted prefix is shorter); and
+/// which arm a branch took. F#: `Trace`.
+type trace (v: Type0) =
+  | TNothing : trace v
+  | TWrote : old: opt v -> trace v
+  | TSeq : steps: list (trace v) -> trace v
+  | TChoose : took_true: bool -> arm: trace v -> trace v
+  | TRepeat : iterations: list (trace v) -> trace v
+
+/// The fold, recording its trace. Arm for arm the same as `fold`
+/// (`traced_agrees` proves the outcome and the placement equal), plus the
+/// third result. F#: `BoundedActions.runTraced`'s fold.
+let rec fold_traced (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
+                    (w: witness a e v eff) (ar: handler_arm v eff p)
+                    (node_id: string) (x: action_view a e v) (s: store v) (pl: p)
+  : Tot (bounded_outcome v eff & p & trace v) (decreases %[x; 0; 0]) =
+  match x with
+  | VAssign act state_key value value_from ->
+    if w.w_is_reserved state_key then
+      (refused node_id (w.w_describe act)
+         (strcat "State key '"
+           (strcat state_key
+             (strcat "' is under the host-reserved '" (strcat w.w_reserved_prefix "' namespace")))) s,
+       pl, TNothing)
+    else
+      let payload : jval_payload v =
+        match value_from with
+        | OSome expr ->
+          (match w.w_resolve s expr with
+           | Resolved jv -> POk (OSome jv)
+           | NotResolved -> POk ONone
+           | Errored m -> PErr m)
+        | ONone -> POk value
+      in
+      (match payload with
+       | POk (OSome jv) -> (store_only (write s state_key jv), pl, TWrote (lookup s state_key))
+       | POk ONone ->
+         (refused node_id (w.w_describe act) "valueFrom did not resolve to a value — no write performed" s,
+          pl, TNothing)
+       | PErr m ->
+         (refused node_id (w.w_describe act)
+            (strcat "valueFrom errored: " (strcat m " — no write performed")) s,
+          pl, TNothing))
+
+  | VCall act endpoint declares_target ->
+    if declares_target then
+      (refused node_id (w.w_describe act)
+         "the call declares a result target; a handler declares where its own results land" s,
+       pl, TNothing)
+    else
+      (match ar.answer node_id endpoint s pl with
+       | ONone -> (declined node_id (w.w_describe act) s, pl, TNothing)
+       | OSome ans ->
+         ({ o_store = ans.h_store; o_effects = ans.h_effects; o_diagnostics = ans.h_diagnostics;
+            o_halted = false },
+          ans.h_placement, TNothing))
+
+  | VRequire act condition ->
+    ((match w.w_resolve s condition with
+      | Resolved jv ->
+        if w.w_is_true jv then store_only s
+        else halted node_id (w.w_describe act) "the guard did not hold" s
+      | NotResolved ->
+        halted node_id (w.w_describe act) "the guard did not resolve to a value" s
+      | Errored m -> halted node_id (w.w_describe act) m s),
+     pl, TNothing)
+
+  | VLeaf act ->
+    ((match w.w_lower node_id act s with
+      | Emit emitted -> { o_store = s; o_effects = [ emitted ]; o_diagnostics = []; o_halted = false }
+      | Refuse reason -> refused node_id (w.w_describe act) reason s
+      | Decline -> declined node_id (w.w_describe act) s),
+     pl, TNothing)
+
+  | VChoose act entry when_true when_false exit ->
+    (match w.w_resolve s entry with
+     | Resolved jv ->
+       let took_true = w.w_is_true jv in
+       let (o1, p1, arm) =
+         if took_true then fold_traced w ar node_id when_true s pl
+         else fold_traced w ar node_id when_false s pl
+       in
+       let tr = TChoose took_true arm in
+       if o1.o_halted then (o1, p1, tr)
+       else
+         (match exit with
+          | ONone -> (o1, p1, tr)
+          | OSome assertion ->
+            (match w.w_resolve o1.o_store assertion with
+             | Resolved jv' ->
+               if w.w_is_true jv' = took_true then (o1, p1, tr)
+               else
+                 (halted_after o1 node_id (w.w_describe act)
+                    (if took_true then "the exit assertion did not hold after the true arm"
+                     else "the exit assertion held after the false arm"),
+                  p1, tr)
+             | NotResolved ->
+               (halted_after o1 node_id (w.w_describe act) "the exit assertion did not resolve to a value", p1, tr)
+             | Errored m ->
+               (halted_after o1 node_id (w.w_describe act) (strcat "the exit assertion errored: " m), p1, tr)))
+     | NotResolved ->
+       (halted node_id (w.w_describe act) "the branch condition did not resolve to a value" s, pl, TNothing)
+     | Errored m -> (halted node_id (w.w_describe act) m s, pl, TNothing))
+
+  | VRepeat act count body ->
+    (match count with
+     | BLiteral n ->
+       let (o, p', its) = fold_traced_repeat w ar node_id body n s pl in (o, p', TRepeat its)
+     | BParameter expr lo hi ->
+       (match w.w_resolve s expr with
+        | Resolved jv ->
+          (match w.w_as_count jv with
+           | OSome n ->
+             if lo <= n && n <= hi then
+               let (o, p', its) = fold_traced_repeat w ar node_id body n s pl in (o, p', TRepeat its)
+             else
+               (halted node_id (w.w_describe act) "the repeat's bound is outside its declared range" s, pl, TNothing)
+           | ONone ->
+             (halted node_id (w.w_describe act) "the repeat's bound did not resolve to a count" s, pl, TNothing))
+        | NotResolved ->
+          (halted node_id (w.w_describe act) "the repeat's bound did not resolve to a value" s, pl, TNothing)
+        | Errored m -> (halted node_id (w.w_describe act) m s, pl, TNothing)))
+
+  | VSequence _ ops ->
+    let (o, p', steps) = fold_traced_many w ar node_id ops s pl in (o, p', TSeq steps)
+
+and fold_traced_many (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
+                     (w: witness a e v eff) (ar: handler_arm v eff p)
+                     (node_id: string) (ops: list (action_view a e v)) (s: store v) (pl: p)
+  : Tot (bounded_outcome v eff & p & list (trace v)) (decreases %[ops; 1; 0]) =
+  match ops with
+  | [] -> (store_only s, pl, [])
+  | x :: rest ->
+    let (o1, p1, t1) = fold_traced w ar node_id x s pl in
+    if o1.o_halted then (o1, p1, [ t1 ])
+    else
+      let (o2, p2, ts) = fold_traced_many w ar node_id rest o1.o_store p1 in
+      ({ o_store = o2.o_store;
+         o_effects = app o1.o_effects o2.o_effects;
+         o_diagnostics = app o1.o_diagnostics o2.o_diagnostics;
+         o_halted = o2.o_halted },
+       p2, t1 :: ts)
+
+and fold_traced_repeat (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
+                       (w: witness a e v eff) (ar: handler_arm v eff p)
+                       (node_id: string) (body: action_view a e v) (n: nat) (s: store v) (pl: p)
+  : Tot (bounded_outcome v eff & p & list (trace v)) (decreases %[body; 2; n]) =
+  if n = 0 then (store_only s, pl, [])
+  else
+    let (o1, p1, t1) = fold_traced w ar node_id body s pl in
+    if o1.o_halted then (o1, p1, [ t1 ])
+    else
+      let (o2, p2, ts) = fold_traced_repeat w ar node_id body (n - 1) o1.o_store p1 in
+      ({ o_store = o2.o_store;
+         o_effects = app o1.o_effects o2.o_effects;
+         o_diagnostics = app o1.o_diagnostics o2.o_diagnostics;
+         o_halted = o2.o_halted },
+       p2, t1 :: ts)
+
+/// The action-level traced entry. F#: `BoundedActions.runTraced`.
+let run_action_traced (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
+                      (w: witness a e v eff) (ar: handler_arm v eff p)
+                      (node_id: string) (act: a) (s: store v) (pl: p)
+  : bounded_outcome v eff & p & trace v =
+  fold_traced w ar node_id (w.w_view act) s pl
+
+/// **`traced_agrees`.** The traced fold IS the fold, with a trace beside
+/// it: the outcome and the placement are equal at every view, store and
+/// placement. This is what "the forward run without reversal records
+/// nothing" rests on — `fold` is the production path and carries no
+/// trace; `fold_traced` is the reversible run and carries one; and
+/// nothing a program does differs between them.
+let rec traced_agrees (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
+                      (w: witness a e v eff) (ar: handler_arm v eff p)
+                      (node_id: string) (x: action_view a e v) (s: store v) (pl: p)
+  : Lemma (ensures (let (o, pl', _) = fold_traced w ar node_id x s pl in (o, pl') == fold w ar node_id x s pl))
+          (decreases %[x; 0; 0]) =
+  match x with
+  | VSequence _ ops -> traced_agrees_many w ar node_id ops s pl
+  | VChoose _ entry when_true when_false _ ->
+    (match w.w_resolve s entry with
+     | Resolved jv ->
+       if w.w_is_true jv then traced_agrees w ar node_id when_true s pl
+       else traced_agrees w ar node_id when_false s pl
+     | _ -> ())
+  | VRepeat _ count body ->
+    (match count with
+     | BLiteral n -> traced_agrees_repeat w ar node_id body n s pl
+     | BParameter expr lo hi ->
+       (match w.w_resolve s expr with
+        | Resolved jv ->
+          (match w.w_as_count jv with
+           | OSome n -> if lo <= n && n <= hi then traced_agrees_repeat w ar node_id body n s pl else ()
+           | ONone -> ())
+        | _ -> ()))
+  | VAssign _ _ _ _ -> ()
+  | VCall _ _ _ -> ()
+  | VRequire _ _ -> ()
+  | VLeaf _ -> ()
+
+and traced_agrees_many (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
+                       (w: witness a e v eff) (ar: handler_arm v eff p)
+                       (node_id: string) (ops: list (action_view a e v)) (s: store v) (pl: p)
+  : Lemma (ensures (let (o, pl', _) = fold_traced_many w ar node_id ops s pl in
+                    (o, pl') == fold_many w ar node_id ops s pl))
+          (decreases %[ops; 1; 0]) =
+  match ops with
+  | [] -> ()
+  | x :: rest ->
+    traced_agrees w ar node_id x s pl;
+    let (o1, p1) = fold w ar node_id x s pl in
+    if o1.o_halted then () else traced_agrees_many w ar node_id rest o1.o_store p1
+
+and traced_agrees_repeat (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
+                         (w: witness a e v eff) (ar: handler_arm v eff p)
+                         (node_id: string) (body: action_view a e v) (n: nat) (s: store v) (pl: p)
+  : Lemma (ensures (let (o, pl', _) = fold_traced_repeat w ar node_id body n s pl in
+                    (o, pl') == fold_repeat w ar node_id body n s pl))
+          (decreases %[body; 2; n]) =
+  if n = 0 then ()
+  else begin
+    traced_agrees w ar node_id body s pl;
+    let (o1, p1) = fold w ar node_id body s pl in
+    if o1.o_halted then () else traced_agrees_repeat w ar node_id body (n - 1) o1.o_store p1
+  end
+
+/// **The reversible fragment, decided from the tree alone.** Sequence,
+/// assign, the guard, a branch WITH an exit assertion, a repeat with a
+/// LITERAL bound; never a call or a leaf (effects: 1977's boundary). A
+/// `bool`, not a `prop`: this is the classification the code ships
+/// (`BoundedActions.reversible`), so it extracts.
+let rec reversible (#a: Type0) (#e: Type0) (#v: Type0) (x: action_view a e v)
+  : Tot bool (decreases %[x; 0]) =
+  match x with
+  | VSequence _ ops -> reversible_list ops
+  | VAssign _ _ _ _ -> true
+  | VRequire _ _ -> true
+  | VChoose _ _ when_true when_false exit -> OSome? exit && reversible when_true && reversible when_false
+  | VRepeat _ count body -> BLiteral? count && reversible body
+  | VCall _ _ _ -> false
+  | VLeaf _ -> false
+
+and reversible_list (#a: Type0) (#e: Type0) (#v: Type0) (ops: list (action_view a e v))
+  : Tot bool (decreases %[ops; 1]) =
+  match ops with
+  | [] -> true
+  | x :: rest -> reversible x && reversible_list rest
+
+/// A trace every write of which overwrote a PRESENT key, so every write
+/// can be undone by an assignment. The run-dependent half of
+/// reversibility, decided from the trace. F#: `Trace.restorable`.
+let rec restorable (#v: Type0) (tr: trace v) : Tot bool (decreases %[tr; 0]) =
+  match tr with
+  | TNothing -> true
+  | TWrote ONone -> false
+  | TWrote (OSome _) -> true
+  | TSeq steps -> restorable_list steps
+  | TChoose _ arm -> restorable arm
+  | TRepeat iterations -> restorable_list iterations
+
+and restorable_list (#v: Type0) (steps: list (trace v)) : Tot bool (decreases %[steps; 1]) =
+  match steps with
+  | [] -> true
+  | t :: rest -> restorable t && restorable_list rest
+
+/// `n` copies of a view: the unrolling of a literal repeat.
+let rec replicate (#a: Type0) (n: nat) (x: a) : Tot (list a) (decreases n) =
+  if n = 0 then [] else x :: replicate (n - 1) x
+
+/// The action a view carries at its root.
+let act_of (#a: Type0) (#e: Type0) (#v: Type0) (x: action_view a e v) : a =
+  match x with
+  | VSequence act _ -> act
+  | VAssign act _ _ _ -> act
+  | VCall act _ _ -> act
+  | VRequire act _ -> act
+  | VChoose act _ _ _ _ -> act
+  | VRepeat act _ _ -> act
+  | VLeaf act -> act
+
+/// **The inverse of a RUN** — a program in the fragment, built from the
+/// program and its trace, that undoes what the run did when folded from
+/// the store the run left (`reverse_run`):
+///
+///   * a sequence inverts to its members' inverses in REVERSE order;
+///   * an assignment that wrote inverts to the assignment of the value it
+///     overwrote (the Bennett restore); one that was refused wrote nothing
+///     and inverts to the empty sequence;
+///   * a guard is its own inverse — it held at that store and holds again;
+///   * a branch inverts to the branch whose ENTRY condition is the exit
+///     assertion and whose EXIT assertion is the entry condition, with the
+///     arm that ran inverted and the other arm EMPTY: nothing was recorded
+///     for the arm that did not run, and the exit assertion is what
+///     guarantees the inverse never takes it (Janus, with the trace
+///     standing in for the untaken arm's self-inverse);
+///   * a literal repeat inverts to the SEQUENCE of its iterations'
+///     inverses in reverse order — not a repeat, because each iteration
+///     overwrote different values and so has its own inverse body.
+///
+/// Total: a program and a trace that do not match (a call, a leaf, a
+/// trace from a different run) invert to the empty sequence, and
+/// `reverse_run` says nothing of them — its hypotheses exclude them.
+/// Termination is on the trace, which is finite by construction.
+/// F#: `BoundedActions.reverse`.
+let rec reverse (#a: Type0) (#e: Type0) (#v: Type0) (x: action_view a e v) (tr: trace v)
+  : Tot (action_view a e v) (decreases %[tr; 0]) =
+  match x, tr with
+  | VSequence act ops, TSeq steps -> VSequence act (reverse_many ops steps)
+  | VAssign act state_key _ _, TWrote (OSome old) -> VAssign act state_key (OSome old) ONone
+  | VRequire act condition, _ -> VRequire act condition
+  | VChoose act entry when_true _ (OSome exit), TChoose true arm ->
+    VChoose act exit (reverse when_true arm) (VSequence act []) (OSome entry)
+  | VChoose act entry _ when_false (OSome exit), TChoose false arm ->
+    VChoose act exit (VSequence act []) (reverse when_false arm) (OSome entry)
+  | VRepeat act (BLiteral n) body, TRepeat iterations -> VSequence act (reverse_many (replicate n body) iterations)
+  | _, _ -> VSequence (act_of x) []
+
+and reverse_many (#a: Type0) (#e: Type0) (#v: Type0)
+                 (ops: list (action_view a e v)) (steps: list (trace v))
+  : Tot (list (action_view a e v)) (decreases %[steps; 1]) =
+  match ops, steps with
+  | x :: rest, t :: ts -> app (reverse_many rest ts) [ reverse x t ]
+  | _, _ -> []
+
+/// The action-level inverse. F#: `BoundedActions.reverse`.
+let reverse_action (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0)
+                   (w: witness a e v eff) (act: a) (tr: trace v) : action_view a e v =
+  reverse (w.w_view act) tr
+
+/// Restoring an overwritten PRESENT key: writing the old value over the
+/// new one gives back exactly the store before the write — structurally,
+/// not only at `lookup`, because `write` replaces in place.
+let rec write_restore (#v: Type0) (s: store v) (k: key) (x: v) (old: v)
+  : Lemma (requires lookup s k == OSome old)
+          (ensures write (write s k x) k old == s)
+          (decreases s) =
+  match s with
+  | [] -> ()
+  | (k', _) :: rest -> if k' = k then () else write_restore rest k x old
+
+/// One step of `fold_many` and of the traced folds, as equations the
+/// recursive lemmas below call rather than leave the solver to unfold
+/// (the same discipline `proofs/Staging.fst` records for `plan_ops`).
+let fold_many_nil (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
+                  (w: witness a e v eff) (ar: handler_arm v eff p) (node_id: string) (s: store v) (pl: p)
+  : Lemma (fold_many w ar node_id [] s pl == (store_only s, pl)) = ()
+
+let fold_many_single (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
+                     (w: witness a e v eff) (ar: handler_arm v eff p)
+                     (node_id: string) (y: action_view a e v) (s: store v) (pl: p)
+  : Lemma ((fst (fold_many w ar node_id [ y ] s pl)).o_store == (fst (fold w ar node_id y s pl)).o_store /\
+           (fst (fold_many w ar node_id [ y ] s pl)).o_halted == (fst (fold w ar node_id y s pl)).o_halted /\
+           snd (fold_many w ar node_id [ y ] s pl) == snd (fold w ar node_id y s pl)) = ()
+
+let fold_traced_many_cons (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
+                          (w: witness a e v eff) (ar: handler_arm v eff p)
+                          (node_id: string) (x: action_view a e v) (rest: list (action_view a e v))
+                          (s: store v) (pl: p)
+  : Lemma
+      (fold_traced_many w ar node_id (x :: rest) s pl ==
+       (let (o1, p1, t1) = fold_traced w ar node_id x s pl in
+        if o1.o_halted then (o1, p1, [ t1 ])
+        else
+          let (o2, p2, ts) = fold_traced_many w ar node_id rest o1.o_store p1 in
+          ({ o_store = o2.o_store;
+             o_effects = app o1.o_effects o2.o_effects;
+             o_diagnostics = app o1.o_diagnostics o2.o_diagnostics;
+             o_halted = o2.o_halted },
+           p2, t1 :: ts))) = ()
+
+let fold_traced_repeat_step (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
+                            (w: witness a e v eff) (ar: handler_arm v eff p)
+                            (node_id: string) (body: action_view a e v) (n: nat) (s: store v) (pl: p)
+  : Lemma
+      (requires n > 0)
+      (ensures
+        fold_traced_repeat w ar node_id body n s pl ==
+        (let (o1, p1, t1) = fold_traced w ar node_id body s pl in
+         if o1.o_halted then (o1, p1, [ t1 ])
+         else
+           let (o2, p2, ts) = fold_traced_repeat w ar node_id body (n - 1) o1.o_store p1 in
+           ({ o_store = o2.o_store;
+              o_effects = app o1.o_effects o2.o_effects;
+              o_diagnostics = app o1.o_diagnostics o2.o_diagnostics;
+              o_halted = o2.o_halted },
+            p2, t1 :: ts))) = ()
+
+let reverse_many_cons (#a: Type0) (#e: Type0) (#v: Type0)
+                      (x: action_view a e v) (rest: list (action_view a e v))
+                      (t: trace v) (ts: list (trace v))
+  : Lemma (reverse_many (x :: rest) (t :: ts) == app (reverse_many rest ts) [ reverse x t ]) = ()
+
+/// **`reverse_run`.** For every program `x` in the reversible fragment and
+/// every store `s` it runs on — the traced run from `s` does not halt and
+/// its trace is restorable — folding the inverse of the run from the
+/// store the run left gives back `s`, and does not halt. The forward run
+/// is at placement `pl` and the inverse at any `pl'`: the fragment has no
+/// call, so neither touches its placement. In the shard's words:
+/// `run (reverse p) (run p s) = s`, with `reverse` applied to the RUN
+/// (the program and its trace), which is what the Bennett embedding of
+/// `Assign` makes it.
+let rec reverse_run (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
+                    (w: witness a e v eff) (ar: handler_arm v eff p)
+                    (node_id: string) (x: action_view a e v) (s: store v) (pl: p) (pl': p)
+  : Lemma
+      (requires
+        reversible x /\
+        (let (o, _, tr) = fold_traced w ar node_id x s pl in not o.o_halted /\ restorable tr))
+      (ensures
+        (let (o, _, tr) = fold_traced w ar node_id x s pl in
+         let (o', _) = fold w ar node_id (reverse x tr) o.o_store pl' in
+         o'.o_store == s /\ not o'.o_halted))
+      (decreases %[x; 0; 0]) =
+  match x with
+  | VAssign _ state_key value value_from ->
+    if w.w_is_reserved state_key then ()
+    else
+      (match value_from with
+       | OSome expr ->
+         (match w.w_resolve s expr with
+          | Resolved jv ->
+            (match lookup s state_key with
+             | OSome old -> write_restore s state_key jv old
+             | ONone -> ())
+          | _ -> ())
+       | ONone ->
+         (match value with
+          | OSome jv ->
+            (match lookup s state_key with
+             | OSome old -> write_restore s state_key jv old
+             | ONone -> ())
+          | ONone -> ()))
+  | VRequire _ _ -> ()
+  | VSequence _ ops -> reverse_run_many w ar node_id ops s pl pl'
+  | VChoose _ entry when_true when_false _ ->
+    (match w.w_resolve s entry with
+     | Resolved jv ->
+       if w.w_is_true jv then reverse_run w ar node_id when_true s pl pl'
+       else reverse_run w ar node_id when_false s pl pl'
+     | _ -> ())
+  | VRepeat _ (BLiteral n) body -> reverse_run_repeat w ar node_id body n s pl pl'
+  | VRepeat _ (BParameter _ _ _) _ -> ()
+  | VCall _ _ _ -> ()
+  | VLeaf _ -> ()
+
+and reverse_run_many (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
+                     (w: witness a e v eff) (ar: handler_arm v eff p)
+                     (node_id: string) (ops: list (action_view a e v)) (s: store v) (pl: p) (pl': p)
+  : Lemma
+      (requires
+        reversible_list ops /\
+        (let (o, _, steps) = fold_traced_many w ar node_id ops s pl in not o.o_halted /\ restorable_list steps))
+      (ensures
+        (let (o, _, steps) = fold_traced_many w ar node_id ops s pl in
+         let (o', _) = fold_many w ar node_id (reverse_many ops steps) o.o_store pl' in
+         o'.o_store == s /\ not o'.o_halted))
+      (decreases %[ops; 1; 0]) =
+  match ops with
+  | [] -> fold_many_nil w ar node_id s pl'
+  | x :: rest ->
+    fold_traced_many_cons w ar node_id x rest s pl;
+    let (o1, p1, t1) = fold_traced w ar node_id x s pl in
+    let (o2, p2, ts) = fold_traced_many w ar node_id rest o1.o_store p1 in
+    reverse_many_cons x rest t1 ts;
+    // The inverse of the rest runs first, from where the whole run ended,
+    // and lands on the store the first member left ...
+    reverse_run_many w ar node_id rest o1.o_store p1 pl';
+    let (oa, pa) = fold_many w ar node_id (reverse_many rest ts) o2.o_store pl' in
+    // ... then the first member's inverse runs from there and lands on `s`.
+    sequence_homomorphism w ar node_id (reverse_many rest ts) [ reverse x t1 ] o2.o_store pl';
+    fold_many_single w ar node_id (reverse x t1) oa.o_store pa;
+    reverse_run w ar node_id x s pl pa
+
+and reverse_run_repeat (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
+                       (w: witness a e v eff) (ar: handler_arm v eff p)
+                       (node_id: string) (body: action_view a e v) (n: nat) (s: store v) (pl: p) (pl': p)
+  : Lemma
+      (requires
+        reversible body /\
+        (let (o, _, its) = fold_traced_repeat w ar node_id body n s pl in not o.o_halted /\ restorable_list its))
+      (ensures
+        (let (o, _, its) = fold_traced_repeat w ar node_id body n s pl in
+         let (o', _) = fold_many w ar node_id (reverse_many (replicate n body) its) o.o_store pl' in
+         o'.o_store == s /\ not o'.o_halted))
+      (decreases %[body; 2; n]) =
+  if n = 0 then fold_many_nil w ar node_id s pl'
+  else begin
+    fold_traced_repeat_step w ar node_id body n s pl;
+    let (o1, p1, t1) = fold_traced w ar node_id body s pl in
+    let (o2, p2, ts) = fold_traced_repeat w ar node_id body (n - 1) o1.o_store p1 in
+    assert (replicate n body == body :: replicate (n - 1) body);
+    reverse_many_cons body (replicate (n - 1) body) t1 ts;
+    reverse_run_repeat w ar node_id body (n - 1) o1.o_store p1 pl';
+    let (oa, pa) = fold_many w ar node_id (reverse_many (replicate (n - 1) body) ts) o2.o_store pl' in
+    sequence_homomorphism w ar node_id (reverse_many (replicate (n - 1) body) ts) [ reverse body t1 ] o2.o_store pl';
+    fold_many_single w ar node_id (reverse body t1) oa.o_store pa;
+    reverse_run w ar node_id body s pl pa
+  end
+
+/// **`repeat_is_unrolling`.** A literal repeat folds exactly as the
+/// sequence of `n` copies of its body — outcome and placement — so every
+/// sequence law (`sequence_homomorphism`, `fold_reserved_untouched`'s
+/// list form) is a law about repeats too, and the inverse of a repeat is
+/// the inverse of that sequence.
+let rec repeat_is_unrolling (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
+                            (w: witness a e v eff) (ar: handler_arm v eff p)
+                            (node_id: string) (body: action_view a e v) (n: nat) (s: store v) (pl: p)
+  : Lemma (ensures fold_repeat w ar node_id body n s pl == fold_many w ar node_id (replicate n body) s pl)
+          (decreases n) =
+  if n = 0 then ()
+  else begin
+    let (o1, p1) = fold w ar node_id body s pl in
+    if o1.o_halted then () else repeat_is_unrolling w ar node_id body (n - 1) o1.o_store p1
+  end
+
+/// **`reversible_run_undoes`** — `reverse_run` at the action level, which
+/// is the form the code exposes: `run (reverse p) (run p s) = s`.
+let reversible_run_undoes (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
+                          (w: witness a e v eff) (ar: handler_arm v eff p)
+                          (node_id: string) (act: a) (s: store v) (pl: p) (pl': p)
+  : Lemma
+      (requires
+        reversible (w.w_view act) /\
+        (let (o, _, tr) = run_action_traced w ar node_id act s pl in not o.o_halted /\ restorable tr))
+      (ensures
+        (let (o, _, tr) = run_action_traced w ar node_id act s pl in
+         let (o', _) = fold w ar node_id (reverse_action w act tr) o.o_store pl' in
+         o'.o_store == s /\ not o'.o_halted)) =
+  reverse_run w ar node_id (w.w_view act) s pl pl'
+
+// ─── 7. The work of a run is bounded by the view's cost (Phase 1976) ─
+
+/// `n` times `c`, written over the count so that every fact about it is
+/// linear and structural — no non-linear arithmetic reaches the solver.
+[@@ noextract_to "FSharp"]
+let rec times (n: nat) (c: nat) : Tot nat (decreases n) =
+  if n = 0 then 0 else c + times (n - 1) c
+
+[@@ noextract_to "FSharp"]
+let max (x: nat) (y: nat) : nat = if x >= y then x else y
+
+/// `Budget.actionCascadeCost` over the view, exactly: a sequence sums its
+/// members; a selection is one step (its condition) and the MORE
+/// expensive arm; a repeat is one step (its bound) and its body times the
+/// bound, a parameter bound priced at the TOP of its range so the price
+/// needs no store; every other shape is one step. Ghost: `Budget.fs`
+/// computes it in saturating arithmetic, and this is the exact figure it
+/// saturates.
+[@@ noextract_to "FSharp"]
+let rec view_cost (#a: Type0) (#e: Type0) (#v: Type0) (x: action_view a e v)
+  : Tot nat (decreases %[x; 0]) =
+  match x with
+  | VSequence _ ops -> view_cost_list ops
+  | VChoose _ _ when_true when_false _ -> 1 + max (view_cost when_true) (view_cost when_false)
+  | VRepeat _ (BLiteral n) body -> 1 + times n (view_cost body)
+  | VRepeat _ (BParameter _ _ hi) body -> 1 + times hi (view_cost body)
+  | VAssign _ _ _ _ -> 1
+  | VCall _ _ _ -> 1
+  | VRequire _ _ -> 1
+  | VLeaf _ -> 1
+
+and view_cost_list (#a: Type0) (#e: Type0) (#v: Type0) (ops: list (action_view a e v))
+  : Tot nat (decreases %[ops; 1]) =
+  match ops with
+  | [] -> 0
+  | x :: rest -> view_cost x + view_cost_list rest
+
+/// The steps a run took, read off its trace: one per leaf entry.
+[@@ noextract_to "FSharp"]
+let rec trace_steps (#v: Type0) (tr: trace v) : Tot nat (decreases %[tr; 0]) =
+  match tr with
+  | TNothing -> 1
+  | TWrote _ -> 1
+  | TSeq steps -> steps_sum steps
+  | TChoose _ arm -> trace_steps arm
+  | TRepeat iterations -> steps_sum iterations
+
+and steps_sum (#v: Type0) (steps: list (trace v)) : Tot nat (decreases %[steps; 1]) =
+  match steps with
+  | [] -> 0
+  | t :: rest -> trace_steps t + steps_sum rest
+
+let rec times_monotone (n: nat) (m: nat) (c: nat)
+  : Lemma (requires n <= m) (ensures times n c <= times m c) (decreases m) =
+  if m = 0 then () else if n = 0 then () else times_monotone (n - 1) (m - 1) c
+
+/// **`fold_steps_within_cost`.** The steps a run takes never exceed the
+/// view's cost: a selection's run is within its condition and the more
+/// expensive arm, and a repeat's run is within its bound and the body's
+/// cost that many times — a parameter bound within the top of its range.
+/// So the budget's price, computed from the tree before the run, bounds
+/// the work the run does, which is the second half of "safe to run
+/// untrusted" extended to the two new shapes.
+let rec fold_steps_within_cost (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
+                               (w: witness a e v eff) (ar: handler_arm v eff p)
+                               (node_id: string) (x: action_view a e v) (s: store v) (pl: p)
+  : Lemma (ensures (let (_, _, tr) = fold_traced w ar node_id x s pl in trace_steps tr <= view_cost x))
+          (decreases %[x; 0; 0]) =
+  match x with
+  | VSequence _ ops -> fold_steps_within_cost_list w ar node_id ops s pl
+  | VChoose _ entry when_true when_false _ ->
+    (match w.w_resolve s entry with
+     | Resolved jv ->
+       if w.w_is_true jv then fold_steps_within_cost w ar node_id when_true s pl
+       else fold_steps_within_cost w ar node_id when_false s pl
+     | _ -> ())
+  | VRepeat _ count body ->
+    (match count with
+     | BLiteral n -> fold_steps_within_cost_repeat w ar node_id body n s pl
+     | BParameter expr lo hi ->
+       (match w.w_resolve s expr with
+        | Resolved jv ->
+          (match w.w_as_count jv with
+           | OSome n ->
+             if lo <= n && n <= hi then begin
+               fold_steps_within_cost_repeat w ar node_id body n s pl;
+               times_monotone n hi (view_cost body)
+             end
+             else ()
+           | ONone -> ())
+        | _ -> ()))
+  | VAssign _ _ _ _ -> ()
+  | VCall _ _ _ -> ()
+  | VRequire _ _ -> ()
+  | VLeaf _ -> ()
+
+and fold_steps_within_cost_list (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
+                                (w: witness a e v eff) (ar: handler_arm v eff p)
+                                (node_id: string) (ops: list (action_view a e v)) (s: store v) (pl: p)
+  : Lemma (ensures (let (_, _, steps) = fold_traced_many w ar node_id ops s pl in
+                    steps_sum steps <= view_cost_list ops))
+          (decreases %[ops; 1; 0]) =
+  match ops with
+  | [] -> ()
+  | x :: rest ->
+    fold_traced_many_cons w ar node_id x rest s pl;
+    fold_steps_within_cost w ar node_id x s pl;
+    let (o1, p1, _) = fold_traced w ar node_id x s pl in
+    if o1.o_halted then () else fold_steps_within_cost_list w ar node_id rest o1.o_store p1
+
+and fold_steps_within_cost_repeat (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
+                                  (w: witness a e v eff) (ar: handler_arm v eff p)
+                                  (node_id: string) (body: action_view a e v) (n: nat) (s: store v) (pl: p)
+  : Lemma (ensures (let (_, _, its) = fold_traced_repeat w ar node_id body n s pl in
+                    steps_sum its <= times n (view_cost body)))
+          (decreases %[body; 2; n]) =
+  if n = 0 then ()
+  else begin
+    fold_traced_repeat_step w ar node_id body n s pl;
+    fold_steps_within_cost w ar node_id body s pl;
+    let (o1, p1, _) = fold_traced w ar node_id body s pl in
+    if o1.o_halted then () else fold_steps_within_cost_repeat w ar node_id body (n - 1) o1.o_store p1
+  end
 
 (* ═══════════════════════════════════════════════════════════════════
    THE UI WITNESS — today's fourteen arms seen through the view.
@@ -1208,7 +2196,10 @@ let ui_witness (#v: Type0) (#b: Type0) (#k: Type0) (ax: axioms v b)
     // Unreachable at this witness: no arm of the fourteen views as a
     // guard (`ui_view_no_require`), so the fold never asks. The constant
     // is the fail-closed answer — were it ever reached, it would halt.
-    w_is_true = (fun _ -> false) }
+    w_is_true = (fun _ -> false);
+    // Unreachable too: no arm views as a repeat (`ui_view_no_flow`). The
+    // same fail-closed constant — an unreadable count halts.
+    w_as_count = (fun _ -> ONone) }
 
 /// **The fold at the UI witness** — `BoundedActions.runBoundedActionWith`
 /// today, `BoundedActions.run uiWitness` after Phase 1897. Phase 1715's
@@ -1442,15 +2433,39 @@ and ui_view_no_require_list (#v: Type0) (#b: Type0) (#k: Type0) (ops: list (acti
     ui_view_no_require x;
     ui_view_no_require_list rest
 
+/// **`ui_view_no_flow`** (Phase 1976). No arm of the fourteen views as a
+/// selection or a repeat: `ui_view` produces no `VChoose` and no
+/// `VRepeat` at any depth — the UI tier branches in the TREE and repeats
+/// through data binding, so its handlers are straight-line. This is the
+/// syntactic fact that makes every pre-1976 UI statement hold unchanged
+/// over the widened view: a view without the new shapes folds exactly
+/// as before.
+let rec ui_view_no_flow (#v: Type0) (#b: Type0) (#k: Type0) (a: action v b k)
+  : Lemma (ensures not (has_flow (ui_view a))) (decreases %[a; 0]) =
+  match a with
+  | AChain ops -> ui_view_no_flow_list ops
+  | _ -> ()
+
+and ui_view_no_flow_list (#v: Type0) (#b: Type0) (#k: Type0) (ops: list (action v b k))
+  : Lemma (ensures not (has_flow_list (ui_view_list ops))) (decreases %[ops; 1]) =
+  match ops with
+  | [] -> ()
+  | x :: rest ->
+    ui_view_no_flow x;
+    ui_view_no_flow_list rest
+
 /// **`ui_never_halts`.** The UI tier never halts: a leaf's refusal is a
 /// diagnostic and the chain carries on, exactly as before Phase 1967.
-/// `fold_no_require_no_halt` at a witness whose view has no guard.
+/// `fold_no_halting_shape_no_halt` at a witness whose view has no guard
+/// (`ui_view_no_require`) and none of Phase 1976's shapes
+/// (`ui_view_no_flow`).
 let ui_never_halts (#v: Type0) (#b: Type0) (#k: Type0) (#p: Type0)
                    (ax: axioms v b) (ar: arm v p)
                    (node_id: string) (a: action v b k) (s: store v) (pl: p)
   : Lemma (ensures not (fst (run ax ar node_id a s pl)).o_halted) =
   ui_view_no_require a;
-  fold_no_require_no_halt (ui_witness ax) ar node_id (ui_view a) s pl
+  ui_view_no_flow a;
+  fold_no_halting_shape_no_halt (ui_witness ax) ar node_id (ui_view a) s pl
 
 /// **`chain_homomorphism`.** Phase 1715's action-level statement:
 /// running `AChain (app xs ys)` is running `AChain xs` and then
@@ -1476,9 +2491,11 @@ let chain_homomorphism (#v: Type0) (#b: Type0) (#k: Type0) (#p: Type0)
   ui_view_list_app xs ys;
   ui_view_no_require_list xs;
   ui_view_no_require_list ys;
+  ui_view_no_flow_list xs;
+  ui_view_no_flow_list ys;
   let (o1, p1) = fold_many (ui_witness ax) ar node_id (ui_view_list xs) s pl in
-  fold_no_require_no_halt_list (ui_witness ax) ar node_id (ui_view_list xs) s pl;
-  fold_no_require_no_halt_list (ui_witness ax) ar node_id (ui_view_list ys) o1.o_store p1;
+  fold_no_halting_shape_no_halt_list (ui_witness ax) ar node_id (ui_view_list xs) s pl;
+  fold_no_halting_shape_no_halt_list (ui_witness ax) ar node_id (ui_view_list ys) o1.o_store p1;
   sequence_homomorphism (ui_witness ax) ar node_id (ui_view_list xs) (ui_view_list ys) s pl
 
 // ─── 4. Host-reserved keys are untouched ─────────────────────────────

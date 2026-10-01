@@ -61,6 +61,21 @@
 /// arm as it now is and keeps its statement; `guard_holds_moves_nothing`,
 /// `guard_refusal_halts` and `performer_handed_the_plan` are new.
 ///
+/// Since Phase 1976 the op view has FOUR shapes, and is taken to
+/// exhaustion as the dispatch axis's view is: an op the state witness
+/// views as a BRANCH (`OChoose`) carries two arms of ops and an entry
+/// condition that is itself an op resolved through `w_apply` — `ROk`
+/// takes the true arm, `RErr` the false arm, so a domain's typed refusal
+/// is the false value, not a halt — and an optional EXIT assertion
+/// resolved against the state the arm left, which must hold after the
+/// true arm and fail after the false arm, or the arm's plan is refused
+/// with the assertion named; an op viewed as a REPEAT (`ORepeat`) plans
+/// its body `count` times. Neither condition is ever applied for its
+/// state, staged, or performed: a branch plans exactly as the arm it
+/// takes (`choose_plans_the_taken_arm`), a repeat exactly as its
+/// unrolling (`repeat_plans_as_unrolling`), and the earlier theorems
+/// keep their statements over the widened arm.
+///
 /// DECISIONS.md D8 states the law in prose: nothing external runs in the
 /// plan phase; an uncommitted outcome equals the entry state EXCEPT that
 /// `Performed` names exactly the prefix of staged host calls that ran;
@@ -145,6 +160,25 @@
 ///     last staged edit of a planned op sequence was staged from the
 ///     sequence's FINAL planned state: the performer is handed what the
 ///     plan produced and needs to fold nothing itself.
+///
+/// And beside those (Phase 1976, the two flow shapes on the op axis):
+///
+///   * `choose_plans_the_taken_arm` — a branch whose exit assertion is
+///     absent or agrees with the arm taken plans exactly as that arm: the
+///     conditions move nothing and stage nothing.
+///   * `exit_violation_halts` — a branch whose exit assertion disagrees
+///     with the arm it took refuses the whole op sequence with the
+///     assertion named, after the arm planned; the effect halts on that
+///     reason and nothing is performed (`plan_halt_performs_nothing`).
+///   * `repeat_plans_as_unrolling` — a repeat plans exactly as its body
+///     written out `count` times, so every sequence law covers it.
+///   * `staged_from_the_final_state` — `performer_handed_the_plan`'s
+///     guarantee over EVERY shape: whenever a planned sequence staged
+///     anything, the head of the staged list was staged from the
+///     sequence's final planned state. (`last_edit`, which the older
+///     theorem is stated through, answers `ONone` on a sequence with a
+///     branch or a repeat in it, so that theorem is vacuous there and this
+///     one is not.)
 
 module Staging
 
@@ -243,11 +277,24 @@ type bounded_outcome (b: Type0) (eff: Type0) (d: Type0) = {
   bo_diagnostics: list d;
 }
 
-/// F#: `OpView` (Phase 1974) — what one op IS to the handler: an edit
-/// that moves the state, or the op-channel guard.
-type op_view =
-  | OEdit : op_view
-  | ORequire : op_view
+/// F#: `OpView<'Op>` (Phase 1974; widened to four shapes and taken TO
+/// EXHAUSTION by Phase 1976) — what one op IS to the handler: an edit
+/// that moves the state, the op-channel guard, a branch over two arms of
+/// ops, or a bounded repeat of a body of ops. The F# view is one level —
+/// a branch's arms are `'Op list` — and the handler re-views each op as
+/// it reaches it; this model views the whole tree first, exactly as
+/// `BoundedFold.action_view` does for the dispatch axis, so that
+/// planning terminates structurally and the obligation that `View`
+/// unfolds finitely sits on `w_op_view`'s `Tot` type. `OEdit` and
+/// `ORequire` carry the op the handler holds in hand (the one `w_apply`
+/// is given); a branch's entry condition and exit assertion are ops
+/// applied through `w_apply` for their ANSWER only — never viewed, never
+/// applied for their state, never staged.
+type op_view (o: Type0) =
+  | OEdit : op: o -> op_view o
+  | ORequire : op: o -> op_view o
+  | OChoose : entry: o -> when_true: list (op_view o) -> when_false: list (op_view o) -> exit: opt o -> op_view o
+  | ORepeat : count: nat -> body: list (op_view o) -> op_view o
 
 /// F#: the members of `ProgramWitness` the handler reads, plus the
 /// query evaluator it calls. Since Phase 1974 they sit on two axes:
@@ -263,9 +310,11 @@ noeq type witness (t: Type0) (b: Type0) (v: Type0) (o: Type0) (q: Type0) (a: Typ
   w_query: string -> q -> b -> res b;
   /// `StateWitness.Stream.Apply`, one op against the tree.
   w_apply: o -> t -> res t;
-  /// `StateWitness.View` (Phase 1974): an op viewed `ORequire` is a
-  /// guard, resolved through `w_apply` and never staged.
-  w_op_view: o -> op_view;
+  /// `StateWitness.View` (Phase 1974), applied to exhaustion (Phase
+  /// 1976): an op viewed `ORequire` is a guard, resolved through
+  /// `w_apply` and never staged; one viewed `OChoose` or `ORepeat` is
+  /// control over its arms, which are themselves views.
+  w_op_view: o -> op_view o;
   /// `StoreWitness.Assign`.
   w_assign: string -> v -> b -> b;
   /// The landing-slot refusal: `OSome reason` refuses the slot while
@@ -367,34 +416,104 @@ let staged_from (#t: Type0) (#v: Type0) (#o: Type0) (#p: Type0)
   let (tok, args) = f tree op in
   { sc_capability = cap; sc_performer = tok; sc_args = args; sc_into = ONone }
 
-/// F#: `Handler.planOps` — the `ApplyOps` arm's fold over its ops,
-/// short-circuiting at the first refusal. Each op is resolved through
-/// `w_apply` against the state as the ops before it left it. An op the
-/// state witness views as `ORequire` is the op-channel GUARD (Phase
-/// 1974, F-GUARD): it holds without moving the state and is never
-/// staged, and its refusal is the sequence's. Every other op is an EDIT:
-/// the state moves, and under a registered op performer (`OSome stage`)
-/// it is staged from the state AS OF THAT OP — the state it produced —
-/// and the op (F-PERFORM), prepended onto the reversed staged list
-/// exactly as a host call is, so the perform phase meets the ops in plan
-/// order. With no performer (`ONone`) nothing is staged and the arm is
-/// the in-memory apply it always was.
-let rec plan_ops (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
-                 (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
-                 (ops: list o) (tree: t) (staged: list (staged_call v p))
-  : Tot (res (t & list (staged_call v p))) (decreases ops) =
+/// `List.map w.w_op_view`: the ops of an `ApplyOps` effect, viewed to
+/// exhaustion (Phase 1976).
+let rec views (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
+              (w: witness t b v o q a eff d) (ops: list o)
+  : Tot (list (op_view o)) (decreases ops) =
   match ops with
+  | [] -> []
+  | op :: rest -> w.w_op_view op :: views w rest
+
+/// The plan over VIEWS (Phase 1976) — one `match` over the four op
+/// shapes, which is what `Handler.planOps` runs one level at a time.
+/// `plan_views` threads the state and the staged list through a list of
+/// views, short-circuiting at the first refusal; `plan_view` is one
+/// shape; `plan_repeat` is a body `count` times. Termination is the
+/// three-place structural measure `BoundedFold.fold` uses: an arm is a
+/// subterm of its branch, a body of its repeat, and the remaining count
+/// is the last place.
+let rec plan_views (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                   (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
+                   (vs: list (op_view o)) (tree: t) (staged: list (staged_call v p))
+  : Tot (res (t & list (staged_call v p))) (decreases %[vs; 1; 0]) =
+  match vs with
   | [] -> ROk (tree, staged)
-  | op :: rest ->
+  | x :: rest ->
+    (match plan_view w cap stage x tree staged with
+     | RErr code -> RErr code
+     | ROk (tree', staged') -> plan_views w cap stage rest tree' staged')
+
+and plan_view (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+              (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
+              (x: op_view o) (tree: t) (staged: list (staged_call v p))
+  : Tot (res (t & list (staged_call v p))) (decreases %[x; 0; 0]) =
+  match x with
+  // The guard: resolved through its own apply against the state as of
+  // its position; its answer is discarded, so it cannot write, and it is
+  // never staged. Its refusal is the sequence's.
+  | ORequire op ->
+    (match w.w_apply op tree with
+     | RErr code -> RErr code
+     | ROk _ -> ROk (tree, staged))
+  // The edit: the state moves, and under a registered op performer it is
+  // staged from the state AS OF THAT OP — the state it produced — and the
+  // op, prepended onto the reversed staged list exactly as a host call
+  // is, so the perform phase meets the ops in plan order.
+  | OEdit op ->
     (match w.w_apply op tree with
      | RErr code -> RErr code
      | ROk tree' ->
-       (match w.w_op_view op with
-        | ORequire -> plan_ops w cap stage rest tree staged
-        | OEdit ->
-          (match stage with
-           | ONone -> plan_ops w cap stage rest tree' staged
-           | OSome f -> plan_ops w cap stage rest tree' (staged_from cap f tree' op :: staged))))
+       (match stage with
+        | ONone -> ROk (tree', staged)
+        | OSome f -> ROk (tree', staged_from cap f tree' op :: staged)))
+  // The branch: the entry condition is an op applied for its answer —
+  // `ROk` takes the true arm, `RErr` the false arm (a typed refusal is
+  // the false value here, not a halt) — and the state it was applied to
+  // is the state the arm starts from. After the arm, the exit assertion
+  // (when carried) is applied against the state the arm left: it must
+  // hold after the true arm and fail after the false arm, or the plan is
+  // refused with the assertion named.
+  | OChoose entry when_true when_false exit ->
+    let took_true = ROk? (w.w_apply entry tree) in
+    let armed =
+      if took_true then plan_views w cap stage when_true tree staged
+      else plan_views w cap stage when_false tree staged
+    in
+    (match armed with
+     | RErr code -> RErr code
+     | ROk (tree', staged') ->
+       (match exit with
+        | ONone -> ROk (tree', staged')
+        | OSome assertion ->
+          (match w.w_apply assertion tree' with
+           | ROk _ ->
+             if took_true then ROk (tree', staged')
+             else RErr "the exit assertion held after the false arm"
+           | RErr reason ->
+             if took_true then RErr (strcat "the exit assertion did not hold after the true arm: " reason)
+             else ROk (tree', staged'))))
+  // The repeat: the body, `count` times, threaded like a sequence.
+  | ORepeat count body -> plan_repeat w cap stage body count tree staged
+
+and plan_repeat (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
+                (body: list (op_view o)) (n: nat) (tree: t) (staged: list (staged_call v p))
+  : Tot (res (t & list (staged_call v p))) (decreases %[body; 2; n]) =
+  if n = 0 then ROk (tree, staged)
+  else
+    (match plan_views w cap stage body tree staged with
+     | RErr code -> RErr code
+     | ROk (tree', staged') -> plan_repeat w cap stage body (n - 1) tree' staged')
+
+/// F#: `Handler.planOps` — the `ApplyOps` arm's fold over its ops: view
+/// them, then plan the views. The signature Phase 1974 gave it, so every
+/// theorem stated over an op sequence keeps its statement.
+let plan_ops (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+             (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
+             (ops: list o) (tree: t) (staged: list (staged_call v p))
+  : res (t & list (staged_call v p)) =
+  plan_views w cap stage (views w ops) tree staged
 
 /// F#: `List.map ServerDiagnostic.Bounded`.
 let rec map_bounded (#d: Type0) (ds: list d) : Tot (list (diagnostic d)) (decreases ds) =
@@ -912,12 +1031,12 @@ let plan_halt_performs_nothing (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (
   plan_pure w reg reg.r_perf node_id stages (start s)
 
 (* ───────────────────────────────────────────────────────────────────
-   THE OP-CHANNEL GUARD AND THE PERFORMER'S STATE (Phase 1974)
+   THE OP-CHANNEL GUARD AND THE PERFORMER'S STATE (Phase 1974), AND THE
+   TWO FLOW SHAPES OF THE OP AXIS (Phase 1976)
 
-   The third witness's two findings, both on the STATE axis and both
-   clauses of the one `ApplyOps` arm (`plan_ops`). Stated over the op
-   sequence an `ApplyOps` effect carries, at every position: a guard
-   anywhere in it, and the last edit of it.
+   Stated over the op sequence an `ApplyOps` effect carries, at every
+   position, through the views the state witness gives its ops: a guard
+   anywhere in it, the last edit of it, a branch anywhere in it, a repeat.
    ─────────────────────────────────────────────────────────────────── *)
 
 /// Planning `ys` from where an earlier `plan_ops` left the state and the
@@ -931,11 +1050,116 @@ let plan_after (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: 
   | RErr code -> RErr code
   | ROk (tree, staged) -> plan_ops w cap stage ys tree staged
 
-/// One step of `plan_ops`, stated as two equations. The recursive lemmas
-/// below CALL these rather than leave the SMT solver to unfold `plan_ops`
-/// itself: inside a recursive lemma the solver does not unfold it (the
-/// same query succeeds in a non-recursive lemma), and an equation it is
-/// handed is a step it cannot miss.
+/// The same, over views. Ghost.
+[@@ noextract_to "FSharp"]
+let plan_views_after (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                     (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
+                     (r: res (t & list (staged_call v p))) (ys: list (op_view o))
+  : res (t & list (staged_call v p)) =
+  match r with
+  | RErr code -> RErr code
+  | ROk (tree, staged) -> plan_views w cap stage ys tree staged
+
+/// One step of `views`, `plan_views`, `plan_view` and `plan_repeat`, as
+/// equations. The recursive lemmas below CALL these rather than leave
+/// the SMT solver to unfold the definitions itself: inside a recursive
+/// lemma the solver does not unfold them (the same query succeeds in a
+/// non-recursive lemma), and an equation it is handed is a step it
+/// cannot miss.
+let views_cons (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
+               (w: witness t b v o q a eff d) (op: o) (rest: list o)
+  : Lemma (views w (op :: rest) == w.w_op_view op :: views w rest) = ()
+
+let plan_views_nil (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                   (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
+                   (tree: t) (staged: list (staged_call v p))
+  : Lemma (plan_views w cap stage [] tree staged == ROk (tree, staged)) = ()
+
+let plan_views_cons (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                    (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
+                    (x: op_view o) (rest: list (op_view o)) (tree: t) (staged: list (staged_call v p))
+  : Lemma
+      (plan_views w cap stage (x :: rest) tree staged ==
+       (match plan_view w cap stage x tree staged with
+        | RErr code -> RErr code
+        | ROk r -> plan_views w cap stage rest (fst r) (snd r))) = ()
+
+let plan_view_require (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                      (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
+                      (op: o) (tree: t) (staged: list (staged_call v p))
+  : Lemma
+      (plan_view w cap stage (ORequire op) tree staged ==
+       (match w.w_apply op tree with
+        | RErr code -> RErr code
+        | ROk _ -> ROk (tree, staged))) = ()
+
+let plan_view_edit (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                   (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
+                   (op: o) (tree: t) (staged: list (staged_call v p))
+  : Lemma
+      (plan_view w cap stage (OEdit op) tree staged ==
+       (match w.w_apply op tree with
+        | RErr code -> RErr code
+        | ROk tree' ->
+          (match stage with
+           | ONone -> ROk (tree', staged)
+           | OSome f -> ROk (tree', staged_from cap f tree' op :: staged)))) = ()
+
+/// The reason a violated exit assertion refuses with: the assertion's own
+/// refusal after the true arm, or the fact of its holding after the false.
+let exit_violation_reason (#t: Type0) (took_true: bool) (answer: res t) : string =
+  match answer with
+  | ROk _ -> "the exit assertion held after the false arm"
+  | RErr reason -> strcat "the exit assertion did not hold after the true arm: " reason
+
+let plan_view_choose (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                     (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
+                     (entry: o) (when_true: list (op_view o)) (when_false: list (op_view o)) (exit: opt o)
+                     (tree: t) (staged: list (staged_call v p))
+  : Lemma
+      (plan_view w cap stage (OChoose entry when_true when_false exit) tree staged ==
+       (let took_true = ROk? (w.w_apply entry tree) in
+        let armed =
+          if took_true then plan_views w cap stage when_true tree staged
+          else plan_views w cap stage when_false tree staged
+        in
+        match armed with
+        | RErr code -> RErr code
+        | ROk r ->
+          (match exit with
+           | ONone -> ROk r
+           | OSome assertion ->
+             (match w.w_apply assertion (fst r) with
+              | ROk _ ->
+                if took_true then ROk r
+                else RErr "the exit assertion held after the false arm"
+              | RErr reason ->
+                if took_true then RErr (strcat "the exit assertion did not hold after the true arm: " reason)
+                else ROk r)))) = ()
+
+let plan_view_repeat (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                     (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
+                     (n: nat) (body: list (op_view o)) (tree: t) (staged: list (staged_call v p))
+  : Lemma (plan_view w cap stage (ORepeat n body) tree staged == plan_repeat w cap stage body n tree staged) = ()
+
+let plan_repeat_zero (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                     (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
+                     (body: list (op_view o)) (tree: t) (staged: list (staged_call v p))
+  : Lemma (plan_repeat w cap stage body 0 tree staged == ROk (tree, staged)) = ()
+
+let plan_repeat_step (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                     (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
+                     (body: list (op_view o)) (n: nat) (tree: t) (staged: list (staged_call v p))
+  : Lemma
+      (requires n > 0)
+      (ensures
+        plan_repeat w cap stage body n tree staged ==
+        (match plan_views w cap stage body tree staged with
+         | RErr code -> RErr code
+         | ROk r -> plan_repeat w cap stage body (n - 1) (fst r) (snd r))) = ()
+
+/// The Phase-1974 equations over an op sequence, now read through the
+/// view: one op is one view, planned, and the rest from where it left.
 let plan_ops_nil (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
                  (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
                  (tree: t) (staged: list (staged_call v p))
@@ -946,67 +1170,126 @@ let plan_ops_cons (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#
                   (op: o) (rest: list o) (tree: t) (staged: list (staged_call v p))
   : Lemma
       (plan_ops w cap stage (op :: rest) tree staged ==
-       (match w.w_apply op tree with
+       (match plan_view w cap stage (w.w_op_view op) tree staged with
         | RErr code -> RErr code
-        | ROk tree' ->
-          (match w.w_op_view op with
-           | ORequire -> plan_ops w cap stage rest tree staged
-           | OEdit ->
-             (match stage with
-              | ONone -> plan_ops w cap stage rest tree' staged
-              | OSome f -> plan_ops w cap stage rest tree' (staged_from cap f tree' op :: staged))))) = ()
+        | ROk r -> plan_ops w cap stage rest (fst r) (snd r))) = ()
 
 let app_cons (#a: Type0) (x: a) (xs: list a) (ys: list a)
   : Lemma (app (x :: xs) ys == x :: app xs ys) = ()
 
+let rec views_app (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
+                  (w: witness t b v o q a eff d) (xs: list o) (ys: list o)
+  : Lemma (ensures views w (app xs ys) == app (views w xs) (views w ys)) (decreases xs) =
+  match xs with
+  | [] -> ()
+  | _ :: rest -> views_app w rest ys
+
+/// `plan_views` over a concatenation is `plan_views` over the first part,
+/// then over the second from where the first left the state and the
+/// staged list.
+let rec plan_views_app (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                       (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
+                       (xs: list (op_view o)) (ys: list (op_view o)) (tree: t) (staged: list (staged_call v p))
+  : Lemma
+      (ensures
+        plan_views w cap stage (app xs ys) tree staged ==
+        plan_views_after w cap stage (plan_views w cap stage xs tree staged) ys)
+      (decreases xs) =
+  match xs with
+  | [] -> plan_views_nil w cap stage tree staged
+  | x :: rest ->
+    app_cons x rest ys;
+    plan_views_cons w cap stage x (app rest ys) tree staged;
+    plan_views_cons w cap stage x rest tree staged;
+    let s : res (t & list (staged_call v p)) = plan_view w cap stage x tree staged in
+    (match s with
+     | RErr _ -> ()
+     | ROk r -> plan_views_app w cap stage rest ys (fst r) (snd r))
+
 /// `plan_ops` over a concatenation is `plan_ops` over the first part, then
-/// over the second from where the first left the state and the staged list.
-let rec plan_ops_app (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
-                     (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
-                     (xs: list o) (ys: list o) (tree: t) (staged: list (staged_call v p))
+/// over the second from where the first left the state and the staged
+/// list. Phase 1974's statement, through `views_app`.
+let plan_ops_app (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                 (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
+                 (xs: list o) (ys: list o) (tree: t) (staged: list (staged_call v p))
   : Lemma
       (ensures
         plan_ops w cap stage (app xs ys) tree staged ==
-        plan_after w cap stage (plan_ops w cap stage xs tree staged) ys)
-      (decreases xs) =
-  match xs with
-  | [] -> plan_ops_nil w cap stage tree staged
-  | op :: rest ->
-    app_cons op rest ys;
-    plan_ops_cons w cap stage op (app rest ys) tree staged;
-    plan_ops_cons w cap stage op rest tree staged;
-    (match w.w_apply op tree with
-     | RErr _ -> ()
-     | ROk tree' ->
-       (match w.w_op_view op with
-        | ORequire -> plan_ops_app w cap stage rest ys tree staged
-        | OEdit ->
-          (match stage with
-           | ONone -> plan_ops_app w cap stage rest ys tree' staged
-           | OSome f -> plan_ops_app w cap stage rest ys tree' (staged_from cap f tree' op :: staged))))
+        plan_after w cap stage (plan_ops w cap stage xs tree staged) ys) =
+  views_app w xs ys;
+  plan_views_app w cap stage (views w xs) (views w ys) tree staged
 
 /// With no op performer registered (the in-memory placement), planning
-/// an op sequence stages nothing — which is why the `ONone` arm of
+/// stages nothing, whatever the shapes — which is why the `ONone` arm of
 /// `plan_effect` keeps the staged list it was handed.
-let rec plan_ops_unstaged (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
-                          (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
-                          (ops: list o) (tree: t) (staged: list (staged_call v p))
+let rec plan_views_unstaged (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                            (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
+                            (vs: list (op_view o)) (tree: t) (staged: list (staged_call v p))
+  : Lemma
+      (requires ONone? stage)
+      (ensures
+        (let r = plan_views w cap stage vs tree staged in
+         ROk? r ==> snd (ROk?.value r) == staged))
+      (decreases %[vs; 1; 0]) =
+  match vs with
+  | [] -> plan_views_nil w cap stage tree staged
+  | x :: rest ->
+    plan_views_cons w cap stage x rest tree staged;
+    plan_view_unstaged w cap stage x tree staged;
+    let s : res (t & list (staged_call v p)) = plan_view w cap stage x tree staged in
+    (match s with
+     | RErr _ -> ()
+     | ROk r -> plan_views_unstaged w cap stage rest (fst r) (snd r))
+
+and plan_view_unstaged (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                       (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
+                       (x: op_view o) (tree: t) (staged: list (staged_call v p))
+  : Lemma
+      (requires ONone? stage)
+      (ensures
+        (let r = plan_view w cap stage x tree staged in
+         ROk? r ==> snd (ROk?.value r) == staged))
+      (decreases %[x; 0; 0]) =
+  match x with
+  | ORequire op -> plan_view_require w cap stage op tree staged
+  | OEdit op -> plan_view_edit w cap stage op tree staged
+  | OChoose entry when_true when_false exit ->
+    plan_view_choose w cap stage entry when_true when_false exit tree staged;
+    let e : res t = w.w_apply entry tree in
+    if ROk? e then plan_views_unstaged w cap stage when_true tree staged
+    else plan_views_unstaged w cap stage when_false tree staged
+  | ORepeat n body ->
+    plan_view_repeat w cap stage n body tree staged;
+    plan_repeat_unstaged w cap stage body n tree staged
+
+and plan_repeat_unstaged (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                         (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
+                         (body: list (op_view o)) (n: nat) (tree: t) (staged: list (staged_call v p))
+  : Lemma
+      (requires ONone? stage)
+      (ensures
+        (let r = plan_repeat w cap stage body n tree staged in
+         ROk? r ==> snd (ROk?.value r) == staged))
+      (decreases %[body; 2; n]) =
+  if n = 0 then plan_repeat_zero w cap stage body tree staged
+  else begin
+    plan_repeat_step w cap stage body n tree staged;
+    plan_views_unstaged w cap stage body tree staged;
+    let s : res (t & list (staged_call v p)) = plan_views w cap stage body tree staged in
+    (match s with
+     | RErr _ -> ()
+     | ROk r -> plan_repeat_unstaged w cap stage body (n - 1) (fst r) (snd r))
+  end
+
+let plan_ops_unstaged (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                      (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
+                      (ops: list o) (tree: t) (staged: list (staged_call v p))
   : Lemma
       (requires ONone? stage)
       (ensures
         (let r = plan_ops w cap stage ops tree staged in
-         ROk? r ==> snd (ROk?.value r) == staged))
-      (decreases ops) =
-  match ops with
-  | [] -> plan_ops_nil w cap stage tree staged
-  | op :: rest ->
-    plan_ops_cons w cap stage op rest tree staged;
-    (match w.w_apply op tree with
-     | RErr _ -> ()
-     | ROk tree' ->
-       (match w.w_op_view op with
-        | ORequire -> plan_ops_unstaged w cap stage rest tree staged
-        | OEdit -> plan_ops_unstaged w cap stage rest tree' staged))
+         ROk? r ==> snd (ROk?.value r) == staged)) =
+  plan_views_unstaged w cap stage (views w ops) tree staged
 
 /// **`guard_holds_moves_nothing`.** An op-channel guard that HOLDS at its
 /// position — whatever ops precede it, against the state they left — is
@@ -1021,14 +1304,20 @@ let guard_holds_moves_nothing (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#
                               (prefix: list o) (guard: o) (suffix: list o) (tree: t) (staged: list (staged_call v p))
   : Lemma
       (requires
-        w.w_op_view guard == ORequire /\
+        w.w_op_view guard == ORequire guard /\
         (let r = plan_ops w cap stage prefix tree staged in
          ROk? r ==> ROk? (w.w_apply guard (fst (ROk?.value r)))))
       (ensures
         plan_ops w cap stage (app prefix (guard :: suffix)) tree staged ==
         plan_ops w cap stage (app prefix suffix) tree staged) =
   plan_ops_app w cap stage prefix (guard :: suffix) tree staged;
-  plan_ops_app w cap stage prefix suffix tree staged
+  plan_ops_app w cap stage prefix suffix tree staged;
+  let r0 : res (t & list (staged_call v p)) = plan_ops w cap stage prefix tree staged in
+  (match r0 with
+   | RErr _ -> ()
+   | ROk r ->
+     plan_ops_cons w cap stage guard suffix (fst r) (snd r);
+     plan_view_require w cap stage guard (fst r) (snd r))
 
 /// **`guard_refusal_halts`.** An op-channel guard that REFUSES at its
 /// position — against the state the ops before it left, which is the
@@ -1048,38 +1337,62 @@ let guard_refusal_halts (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Typ
       (requires
         reg.r_gate "ApplyOps" /\
         ONone? (reg.r_policy (ApplyOps (app prefix (guard :: suffix)))) /\
-        w.w_op_view guard == ORequire /\
+        w.w_op_view guard == ORequire guard /\
         (let r = plan_ops w "ApplyOps" reg.r_op_perform prefix acc.ac_store.st_tree acc.ac_staged in
          ROk? r /\ w.w_apply guard (fst (ROk?.value r)) == RErr reason))
       (ensures
         plan_effect w reg (ApplyOps (app prefix (guard :: suffix))) acc == halt "ApplyOps" reason acc) =
-  plan_ops_app w "ApplyOps" reg.r_op_perform prefix (guard :: suffix) acc.ac_store.st_tree acc.ac_staged
+  plan_ops_app w "ApplyOps" reg.r_op_perform prefix (guard :: suffix) acc.ac_store.st_tree acc.ac_staged;
+  let r0 : res (t & list (staged_call v p)) = plan_ops w "ApplyOps" reg.r_op_perform prefix acc.ac_store.st_tree acc.ac_staged in
+  (match r0 with
+   | RErr _ -> ()
+   | ROk r ->
+     plan_ops_cons w "ApplyOps" reg.r_op_perform guard suffix (fst r) (snd r);
+     plan_view_require w "ApplyOps" reg.r_op_perform guard (fst r) (snd r))
 
-/// The last op of a sequence the state witness views as an EDIT — the
-/// last one a registered performer is handed. Ghost: the theorem below
-/// names it, the oracle does not need it.
+/// Whether every view in a sequence is an edit or a guard — no branch, no
+/// repeat — which is what makes "the last edit" a fact of the TREE rather
+/// than of a run. Ghost.
 [@@ noextract_to "FSharp"]
-let rec last_edit (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
-                  (w: witness t b v o q a eff d) (ops: list o)
+let rec flat (#o: Type0) (vs: list (op_view o)) : Tot bool (decreases vs) =
+  match vs with
+  | [] -> true
+  | x :: rest -> (OEdit? x || ORequire? x) && flat rest
+
+[@@ noextract_to "FSharp"]
+let rec last_edit_flat (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
+                       (w: witness t b v o q a eff d) (ops: list o)
   : Tot (opt o) (decreases ops) =
   match ops with
   | [] -> ONone
   | op :: rest ->
-    (match last_edit w rest with
+    (match last_edit_flat w rest with
      | OSome e -> OSome e
      | ONone ->
        (match w.w_op_view op with
-        | OEdit -> OSome op
-        | ORequire -> ONone))
+        | OEdit e -> OSome e
+        | _ -> ONone))
 
-/// A sequence with no edit in it leaves the state and the staged list
-/// as they were, whenever it plans at all: only guards, and a guard
+/// The last op of a FLAT sequence the state witness views as an EDIT —
+/// the last one a registered performer is handed — and `ONone` for a
+/// sequence with a branch or a repeat anywhere in it, whose last edit is
+/// the run's and not the tree's (`staged_from_the_final_state` is the
+/// statement for those). Ghost: the theorem below names it, the oracle
+/// does not need it.
+[@@ noextract_to "FSharp"]
+let last_edit (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
+              (w: witness t b v o q a eff d) (ops: list o)
+  : opt o =
+  if flat (views w ops) then last_edit_flat w ops else ONone
+
+/// A FLAT sequence with no edit in it leaves the state and the staged
+/// list as they were, whenever it plans at all: only guards, and a guard
 /// moves nothing.
 let rec plan_ops_no_edit (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
                          (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
                          (ops: list o) (tree: t) (staged: list (staged_call v p))
   : Lemma
-      (requires ONone? (last_edit w ops))
+      (requires flat (views w ops) /\ ONone? (last_edit w ops))
       (ensures
         (let r = plan_ops w cap stage ops tree staged in
          ROk? r ==> (fst (ROk?.value r) == tree /\ snd (ROk?.value r) == staged)))
@@ -1088,22 +1401,29 @@ let rec plan_ops_no_edit (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Ty
   | [] -> plan_ops_nil w cap stage tree staged
   | op :: rest ->
     plan_ops_cons w cap stage op rest tree staged;
-    (match w.w_apply op tree with
-     | RErr _ -> ()
-     | ROk _ ->
-       (match w.w_op_view op with
-        | ORequire -> plan_ops_no_edit w cap stage rest tree staged
-        | OEdit -> ()))
+    views_cons w op rest;
+    (match w.w_op_view op with
+     | ORequire g ->
+       plan_view_require w cap stage g tree staged;
+       let e : res t = w.w_apply g tree in
+       (match e with
+        | RErr _ -> ()
+        | ROk _ -> plan_ops_no_edit w cap stage rest tree staged)
+     | OEdit _ -> ()
+     | _ -> ())
 
-/// **`performer_handed_the_plan`.** Under a registered op performer, an
-/// op sequence that plans stages its LAST EDIT from the sequence's FINAL
-/// planned state: the head of the staged list `plan_ops` answers is the
-/// call the performer staged from that state and that op. So the state a
-/// performer is handed with the last op it performs is the state the plan
-/// produced — the document to render, the tree to commit — and a tail
-/// that persists it needs to fold nothing itself (F-PERFORM). Every
-/// earlier edit is staged from the state as of IT, by `plan_ops`'s own
+/// **`performer_handed_the_plan`.** Under a registered op performer, a
+/// FLAT op sequence that plans stages its LAST EDIT from the sequence's
+/// FINAL planned state: the head of the staged list `plan_ops` answers is
+/// the call the performer staged from that state and that op. So the
+/// state a performer is handed with the last op it performs is the state
+/// the plan produced — the document to render, the tree to commit — and a
+/// tail that persists it needs to fold nothing itself (F-PERFORM). Every
+/// earlier edit is staged from the state as of IT, by `plan_view`'s own
 /// clause; this is the one that says the hand-over reaches the end.
+/// (`last_edit` is `ONone` on a sequence with a branch or a repeat in it,
+/// so this theorem says nothing there; `staged_from_the_final_state` is
+/// the same guarantee over every shape.)
 let rec performer_handed_the_plan (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
                                   (w: witness t b v o q a eff d) (cap: string) (f: t -> o -> (p & v))
                                   (ops: list o) (tree: t) (staged: list (staged_call v p))
@@ -1119,13 +1439,228 @@ let rec performer_handed_the_plan (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0
   | [] -> plan_ops_nil w cap (OSome f) tree staged
   | op :: rest ->
     plan_ops_cons w cap (OSome f) op rest tree staged;
-    (match w.w_apply op tree with
-     | RErr _ -> ()
-     | ROk tree' ->
-       (match w.w_op_view op with
-        | ORequire -> performer_handed_the_plan w cap f rest tree staged
-        | OEdit ->
-          let staged1 = staged_from cap f tree' op :: staged in
-          (match last_edit w rest with
+    views_cons w op rest;
+    (match w.w_op_view op with
+     | ORequire g ->
+       plan_view_require w cap (OSome f) g tree staged;
+       let e : res t = w.w_apply g tree in
+       (match e with
+        | RErr _ -> ()
+        | ROk _ -> performer_handed_the_plan w cap f rest tree staged)
+     | OEdit e ->
+       plan_view_edit w cap (OSome f) e tree staged;
+       let applied : res t = w.w_apply e tree in
+       (match applied with
+        | RErr _ -> ()
+        | ROk tree' ->
+          let staged1 = staged_from cap f tree' e :: staged in
+          (match last_edit_flat w rest with
            | OSome _ -> performer_handed_the_plan w cap f rest tree' staged1
-           | ONone -> plan_ops_no_edit w cap (OSome f) rest tree' staged1)))
+           | ONone ->
+             if flat (views w rest) then plan_ops_no_edit w cap (OSome f) rest tree' staged1 else ()))
+     | _ -> ())
+
+(* ───────────────────────────────────────────────────────────────────
+   The two flow shapes of the op axis (Phase 1976).
+   ─────────────────────────────────────────────────────────────────── *)
+
+/// **`choose_plans_the_taken_arm`.** A branch whose exit assertion is
+/// absent, or agrees with the arm the entry condition picked, plans
+/// EXACTLY as that arm: the entry condition and the exit assertion move
+/// nothing and stage nothing, and the state the arm starts from is the
+/// state the condition was applied to. So a branch is its arm, and every
+/// law about a sequence of ops is a law about the arm a branch took.
+let choose_plans_the_taken_arm (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                               (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
+                               (entry: o) (when_true: list (op_view o)) (when_false: list (op_view o)) (exit: opt o)
+                               (tree: t) (staged: list (staged_call v p))
+  : Lemma
+      (requires
+        (match exit with
+         | ONone -> True
+         | OSome assertion ->
+           (let took_true = ROk? (w.w_apply entry tree) in
+            match (if took_true then plan_views w cap stage when_true tree staged
+                   else plan_views w cap stage when_false tree staged) with
+            | RErr _ -> True
+            | ROk r -> (ROk? (w.w_apply assertion (fst r)) <==> took_true))))
+      (ensures
+        plan_view w cap stage (OChoose entry when_true when_false exit) tree staged ==
+        (if ROk? (w.w_apply entry tree) then plan_views w cap stage when_true tree staged
+         else plan_views w cap stage when_false tree staged)) =
+  plan_view_choose w cap stage entry when_true when_false exit tree staged
+
+/// **`exit_violation_halts`.** A branch whose exit assertion DISAGREES
+/// with the arm it took — held after the false arm, or refused after the
+/// true arm — refuses the whole `ApplyOps` effect, after the arm planned,
+/// with the assertion named: the accumulator comes back halted on
+/// `exit_violation_reason` (the assertion's own refusal text after the
+/// true arm), and `plan_halt_performs_nothing` lifts it to the handler —
+/// rolled back, nothing performed. A violated exit assertion is a defect
+/// in the program, caught, never ignored.
+let exit_violation_halts (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                         (w: witness t b v o q a eff d) (reg: registry t v o q p)
+                         (prefix: list o) (branch: o) (suffix: list o)
+                         (acc: accumulator t b v o eff d p)
+  : Lemma
+      (requires
+        reg.r_gate "ApplyOps" /\
+        ONone? (reg.r_policy (ApplyOps (app prefix (branch :: suffix)))) /\
+        (match w.w_op_view branch with
+         | OChoose entry when_true when_false (OSome assertion) ->
+           (match plan_ops w "ApplyOps" reg.r_op_perform prefix acc.ac_store.st_tree acc.ac_staged with
+            | ROk r0 ->
+              let took_true = ROk? (w.w_apply entry (fst r0)) in
+              (match (if took_true then plan_views w "ApplyOps" reg.r_op_perform when_true (fst r0) (snd r0)
+                      else plan_views w "ApplyOps" reg.r_op_perform when_false (fst r0) (snd r0)) with
+               | ROk r1 -> not (ROk? (w.w_apply assertion (fst r1)) = took_true)
+               | RErr _ -> False)
+            | RErr _ -> False)
+         | _ -> False))
+      (ensures
+        (match w.w_op_view branch with
+         | OChoose entry when_true when_false (OSome assertion) ->
+           (match plan_ops w "ApplyOps" reg.r_op_perform prefix acc.ac_store.st_tree acc.ac_staged with
+            | ROk r0 ->
+              let took_true = ROk? (w.w_apply entry (fst r0)) in
+              (match (if took_true then plan_views w "ApplyOps" reg.r_op_perform when_true (fst r0) (snd r0)
+                      else plan_views w "ApplyOps" reg.r_op_perform when_false (fst r0) (snd r0)) with
+               | ROk r1 ->
+                 plan_effect w reg (ApplyOps (app prefix (branch :: suffix))) acc ==
+                 halt "ApplyOps" (exit_violation_reason took_true (w.w_apply assertion (fst r1))) acc
+               | RErr _ -> True)
+            | RErr _ -> True)
+         | _ -> True)) =
+  plan_ops_app w "ApplyOps" reg.r_op_perform prefix (branch :: suffix) acc.ac_store.st_tree acc.ac_staged;
+  let planned : res (t & list (staged_call v p)) = plan_ops w "ApplyOps" reg.r_op_perform prefix acc.ac_store.st_tree acc.ac_staged in
+  (match planned with
+   | RErr _ -> ()
+   | ROk r0 ->
+     plan_ops_cons w "ApplyOps" reg.r_op_perform branch suffix (fst r0) (snd r0);
+     (match w.w_op_view branch with
+      | OChoose entry when_true when_false exit ->
+        plan_view_choose w "ApplyOps" reg.r_op_perform entry when_true when_false exit (fst r0) (snd r0)
+      | _ -> ()))
+
+/// `n` copies of a body, concatenated: the unrolling of a repeat. Ghost.
+[@@ noextract_to "FSharp"]
+let rec unroll (#o: Type0) (n: nat) (body: list (op_view o)) : Tot (list (op_view o)) (decreases n) =
+  if n = 0 then [] else app body (unroll (n - 1) body)
+
+/// **`repeat_plans_as_unrolling`.** A repeat plans exactly as its body
+/// written out `count` times — state and staged list — so every law about
+/// a sequence of ops (`plan_views_app`, `plan_views_unstaged`,
+/// `staged_from_the_final_state`) is a law about a repeat.
+let rec repeat_plans_as_unrolling (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                                  (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
+                                  (body: list (op_view o)) (n: nat) (tree: t) (staged: list (staged_call v p))
+  : Lemma (ensures plan_repeat w cap stage body n tree staged == plan_views w cap stage (unroll n body) tree staged)
+          (decreases n) =
+  if n = 0 then begin plan_repeat_zero w cap stage body tree staged; plan_views_nil w cap stage tree staged end
+  else begin
+    plan_repeat_step w cap stage body n tree staged;
+    plan_views_app w cap stage body (unroll (n - 1) body) tree staged;
+    let s : res (t & list (staged_call v p)) = plan_views w cap stage body tree staged in
+    (match s with
+     | RErr _ -> ()
+     | ROk r -> repeat_plans_as_unrolling w cap stage body (n - 1) (fst r) (snd r))
+  end
+
+/// What `staged_from_the_final_state` says of one planned step: either it
+/// moved nothing and staged nothing, or the head of the staged list it
+/// answers was staged from the state it answers. Ghost.
+[@@ noextract_to "FSharp"]
+let handed (#t: Type0) (#v: Type0) (#o: Type0) (#p: Type0)
+           (cap: string) (f: t -> o -> (p & v)) (tree: t) (staged: list (staged_call v p))
+           (r: res (t & list (staged_call v p))) : prop =
+  match r with
+  | RErr _ -> True
+  | ROk r ->
+    (snd r == staged /\ fst r == tree) \/
+    (Cons? (snd r) /\ (exists (op: o). Cons?.hd (snd r) == staged_from cap f (fst r) op))
+
+let rec handed_views (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                     (w: witness t b v o q a eff d) (cap: string) (f: t -> o -> (p & v))
+                     (vs: list (op_view o)) (tree: t) (staged: list (staged_call v p))
+  : Lemma (ensures handed cap f tree staged (plan_views w cap (OSome f) vs tree staged))
+          (decreases %[vs; 1; 0]) =
+  match vs with
+  | [] -> plan_views_nil w cap (OSome f) tree staged
+  | x :: rest ->
+    plan_views_cons w cap (OSome f) x rest tree staged;
+    handed_view w cap f x tree staged;
+    let s : res (t & list (staged_call v p)) = plan_view w cap (OSome f) x tree staged in
+    (match s with
+     | RErr _ -> ()
+     | ROk r -> handed_views w cap f rest (fst r) (snd r))
+
+and handed_view (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                (w: witness t b v o q a eff d) (cap: string) (f: t -> o -> (p & v))
+                (x: op_view o) (tree: t) (staged: list (staged_call v p))
+  : Lemma (ensures handed cap f tree staged (plan_view w cap (OSome f) x tree staged))
+          (decreases %[x; 0; 0]) =
+  match x with
+  | ORequire op -> plan_view_require w cap (OSome f) op tree staged
+  | OEdit op ->
+    plan_view_edit w cap (OSome f) op tree staged;
+    let e : res t = w.w_apply op tree in
+    (match e with
+     | RErr _ -> ()
+     | ROk tree' -> assert (Cons?.hd (staged_from cap f tree' op :: staged) == staged_from cap f tree' op))
+  | OChoose entry when_true when_false exit ->
+    plan_view_choose w cap (OSome f) entry when_true when_false exit tree staged;
+    let e : res t = w.w_apply entry tree in
+    let armed : res (t & list (staged_call v p)) =
+      if ROk? e then plan_views w cap (OSome f) when_true tree staged
+      else plan_views w cap (OSome f) when_false tree staged
+    in
+    (if ROk? e then handed_views w cap f when_true tree staged
+     else handed_views w cap f when_false tree staged);
+    (match armed with
+     | RErr _ -> ()
+     | ROk r ->
+       (match exit with
+        | ONone -> ()
+        | OSome assertion ->
+          let answer : res t = w.w_apply assertion (fst r) in
+          (match answer with
+           | ROk _ -> ()
+           | RErr _ -> ())))
+  | ORepeat n body ->
+    plan_view_repeat w cap (OSome f) n body tree staged;
+    handed_repeat w cap f body n tree staged
+
+and handed_repeat (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                  (w: witness t b v o q a eff d) (cap: string) (f: t -> o -> (p & v))
+                  (body: list (op_view o)) (n: nat) (tree: t) (staged: list (staged_call v p))
+  : Lemma (ensures handed cap f tree staged (plan_repeat w cap (OSome f) body n tree staged))
+          (decreases %[body; 2; n]) =
+  if n = 0 then plan_repeat_zero w cap (OSome f) body tree staged
+  else begin
+    plan_repeat_step w cap (OSome f) body n tree staged;
+    handed_views w cap f body tree staged;
+    let s : res (t & list (staged_call v p)) = plan_views w cap (OSome f) body tree staged in
+    (match s with
+     | RErr _ -> ()
+     | ROk r -> handed_repeat w cap f body (n - 1) (fst r) (snd r))
+  end
+
+/// **`staged_from_the_final_state`.** Under a registered op performer, an
+/// op sequence of ANY shape that plans and stages anything new stages
+/// its LAST staged edit from the sequence's FINAL planned state: the
+/// head of the staged list `plan_ops` answers was staged from the state
+/// it answers. `performer_handed_the_plan`'s guarantee — the performer
+/// is handed what the plan produced — over branches and repeats, whose
+/// last edit is the run's rather than the tree's, which is why this one
+/// names the state rather than the op.
+let staged_from_the_final_state (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                                (w: witness t b v o q a eff d) (cap: string) (f: t -> o -> (p & v))
+                                (ops: list o) (tree: t) (staged: list (staged_call v p))
+  : Lemma
+      (ensures
+        (let r = plan_ops w cap (OSome f) ops tree staged in
+         ROk? r ==>
+         (let (tree', staged') = ROk?.value r in
+          (staged' == staged /\ tree' == tree) \/
+          (Cons? staged' /\ (exists (op: o). Cons?.hd staged' == staged_from cap f tree' op))))) =
+  handed_views w cap f (views w ops) tree staged

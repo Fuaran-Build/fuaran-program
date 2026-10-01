@@ -114,11 +114,59 @@ let __proj__Errored__item__message = (fun ( projectee  :  resolution<'v> ) -> (m
      message
      end))
 
+type bound<'e> =
+| BLiteral of Prims.nat
+| BParameter of 'e * Prims.nat * Prims.nat
+
+
+let uu___is_BLiteral = (fun ( projectee  :  bound<'e> ) -> (match (projectee) with
+| BLiteral (count) -> begin
+     true
+     end
+| uu___ -> begin
+     false
+     end))
+
+
+let __proj__BLiteral__item__count = (fun ( projectee  :  bound<'e> ) -> (match (projectee) with
+| BLiteral (count) -> begin
+     count
+     end))
+
+
+let uu___is_BParameter = (fun ( projectee  :  bound<'e> ) -> (match (projectee) with
+| BParameter (count, lo, hi) -> begin
+     true
+     end
+| uu___ -> begin
+     false
+     end))
+
+
+let __proj__BParameter__item__count = (fun ( projectee  :  bound<'e> ) -> (match (projectee) with
+| BParameter (count, lo, hi) -> begin
+     count
+     end))
+
+
+let __proj__BParameter__item__lo = (fun ( projectee  :  bound<'e> ) -> (match (projectee) with
+| BParameter (count, lo, hi) -> begin
+     lo
+     end))
+
+
+let __proj__BParameter__item__hi = (fun ( projectee  :  bound<'e> ) -> (match (projectee) with
+| BParameter (count, lo, hi) -> begin
+     hi
+     end))
+
 type action_view<'a, 'e, 'v> =
 | VSequence of 'a * Prims.list<action_view<'a, 'e, 'v>>
 | VAssign of 'a * key * opt<'v> * opt<'e>
 | VCall of 'a * Prims.string * Prims.bool
 | VRequire of 'a * 'e
+| VChoose of 'a * 'e * action_view<'a, 'e, 'v> * action_view<'a, 'e, 'v> * opt<'e>
+| VRepeat of 'a * bound<'e> * action_view<'a, 'e, 'v>
 | VLeaf of 'a
 
 
@@ -224,6 +272,72 @@ let __proj__VRequire__item__condition = (fun ( projectee  :  action_view<'a, 'e,
      end))
 
 
+let uu___is_VChoose = (fun ( projectee  :  action_view<'a, 'e, 'v> ) -> (match (projectee) with
+| VChoose (act, entry, when_true, when_false, exit) -> begin
+     true
+     end
+| uu___ -> begin
+     false
+     end))
+
+
+let __proj__VChoose__item__act = (fun ( projectee  :  action_view<'a, 'e, 'v> ) -> (match (projectee) with
+| VChoose (act, entry, when_true, when_false, exit) -> begin
+     act
+     end))
+
+
+let __proj__VChoose__item__entry = (fun ( projectee  :  action_view<'a, 'e, 'v> ) -> (match (projectee) with
+| VChoose (act, entry, when_true, when_false, exit) -> begin
+     entry
+     end))
+
+
+let __proj__VChoose__item__when_true = (fun ( projectee  :  action_view<'a, 'e, 'v> ) -> (match (projectee) with
+| VChoose (act, entry, when_true, when_false, exit) -> begin
+     when_true
+     end))
+
+
+let __proj__VChoose__item__when_false = (fun ( projectee  :  action_view<'a, 'e, 'v> ) -> (match (projectee) with
+| VChoose (act, entry, when_true, when_false, exit) -> begin
+     when_false
+     end))
+
+
+let __proj__VChoose__item__exit = (fun ( projectee  :  action_view<'a, 'e, 'v> ) -> (match (projectee) with
+| VChoose (act, entry, when_true, when_false, exit) -> begin
+     exit
+     end))
+
+
+let uu___is_VRepeat = (fun ( projectee  :  action_view<'a, 'e, 'v> ) -> (match (projectee) with
+| VRepeat (act, count, body) -> begin
+     true
+     end
+| uu___ -> begin
+     false
+     end))
+
+
+let __proj__VRepeat__item__act = (fun ( projectee  :  action_view<'a, 'e, 'v> ) -> (match (projectee) with
+| VRepeat (act, count, body) -> begin
+     act
+     end))
+
+
+let __proj__VRepeat__item__count = (fun ( projectee  :  action_view<'a, 'e, 'v> ) -> (match (projectee) with
+| VRepeat (act, count, body) -> begin
+     count
+     end))
+
+
+let __proj__VRepeat__item__body = (fun ( projectee  :  action_view<'a, 'e, 'v> ) -> (match (projectee) with
+| VRepeat (act, count, body) -> begin
+     body
+     end))
+
+
 let uu___is_VLeaf = (fun ( projectee  :  action_view<'a, 'e, 'v> ) -> (match (projectee) with
 | VLeaf (act) -> begin
      true
@@ -282,48 +396,54 @@ let uu___is_Decline = (fun ( projectee  :  leaf_outcome<'eff> ) -> (match (proje
      false
      end))
 
-type witness<'a, 'e, 'v, 'eff> = {w_view : 'a  ->  action_view<'a, 'e, 'v>; w_lower : Prims.string  ->  'a  ->  store<'v>  ->  leaf_outcome<'eff>; w_describe : 'a  ->  Prims.string; w_resolve : store<'v>  ->  'e  ->  resolution<'v>; w_is_reserved : key  ->  Prims.bool; w_reserved_prefix : Prims.string; w_is_true : 'v  ->  Prims.bool}
+type witness<'a, 'e, 'v, 'eff> = {w_view : 'a  ->  action_view<'a, 'e, 'v>; w_lower : Prims.string  ->  'a  ->  store<'v>  ->  leaf_outcome<'eff>; w_describe : 'a  ->  Prims.string; w_resolve : store<'v>  ->  'e  ->  resolution<'v>; w_is_reserved : key  ->  Prims.bool; w_reserved_prefix : Prims.string; w_is_true : 'v  ->  Prims.bool; w_as_count : 'v  ->  opt<Prims.nat>}
 
 
 let __proj__Mkwitness__item__w_view = (fun ( projectee  :  witness<'a, 'e, 'v, 'eff> ) -> (match (projectee) with
-| {w_view = w_view; w_lower = w_lower; w_describe = w_describe; w_resolve = w_resolve; w_is_reserved = w_is_reserved; w_reserved_prefix = w_reserved_prefix; w_is_true = w_is_true} -> begin
+| {w_view = w_view; w_lower = w_lower; w_describe = w_describe; w_resolve = w_resolve; w_is_reserved = w_is_reserved; w_reserved_prefix = w_reserved_prefix; w_is_true = w_is_true; w_as_count = w_as_count} -> begin
      w_view
      end))
 
 
 let __proj__Mkwitness__item__w_lower = (fun ( projectee  :  witness<'a, 'e, 'v, 'eff> ) -> (match (projectee) with
-| {w_view = w_view; w_lower = w_lower; w_describe = w_describe; w_resolve = w_resolve; w_is_reserved = w_is_reserved; w_reserved_prefix = w_reserved_prefix; w_is_true = w_is_true} -> begin
+| {w_view = w_view; w_lower = w_lower; w_describe = w_describe; w_resolve = w_resolve; w_is_reserved = w_is_reserved; w_reserved_prefix = w_reserved_prefix; w_is_true = w_is_true; w_as_count = w_as_count} -> begin
      w_lower
      end))
 
 
 let __proj__Mkwitness__item__w_describe = (fun ( projectee  :  witness<'a, 'e, 'v, 'eff> ) -> (match (projectee) with
-| {w_view = w_view; w_lower = w_lower; w_describe = w_describe; w_resolve = w_resolve; w_is_reserved = w_is_reserved; w_reserved_prefix = w_reserved_prefix; w_is_true = w_is_true} -> begin
+| {w_view = w_view; w_lower = w_lower; w_describe = w_describe; w_resolve = w_resolve; w_is_reserved = w_is_reserved; w_reserved_prefix = w_reserved_prefix; w_is_true = w_is_true; w_as_count = w_as_count} -> begin
      w_describe
      end))
 
 
 let __proj__Mkwitness__item__w_resolve = (fun ( projectee  :  witness<'a, 'e, 'v, 'eff> ) -> (match (projectee) with
-| {w_view = w_view; w_lower = w_lower; w_describe = w_describe; w_resolve = w_resolve; w_is_reserved = w_is_reserved; w_reserved_prefix = w_reserved_prefix; w_is_true = w_is_true} -> begin
+| {w_view = w_view; w_lower = w_lower; w_describe = w_describe; w_resolve = w_resolve; w_is_reserved = w_is_reserved; w_reserved_prefix = w_reserved_prefix; w_is_true = w_is_true; w_as_count = w_as_count} -> begin
      w_resolve
      end))
 
 
 let __proj__Mkwitness__item__w_is_reserved = (fun ( projectee  :  witness<'a, 'e, 'v, 'eff> ) -> (match (projectee) with
-| {w_view = w_view; w_lower = w_lower; w_describe = w_describe; w_resolve = w_resolve; w_is_reserved = w_is_reserved; w_reserved_prefix = w_reserved_prefix; w_is_true = w_is_true} -> begin
+| {w_view = w_view; w_lower = w_lower; w_describe = w_describe; w_resolve = w_resolve; w_is_reserved = w_is_reserved; w_reserved_prefix = w_reserved_prefix; w_is_true = w_is_true; w_as_count = w_as_count} -> begin
      w_is_reserved
      end))
 
 
 let __proj__Mkwitness__item__w_reserved_prefix = (fun ( projectee  :  witness<'a, 'e, 'v, 'eff> ) -> (match (projectee) with
-| {w_view = w_view; w_lower = w_lower; w_describe = w_describe; w_resolve = w_resolve; w_is_reserved = w_is_reserved; w_reserved_prefix = w_reserved_prefix; w_is_true = w_is_true} -> begin
+| {w_view = w_view; w_lower = w_lower; w_describe = w_describe; w_resolve = w_resolve; w_is_reserved = w_is_reserved; w_reserved_prefix = w_reserved_prefix; w_is_true = w_is_true; w_as_count = w_as_count} -> begin
      w_reserved_prefix
      end))
 
 
 let __proj__Mkwitness__item__w_is_true = (fun ( projectee  :  witness<'a, 'e, 'v, 'eff> ) -> (match (projectee) with
-| {w_view = w_view; w_lower = w_lower; w_describe = w_describe; w_resolve = w_resolve; w_is_reserved = w_is_reserved; w_reserved_prefix = w_reserved_prefix; w_is_true = w_is_true} -> begin
+| {w_view = w_view; w_lower = w_lower; w_describe = w_describe; w_resolve = w_resolve; w_is_reserved = w_is_reserved; w_reserved_prefix = w_reserved_prefix; w_is_true = w_is_true; w_as_count = w_as_count} -> begin
      w_is_true
+     end))
+
+
+let __proj__Mkwitness__item__w_as_count = (fun ( projectee  :  witness<'a, 'e, 'v, 'eff> ) -> (match (projectee) with
+| {w_view = w_view; w_lower = w_lower; w_describe = w_describe; w_resolve = w_resolve; w_is_reserved = w_is_reserved; w_reserved_prefix = w_reserved_prefix; w_is_true = w_is_true; w_as_count = w_as_count} -> begin
+     w_as_count
      end))
 
 type diagnostic =
@@ -453,6 +573,9 @@ let refused = (fun ( node_id  :  Prims.string ) ( description  :  Prims.string )
 
 let halted = (fun ( node_id  :  Prims.string ) ( description  :  Prims.string ) ( reason  :  Prims.string ) ( s  :  store<'v> ) -> {o_store = s; o_effects = []; o_diagnostics = (DRefused (node_id, description, reason))::[]; o_halted = true})
 
+
+let halted_after = (fun ( o  :  bounded_outcome<'v, 'eff> ) ( node_id  :  Prims.string ) ( description  :  Prims.string ) ( reason  :  Prims.string ) -> {o_store = o.o_store; o_effects = o.o_effects; o_diagnostics = (app o.o_diagnostics ((DRefused (node_id, description, reason))::[])); o_halted = true})
+
 type jval_payload<'v> =
 | POk of opt<'v>
 | PErr of Prims.string
@@ -567,6 +690,91 @@ if (w.w_is_true jv) then begin
      (declined node_id (w.w_describe act) s)
      end)), (pl))
      end
+| VChoose (act, entry, when_true, when_false, exit) -> begin
+     (match ((w.w_resolve s entry)) with
+| Resolved (jv) -> begin
+     (
+
+let took_true = (w.w_is_true jv)
+in (
+
+let uu___ =  
+if took_true then begin
+     (fold w ar node_id when_true s pl)
+     end else begin
+     (fold w ar node_id when_false s pl)
+     end
+in (match (uu___) with
+| (o1, p1) -> begin
+      
+if o1.o_halted then begin
+     ((o1), (p1))
+     end else begin
+     (match (exit) with
+| ONone -> begin
+     ((o1), (p1))
+     end
+| OSome (assertion) -> begin
+     (match ((w.w_resolve o1.o_store assertion)) with
+| Resolved (jv') -> begin
+      
+if (Prims.op_Equals (w.w_is_true jv') took_true) then begin
+     ((o1), (p1))
+     end else begin
+     (((halted_after o1 node_id (w.w_describe act) ( 
+if took_true then begin
+     "the exit assertion did not hold after the true arm"
+     end else begin
+     "the exit assertion held after the false arm"
+     end))), (p1))
+     end
+     end
+| NotResolved -> begin
+     (((halted_after o1 node_id (w.w_describe act) "the exit assertion did not resolve to a value")), (p1))
+     end
+| Errored (m) -> begin
+     (((halted_after o1 node_id (w.w_describe act) (Prims.strcat "the exit assertion errored: " m))), (p1))
+     end)
+     end)
+     end
+     end)))
+     end
+| NotResolved -> begin
+     (((halted node_id (w.w_describe act) "the branch condition did not resolve to a value" s)), (pl))
+     end
+| Errored (m) -> begin
+     (((halted node_id (w.w_describe act) m s)), (pl))
+     end)
+     end
+| VRepeat (act, count, body) -> begin
+     (match (count) with
+| BLiteral (n) -> begin
+     (fold_repeat w ar node_id body n s pl)
+     end
+| BParameter (expr, lo, hi) -> begin
+     (match ((w.w_resolve s expr)) with
+| Resolved (jv) -> begin
+     (match ((w.w_as_count jv)) with
+| OSome (n) -> begin
+      
+if ((lo <= n) && (n <= hi)) then begin
+     (fold_repeat w ar node_id body n s pl)
+     end else begin
+     (((halted node_id (w.w_describe act) "the repeat\'s bound is outside its declared range" s)), (pl))
+     end
+     end
+| ONone -> begin
+     (((halted node_id (w.w_describe act) "the repeat\'s bound did not resolve to a count" s)), (pl))
+     end)
+     end
+| NotResolved -> begin
+     (((halted node_id (w.w_describe act) "the repeat\'s bound did not resolve to a value" s)), (pl))
+     end
+| Errored (m) -> begin
+     (((halted node_id (w.w_describe act) m s)), (pl))
+     end)
+     end)
+     end
 | VSequence (uu___, ops) -> begin
      (fold_many w ar node_id ops s pl)
      end))
@@ -594,9 +802,491 @@ in (match (uu___1) with
      end
      end))
      end))
+and fold_repeat = (fun ( w  :  witness<'a, 'e, 'v, 'eff> ) ( ar  :  handler_arm<'v, 'eff, 'p> ) ( node_id  :  Prims.string ) ( body  :  action_view<'a, 'e, 'v> ) ( n  :  Prims.nat ) ( s  :  store<'v> ) ( pl  :  'p ) ->  
+if (Prims.op_Equals n (Prims.parse_int "0")) then begin
+     (((store_only s)), (pl))
+     end else begin
+     (
+
+let uu___ = (fold w ar node_id body s pl)
+in (match (uu___) with
+| (o1, p1) -> begin
+      
+if o1.o_halted then begin
+     ((o1), (p1))
+     end else begin
+     (
+
+let uu___1 = (fold_repeat w ar node_id body (n - (Prims.parse_int "1")) o1.o_store p1)
+in (match (uu___1) with
+| (o2, p2) -> begin
+     (({o_store = o2.o_store; o_effects = (app o1.o_effects o2.o_effects); o_diagnostics = (app o1.o_diagnostics o2.o_diagnostics); o_halted = o2.o_halted}), (p2))
+     end))
+     end
+     end))
+     end)
 
 
 let run_action = (fun ( w  :  witness<'a, 'e, 'v, 'eff> ) ( ar  :  handler_arm<'v, 'eff, 'p> ) ( node_id  :  Prims.string ) ( act  :  'a ) ( s  :  store<'v> ) ( pl  :  'p ) -> (fold w ar node_id (w.w_view act) s pl))
+
+type trace<'v> =
+| TNothing
+| TWrote of opt<'v>
+| TSeq of Prims.list<trace<'v>>
+| TChoose of Prims.bool * trace<'v>
+| TRepeat of Prims.list<trace<'v>>
+
+
+let uu___is_TNothing = (fun ( projectee  :  trace<'v> ) -> (match (projectee) with
+| TNothing -> begin
+     true
+     end
+| uu___ -> begin
+     false
+     end))
+
+
+let uu___is_TWrote = (fun ( projectee  :  trace<'v> ) -> (match (projectee) with
+| TWrote (old) -> begin
+     true
+     end
+| uu___ -> begin
+     false
+     end))
+
+
+let __proj__TWrote__item__old = (fun ( projectee  :  trace<'v> ) -> (match (projectee) with
+| TWrote (old) -> begin
+     old
+     end))
+
+
+let uu___is_TSeq = (fun ( projectee  :  trace<'v> ) -> (match (projectee) with
+| TSeq (steps) -> begin
+     true
+     end
+| uu___ -> begin
+     false
+     end))
+
+
+let __proj__TSeq__item__steps = (fun ( projectee  :  trace<'v> ) -> (match (projectee) with
+| TSeq (steps) -> begin
+     steps
+     end))
+
+
+let uu___is_TChoose = (fun ( projectee  :  trace<'v> ) -> (match (projectee) with
+| TChoose (took_true, arm) -> begin
+     true
+     end
+| uu___ -> begin
+     false
+     end))
+
+
+let __proj__TChoose__item__took_true = (fun ( projectee  :  trace<'v> ) -> (match (projectee) with
+| TChoose (took_true, arm) -> begin
+     took_true
+     end))
+
+
+let __proj__TChoose__item__arm = (fun ( projectee  :  trace<'v> ) -> (match (projectee) with
+| TChoose (took_true, arm) -> begin
+     arm
+     end))
+
+
+let uu___is_TRepeat = (fun ( projectee  :  trace<'v> ) -> (match (projectee) with
+| TRepeat (iterations) -> begin
+     true
+     end
+| uu___ -> begin
+     false
+     end))
+
+
+let __proj__TRepeat__item__iterations = (fun ( projectee  :  trace<'v> ) -> (match (projectee) with
+| TRepeat (iterations) -> begin
+     iterations
+     end))
+
+
+let rec fold_traced = (fun ( w  :  witness<'a, 'e, 'v, 'eff> ) ( ar  :  handler_arm<'v, 'eff, 'p> ) ( node_id  :  Prims.string ) ( x  :  action_view<'a, 'e, 'v> ) ( s  :  store<'v> ) ( pl  :  'p ) -> (match (x) with
+| VAssign (act, state_key, value, value_from) -> begin
+      
+if (w.w_is_reserved state_key) then begin
+     (((refused node_id (w.w_describe act) (Prims.strcat "State key \'" (Prims.strcat state_key (Prims.strcat "\' is under the host-reserved \'" (Prims.strcat w.w_reserved_prefix "\' namespace")))) s)), (pl), (TNothing))
+     end else begin
+     (
+
+let payload = (match (value_from) with
+| OSome (expr) -> begin
+     (match ((w.w_resolve s expr)) with
+| Resolved (jv) -> begin
+     POk (OSome (jv))
+     end
+| NotResolved -> begin
+     POk (ONone)
+     end
+| Errored (m) -> begin
+     PErr (m)
+     end)
+     end
+| ONone -> begin
+     POk (value)
+     end)
+in (match (payload) with
+| POk (OSome (jv)) -> begin
+     (((store_only (write s state_key jv))), (pl), (TWrote ((lookup s state_key))))
+     end
+| POk (ONone) -> begin
+     (((refused node_id (w.w_describe act) "valueFrom did not resolve to a value — no write performed" s)), (pl), (TNothing))
+     end
+| PErr (m) -> begin
+     (((refused node_id (w.w_describe act) (Prims.strcat "valueFrom errored: " (Prims.strcat m " — no write performed")) s)), (pl), (TNothing))
+     end))
+     end
+     end
+| VCall (act, endpoint, declares_target) -> begin
+      
+if declares_target then begin
+     (((refused node_id (w.w_describe act) "the call declares a result target; a handler declares where its own results land" s)), (pl), (TNothing))
+     end else begin
+     (match ((ar.answer node_id endpoint s pl)) with
+| ONone -> begin
+     (((declined node_id (w.w_describe act) s)), (pl), (TNothing))
+     end
+| OSome (ans) -> begin
+     (({o_store = ans.h_store; o_effects = ans.h_effects; o_diagnostics = ans.h_diagnostics; o_halted = false}), (ans.h_placement), (TNothing))
+     end)
+     end
+     end
+| VRequire (act, condition) -> begin
+     (((match ((w.w_resolve s condition)) with
+| Resolved (jv) -> begin
+      
+if (w.w_is_true jv) then begin
+     (store_only s)
+     end else begin
+     (halted node_id (w.w_describe act) "the guard did not hold" s)
+     end
+     end
+| NotResolved -> begin
+     (halted node_id (w.w_describe act) "the guard did not resolve to a value" s)
+     end
+| Errored (m) -> begin
+     (halted node_id (w.w_describe act) m s)
+     end)), (pl), (TNothing))
+     end
+| VLeaf (act) -> begin
+     (((match ((w.w_lower node_id act s)) with
+| Emit (emitted) -> begin
+     {o_store = s; o_effects = (emitted)::[]; o_diagnostics = []; o_halted = false}
+     end
+| Refuse (reason) -> begin
+     (refused node_id (w.w_describe act) reason s)
+     end
+| Decline -> begin
+     (declined node_id (w.w_describe act) s)
+     end)), (pl), (TNothing))
+     end
+| VChoose (act, entry, when_true, when_false, exit) -> begin
+     (match ((w.w_resolve s entry)) with
+| Resolved (jv) -> begin
+     (
+
+let took_true = (w.w_is_true jv)
+in (
+
+let uu___ =  
+if took_true then begin
+     (fold_traced w ar node_id when_true s pl)
+     end else begin
+     (fold_traced w ar node_id when_false s pl)
+     end
+in (match (uu___) with
+| (o1, p1, arm) -> begin
+     (
+
+let tr = TChoose (took_true, arm)
+in  
+if o1.o_halted then begin
+     ((o1), (p1), (tr))
+     end else begin
+     (match (exit) with
+| ONone -> begin
+     ((o1), (p1), (tr))
+     end
+| OSome (assertion) -> begin
+     (match ((w.w_resolve o1.o_store assertion)) with
+| Resolved (jv') -> begin
+      
+if (Prims.op_Equals (w.w_is_true jv') took_true) then begin
+     ((o1), (p1), (tr))
+     end else begin
+     (((halted_after o1 node_id (w.w_describe act) ( 
+if took_true then begin
+     "the exit assertion did not hold after the true arm"
+     end else begin
+     "the exit assertion held after the false arm"
+     end))), (p1), (tr))
+     end
+     end
+| NotResolved -> begin
+     (((halted_after o1 node_id (w.w_describe act) "the exit assertion did not resolve to a value")), (p1), (tr))
+     end
+| Errored (m) -> begin
+     (((halted_after o1 node_id (w.w_describe act) (Prims.strcat "the exit assertion errored: " m))), (p1), (tr))
+     end)
+     end)
+     end)
+     end)))
+     end
+| NotResolved -> begin
+     (((halted node_id (w.w_describe act) "the branch condition did not resolve to a value" s)), (pl), (TNothing))
+     end
+| Errored (m) -> begin
+     (((halted node_id (w.w_describe act) m s)), (pl), (TNothing))
+     end)
+     end
+| VRepeat (act, count, body) -> begin
+     (match (count) with
+| BLiteral (n) -> begin
+     (
+
+let uu___ = (fold_traced_repeat w ar node_id body n s pl)
+in (match (uu___) with
+| (o, p', its) -> begin
+     ((o), (p'), (TRepeat (its)))
+     end))
+     end
+| BParameter (expr, lo, hi) -> begin
+     (match ((w.w_resolve s expr)) with
+| Resolved (jv) -> begin
+     (match ((w.w_as_count jv)) with
+| OSome (n) -> begin
+      
+if ((lo <= n) && (n <= hi)) then begin
+     (
+
+let uu___ = (fold_traced_repeat w ar node_id body n s pl)
+in (match (uu___) with
+| (o, p', its) -> begin
+     ((o), (p'), (TRepeat (its)))
+     end))
+     end else begin
+     (((halted node_id (w.w_describe act) "the repeat\'s bound is outside its declared range" s)), (pl), (TNothing))
+     end
+     end
+| ONone -> begin
+     (((halted node_id (w.w_describe act) "the repeat\'s bound did not resolve to a count" s)), (pl), (TNothing))
+     end)
+     end
+| NotResolved -> begin
+     (((halted node_id (w.w_describe act) "the repeat\'s bound did not resolve to a value" s)), (pl), (TNothing))
+     end
+| Errored (m) -> begin
+     (((halted node_id (w.w_describe act) m s)), (pl), (TNothing))
+     end)
+     end)
+     end
+| VSequence (uu___, ops) -> begin
+     (
+
+let uu___1 = (fold_traced_many w ar node_id ops s pl)
+in (match (uu___1) with
+| (o, p', steps) -> begin
+     ((o), (p'), (TSeq (steps)))
+     end))
+     end))
+and fold_traced_many = (fun ( w  :  witness<'a, 'e, 'v, 'eff> ) ( ar  :  handler_arm<'v, 'eff, 'p> ) ( node_id  :  Prims.string ) ( ops  :  Prims.list<action_view<'a, 'e, 'v>> ) ( s  :  store<'v> ) ( pl  :  'p ) -> (match (ops) with
+| [] -> begin
+     (((store_only s)), (pl), ([]))
+     end
+| (x)::rest -> begin
+     (
+
+let uu___ = (fold_traced w ar node_id x s pl)
+in (match (uu___) with
+| (o1, p1, t1) -> begin
+      
+if o1.o_halted then begin
+     ((o1), (p1), ((t1)::[]))
+     end else begin
+     (
+
+let uu___1 = (fold_traced_many w ar node_id rest o1.o_store p1)
+in (match (uu___1) with
+| (o2, p2, ts) -> begin
+     (({o_store = o2.o_store; o_effects = (app o1.o_effects o2.o_effects); o_diagnostics = (app o1.o_diagnostics o2.o_diagnostics); o_halted = o2.o_halted}), (p2), ((t1)::ts))
+     end))
+     end
+     end))
+     end))
+and fold_traced_repeat = (fun ( w  :  witness<'a, 'e, 'v, 'eff> ) ( ar  :  handler_arm<'v, 'eff, 'p> ) ( node_id  :  Prims.string ) ( body  :  action_view<'a, 'e, 'v> ) ( n  :  Prims.nat ) ( s  :  store<'v> ) ( pl  :  'p ) ->  
+if (Prims.op_Equals n (Prims.parse_int "0")) then begin
+     (((store_only s)), (pl), ([]))
+     end else begin
+     (
+
+let uu___ = (fold_traced w ar node_id body s pl)
+in (match (uu___) with
+| (o1, p1, t1) -> begin
+      
+if o1.o_halted then begin
+     ((o1), (p1), ((t1)::[]))
+     end else begin
+     (
+
+let uu___1 = (fold_traced_repeat w ar node_id body (n - (Prims.parse_int "1")) o1.o_store p1)
+in (match (uu___1) with
+| (o2, p2, ts) -> begin
+     (({o_store = o2.o_store; o_effects = (app o1.o_effects o2.o_effects); o_diagnostics = (app o1.o_diagnostics o2.o_diagnostics); o_halted = o2.o_halted}), (p2), ((t1)::ts))
+     end))
+     end
+     end))
+     end)
+
+
+let run_action_traced = (fun ( w  :  witness<'a, 'e, 'v, 'eff> ) ( ar  :  handler_arm<'v, 'eff, 'p> ) ( node_id  :  Prims.string ) ( act  :  'a ) ( s  :  store<'v> ) ( pl  :  'p ) -> (fold_traced w ar node_id (w.w_view act) s pl))
+
+
+let rec reversible = (fun ( x  :  action_view<'a, 'e, 'v> ) -> (match (x) with
+| VSequence (uu___, ops) -> begin
+     (reversible_list ops)
+     end
+| VAssign (uu___, uu___1, uu___2, uu___3) -> begin
+     true
+     end
+| VRequire (uu___, uu___1) -> begin
+     true
+     end
+| VChoose (uu___, uu___1, when_true, when_false, exit) -> begin
+     (((match (exit) with
+| OSome (item) -> begin
+     true
+     end
+| uu___2 -> begin
+     false
+     end) && (reversible when_true)) && (reversible when_false))
+     end
+| VRepeat (uu___, count, body) -> begin
+     ((match (count) with
+| BLiteral (count1) -> begin
+     true
+     end
+| uu___1 -> begin
+     false
+     end) && (reversible body))
+     end
+| VCall (uu___, uu___1, uu___2) -> begin
+     false
+     end
+| VLeaf (uu___) -> begin
+     false
+     end))
+and reversible_list = (fun ( ops  :  Prims.list<action_view<'a, 'e, 'v>> ) -> (match (ops) with
+| [] -> begin
+     true
+     end
+| (x)::rest -> begin
+     ((reversible x) && (reversible_list rest))
+     end))
+
+
+let rec restorable = (fun ( tr  :  trace<'v> ) -> (match (tr) with
+| TNothing -> begin
+     true
+     end
+| TWrote (ONone) -> begin
+     false
+     end
+| TWrote (OSome (uu___)) -> begin
+     true
+     end
+| TSeq (steps) -> begin
+     (restorable_list steps)
+     end
+| TChoose (uu___, arm) -> begin
+     (restorable arm)
+     end
+| TRepeat (iterations) -> begin
+     (restorable_list iterations)
+     end))
+and restorable_list = (fun ( steps  :  Prims.list<trace<'v>> ) -> (match (steps) with
+| [] -> begin
+     true
+     end
+| (t)::rest -> begin
+     ((restorable t) && (restorable_list rest))
+     end))
+
+
+let rec replicate = (fun ( n  :  Prims.nat ) ( x  :  'a ) ->  
+if (Prims.op_Equals n (Prims.parse_int "0")) then begin
+     []
+     end else begin
+     (x)::(replicate (n - (Prims.parse_int "1")) x)
+     end)
+
+
+let act_of = (fun ( x  :  action_view<'a, 'e, 'v> ) -> (match (x) with
+| VSequence (act, uu___) -> begin
+     act
+     end
+| VAssign (act, uu___, uu___1, uu___2) -> begin
+     act
+     end
+| VCall (act, uu___, uu___1) -> begin
+     act
+     end
+| VRequire (act, uu___) -> begin
+     act
+     end
+| VChoose (act, uu___, uu___1, uu___2, uu___3) -> begin
+     act
+     end
+| VRepeat (act, uu___, uu___1) -> begin
+     act
+     end
+| VLeaf (act) -> begin
+     act
+     end))
+
+
+let rec reverse = (fun ( x  :  action_view<'a, 'e, 'v> ) ( tr  :  trace<'v> ) -> (match (((x), (tr))) with
+| (VSequence (act, ops), TSeq (steps)) -> begin
+     VSequence (act, (reverse_many ops steps))
+     end
+| (VAssign (act, state_key, uu___, uu___1), TWrote (OSome (old))) -> begin
+     VAssign (act, state_key, OSome (old), ONone)
+     end
+| (VRequire (act, condition), uu___) -> begin
+     VRequire (act, condition)
+     end
+| (VChoose (act, entry, when_true, uu___, OSome (exit)), TChoose (true, arm)) -> begin
+     VChoose (act, exit, (reverse when_true arm), VSequence (act, []), OSome (entry))
+     end
+| (VChoose (act, entry, uu___, when_false, OSome (exit)), TChoose (false, arm)) -> begin
+     VChoose (act, exit, VSequence (act, []), (reverse when_false arm), OSome (entry))
+     end
+| (VRepeat (act, BLiteral (n), body), TRepeat (iterations)) -> begin
+     VSequence (act, (reverse_many (replicate n body) iterations))
+     end
+| (uu___, uu___1) -> begin
+     VSequence ((act_of x), [])
+     end))
+and reverse_many = (fun ( ops  :  Prims.list<action_view<'a, 'e, 'v>> ) ( steps  :  Prims.list<trace<'v>> ) -> (match (((ops), (steps))) with
+| ((x)::rest, (t)::ts) -> begin
+     (app (reverse_many rest ts) (((reverse x t))::[]))
+     end
+| (uu___, uu___1) -> begin
+     []
+     end))
+
+
+let reverse_action = (fun ( w  :  witness<'a, 'e, 'v, 'eff> ) ( act  :  'a ) ( tr  :  trace<'v> ) -> (reverse (w.w_view act) tr))
 
 type res<'v> =
 | JResolved of 'v
@@ -1605,7 +2295,7 @@ let ui_resolve = (fun ( ax  :  axioms<'v, 'b> ) ( s  :  store<'v> ) ( binding  :
      end))
 
 
-let ui_witness = (fun ( ax  :  axioms<'v, 'b> ) -> {w_view = ui_view; w_lower = (ui_lower ax); w_describe = (describe ax); w_resolve = (ui_resolve ax); w_is_reserved = ax.is_reserved; w_reserved_prefix = ax.reserved_prefix; w_is_true = (fun ( uu___  :  'v ) -> false)})
+let ui_witness = (fun ( ax  :  axioms<'v, 'b> ) -> {w_view = ui_view; w_lower = (ui_lower ax); w_describe = (describe ax); w_resolve = (ui_resolve ax); w_is_reserved = ax.is_reserved; w_reserved_prefix = ax.reserved_prefix; w_is_true = (fun ( uu___  :  'v ) -> false); w_as_count = (fun ( uu___  :  'v ) -> ONone)})
 
 
 let run = (fun ( ax  :  axioms<'v, 'b> ) ( ar  :  arm<'v, 'p> ) ( node_id  :  Prims.string ) ( a  :  action<'v, 'b, 'k> ) ( s  :  store<'v> ) ( pl  :  'p ) -> (run_action (ui_witness ax) ar node_id a s pl))

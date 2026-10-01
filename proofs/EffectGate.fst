@@ -323,32 +323,98 @@ let rec admitted_sigma (gate: string -> bool) (sigma: policy_spec) (tr: list str
    The plan phase under Π — what it records is admitted.
    ─────────────────────────────────────────────────────────────────── *)
 
-/// Planning ops under an admitted capability keeps the staged
-/// capabilities admitted: every call `plan_ops` prepends carries that one
-/// capability (Phase 1967), a guard prepends none and an edit one, each
-/// staged from the state as of it (Phase 1974).
-let rec plan_ops_admitted (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
-                          (w: witness t b v o q a eff d) (gate: string -> bool) (cap: string)
-                          (stage: opt (t -> o -> (p & v)))
-                          (ops: list o) (tree: t) (staged: list (staged_call v p))
+/// Planning views under an admitted capability keeps the staged
+/// capabilities admitted: every call the plan prepends carries that one
+/// capability (Phase 1967); a guard prepends none and an edit one, each
+/// staged from the state as of it (Phase 1974); a branch prepends what
+/// the arm it took prepends and a repeat what its body prepends, `count`
+/// times, and neither condition prepends anything (Phase 1976). Stated
+/// over views, in the shape `Staging.plan_views` has, and lifted to the
+/// op sequence by `plan_ops_admitted` below.
+let rec plan_views_admitted (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                            (w: witness t b v o q a eff d) (gate: string -> bool) (cap: string)
+                            (stage: opt (t -> o -> (p & v)))
+                            (vs: list (op_view o)) (tree: t) (staged: list (staged_call v p))
+  : Lemma (requires gate cap /\ admitted gate (caps staged))
+          (ensures
+            (let r = plan_views w cap stage vs tree staged in
+             ROk? r ==> admitted gate (caps (snd (ROk?.value r)))))
+          (decreases %[vs; 1; 0]) =
+  match vs with
+  | [] -> plan_views_nil w cap stage tree staged
+  | x :: rest ->
+    plan_views_cons w cap stage x rest tree staged;
+    plan_view_admitted w gate cap stage x tree staged;
+    let s : res (t & list (staged_call v p)) = plan_view w cap stage x tree staged in
+    (match s with
+     | RErr _ -> ()
+     | ROk r -> plan_views_admitted w gate cap stage rest (fst r) (snd r))
+
+and plan_view_admitted (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                       (w: witness t b v o q a eff d) (gate: string -> bool) (cap: string)
+                       (stage: opt (t -> o -> (p & v)))
+                       (x: op_view o) (tree: t) (staged: list (staged_call v p))
+  : Lemma (requires gate cap /\ admitted gate (caps staged))
+          (ensures
+            (let r = plan_view w cap stage x tree staged in
+             ROk? r ==> admitted gate (caps (snd (ROk?.value r)))))
+          (decreases %[x; 0; 0]) =
+  match x with
+  | ORequire op -> plan_view_require w cap stage op tree staged
+  | OEdit op -> plan_view_edit w cap stage op tree staged
+  | OChoose entry when_true when_false exit ->
+    plan_view_choose w cap stage entry when_true when_false exit tree staged;
+    let e : res t = w.w_apply entry tree in
+    let armed : res (t & list (staged_call v p)) =
+      if ROk? e then plan_views w cap stage when_true tree staged
+      else plan_views w cap stage when_false tree staged
+    in
+    (if ROk? e then plan_views_admitted w gate cap stage when_true tree staged
+     else plan_views_admitted w gate cap stage when_false tree staged);
+    (match armed with
+     | RErr _ -> ()
+     | ROk r ->
+       (match exit with
+        | ONone -> ()
+        | OSome assertion ->
+          let answer : res t = w.w_apply assertion (fst r) in
+          (match answer with
+           | ROk _ -> ()
+           | RErr _ -> ())))
+  | ORepeat n body ->
+    plan_view_repeat w cap stage n body tree staged;
+    plan_repeat_admitted w gate cap stage body n tree staged
+
+and plan_repeat_admitted (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                         (w: witness t b v o q a eff d) (gate: string -> bool) (cap: string)
+                         (stage: opt (t -> o -> (p & v)))
+                         (body: list (op_view o)) (n: nat) (tree: t) (staged: list (staged_call v p))
+  : Lemma (requires gate cap /\ admitted gate (caps staged))
+          (ensures
+            (let r = plan_repeat w cap stage body n tree staged in
+             ROk? r ==> admitted gate (caps (snd (ROk?.value r)))))
+          (decreases %[body; 2; n]) =
+  if n = 0 then plan_repeat_zero w cap stage body tree staged
+  else begin
+    plan_repeat_step w cap stage body n tree staged;
+    plan_views_admitted w gate cap stage body tree staged;
+    let s : res (t & list (staged_call v p)) = plan_views w cap stage body tree staged in
+    (match s with
+     | RErr _ -> ()
+     | ROk r -> plan_repeat_admitted w gate cap stage body (n - 1) (fst r) (snd r))
+  end
+
+/// Planning an op sequence under an admitted capability keeps the staged
+/// capabilities admitted — `plan_views_admitted` through the view.
+let plan_ops_admitted (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                      (w: witness t b v o q a eff d) (gate: string -> bool) (cap: string)
+                      (stage: opt (t -> o -> (p & v)))
+                      (ops: list o) (tree: t) (staged: list (staged_call v p))
   : Lemma (requires gate cap /\ admitted gate (caps staged))
           (ensures
             (let r = plan_ops w cap stage ops tree staged in
-             ROk? r ==> admitted gate (caps (snd (ROk?.value r)))))
-          (decreases ops) =
-  match ops with
-  | [] -> plan_ops_nil w cap stage tree staged
-  | op :: rest ->
-    plan_ops_cons w cap stage op rest tree staged;
-    (match w.w_apply op tree with
-     | RErr _ -> ()
-     | ROk tree' ->
-       (match w.w_op_view op with
-        | ORequire -> plan_ops_admitted w gate cap stage rest tree staged
-        | OEdit ->
-          (match stage with
-           | ONone -> plan_ops_admitted w gate cap stage rest tree' staged
-           | OSome f -> plan_ops_admitted w gate cap stage rest tree' (staged_from cap f tree' op :: staged))))
+             ROk? r ==> admitted gate (caps (snd (ROk?.value r))))) =
+  plan_views_admitted w gate cap stage (views w ops) tree staged
 
 /// One stage keeps `ac_performed` and the staged capabilities admitted:
 /// `plan_effect` extends either only after `r_gate` answered true.

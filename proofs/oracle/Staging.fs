@@ -383,13 +383,15 @@ let __proj__Mkbounded_outcome__item__bo_diagnostics = (fun ( projectee  :  bound
      bo_diagnostics
      end))
 
-type op_view =
-| OEdit
-| ORequire
+type op_view<'o> =
+| OEdit of 'o
+| ORequire of 'o
+| OChoose of 'o * Prims.list<op_view<'o>> * Prims.list<op_view<'o>> * opt<'o>
+| ORepeat of Prims.nat * Prims.list<op_view<'o>>
 
 
-let uu___is_OEdit : op_view  ->  Prims.bool = (fun ( projectee  :  op_view ) -> (match (projectee) with
-| OEdit -> begin
+let uu___is_OEdit = (fun ( projectee  :  op_view<'o> ) -> (match (projectee) with
+| OEdit (op) -> begin
      true
      end
 | uu___ -> begin
@@ -397,15 +399,81 @@ let uu___is_OEdit : op_view  ->  Prims.bool = (fun ( projectee  :  op_view ) -> 
      end))
 
 
-let uu___is_ORequire : op_view  ->  Prims.bool = (fun ( projectee  :  op_view ) -> (match (projectee) with
-| ORequire -> begin
+let __proj__OEdit__item__op = (fun ( projectee  :  op_view<'o> ) -> (match (projectee) with
+| OEdit (op) -> begin
+     op
+     end))
+
+
+let uu___is_ORequire = (fun ( projectee  :  op_view<'o> ) -> (match (projectee) with
+| ORequire (op) -> begin
      true
      end
 | uu___ -> begin
      false
      end))
 
-type witness<'t, 'b, 'v, 'o, 'q, 'a, 'eff, 'd> = {w_compute : Prims.string  ->  'a  ->  'b  ->  bounded_outcome<'b, 'eff, 'd>; w_query : Prims.string  ->  'q  ->  'b  ->  res<'b>; w_apply : 'o  ->  't  ->  res<'t>; w_op_view : 'o  ->  op_view; w_assign : Prims.string  ->  'v  ->  'b  ->  'b; w_slot_refused : Prims.string  ->  opt<Prims.string>}
+
+let __proj__ORequire__item__op = (fun ( projectee  :  op_view<'o> ) -> (match (projectee) with
+| ORequire (op) -> begin
+     op
+     end))
+
+
+let uu___is_OChoose = (fun ( projectee  :  op_view<'o> ) -> (match (projectee) with
+| OChoose (entry, when_true, when_false, exit) -> begin
+     true
+     end
+| uu___ -> begin
+     false
+     end))
+
+
+let __proj__OChoose__item__entry = (fun ( projectee  :  op_view<'o> ) -> (match (projectee) with
+| OChoose (entry, when_true, when_false, exit) -> begin
+     entry
+     end))
+
+
+let __proj__OChoose__item__when_true = (fun ( projectee  :  op_view<'o> ) -> (match (projectee) with
+| OChoose (entry, when_true, when_false, exit) -> begin
+     when_true
+     end))
+
+
+let __proj__OChoose__item__when_false = (fun ( projectee  :  op_view<'o> ) -> (match (projectee) with
+| OChoose (entry, when_true, when_false, exit) -> begin
+     when_false
+     end))
+
+
+let __proj__OChoose__item__exit = (fun ( projectee  :  op_view<'o> ) -> (match (projectee) with
+| OChoose (entry, when_true, when_false, exit) -> begin
+     exit
+     end))
+
+
+let uu___is_ORepeat = (fun ( projectee  :  op_view<'o> ) -> (match (projectee) with
+| ORepeat (count, body) -> begin
+     true
+     end
+| uu___ -> begin
+     false
+     end))
+
+
+let __proj__ORepeat__item__count = (fun ( projectee  :  op_view<'o> ) -> (match (projectee) with
+| ORepeat (count, body) -> begin
+     count
+     end))
+
+
+let __proj__ORepeat__item__body = (fun ( projectee  :  op_view<'o> ) -> (match (projectee) with
+| ORepeat (count, body) -> begin
+     body
+     end))
+
+type witness<'t, 'b, 'v, 'o, 'q, 'a, 'eff, 'd> = {w_compute : Prims.string  ->  'a  ->  'b  ->  bounded_outcome<'b, 'eff, 'd>; w_query : Prims.string  ->  'q  ->  'b  ->  res<'b>; w_apply : 'o  ->  't  ->  res<'t>; w_op_view : 'o  ->  op_view<'o>; w_assign : Prims.string  ->  'v  ->  'b  ->  'b; w_slot_refused : Prims.string  ->  opt<Prims.string>}
 
 
 let __proj__Mkwitness__item__w_compute = (fun ( projectee  :  witness<'t, 'b, 'v, 'o, 'q, 'a, 'eff, 'd> ) -> (match (projectee) with
@@ -617,31 +685,119 @@ in (match (uu___) with
      end)))
 
 
-let rec plan_ops = (fun ( w  :  witness<'t, 'b, 'v, 'o, 'q, 'a, 'eff, 'd> ) ( cap  :  Prims.string ) ( stage1  :  opt<('t  ->  'o  ->  ('p * 'v))> ) ( ops  :  Prims.list<'o> ) ( tree  :  't ) ( staged  :  Prims.list<staged_call<'v, 'p>> ) -> (match (ops) with
+let rec views = (fun ( w  :  witness<'t, 'b, 'v, 'o, 'q, 'a, 'eff, 'd> ) ( ops  :  Prims.list<'o> ) -> (match (ops) with
+| [] -> begin
+     []
+     end
+| (op)::rest -> begin
+     ((w.w_op_view op))::(views w rest)
+     end))
+
+
+let rec plan_views = (fun ( w  :  witness<'t, 'b, 'v, 'o, 'q, 'a, 'eff, 'd> ) ( cap  :  Prims.string ) ( stage1  :  opt<('t  ->  'o  ->  ('p * 'v))> ) ( vs  :  Prims.list<op_view<'o>> ) ( tree  :  't ) ( staged  :  Prims.list<staged_call<'v, 'p>> ) -> (match (vs) with
 | [] -> begin
      ROk (((tree), (staged)))
      end
-| (op)::rest -> begin
+| (x)::rest -> begin
+     (match ((plan_view w cap stage1 x tree staged)) with
+| RErr (code) -> begin
+     RErr (code)
+     end
+| ROk (tree', staged') -> begin
+     (plan_views w cap stage1 rest tree' staged')
+     end)
+     end))
+and plan_view = (fun ( w  :  witness<'t, 'b, 'v, 'o, 'q, 'a, 'eff, 'd> ) ( cap  :  Prims.string ) ( stage1  :  opt<('t  ->  'o  ->  ('p * 'v))> ) ( x  :  op_view<'o> ) ( tree  :  't ) ( staged  :  Prims.list<staged_call<'v, 'p>> ) -> (match (x) with
+| ORequire (op) -> begin
+     (match ((w.w_apply op tree)) with
+| RErr (code) -> begin
+     RErr (code)
+     end
+| ROk (uu___) -> begin
+     ROk (((tree), (staged)))
+     end)
+     end
+| OEdit (op) -> begin
      (match ((w.w_apply op tree)) with
 | RErr (code) -> begin
      RErr (code)
      end
 | ROk (tree') -> begin
-     (match ((w.w_op_view op)) with
-| ORequire -> begin
-     (plan_ops w cap stage1 rest tree staged)
-     end
-| OEdit -> begin
      (match (stage1) with
 | ONone -> begin
-     (plan_ops w cap stage1 rest tree' staged)
+     ROk (((tree'), (staged)))
      end
 | OSome (f) -> begin
-     (plan_ops w cap stage1 rest tree' (((staged_from cap f tree' op))::staged))
+     ROk (((tree'), (((staged_from cap f tree' op))::staged)))
      end)
      end)
+     end
+| OChoose (entry, when_true, when_false, exit) -> begin
+     (
+
+let took_true = (match ((w.w_apply entry tree)) with
+| ROk (value) -> begin
+     true
+     end
+| uu___ -> begin
+     false
      end)
+in (
+
+let armed =  
+if took_true then begin
+     (plan_views w cap stage1 when_true tree staged)
+     end else begin
+     (plan_views w cap stage1 when_false tree staged)
+     end
+in (match (armed) with
+| RErr (code) -> begin
+     RErr (code)
+     end
+| ROk (tree', staged') -> begin
+     (match (exit) with
+| ONone -> begin
+     ROk (((tree'), (staged')))
+     end
+| OSome (assertion) -> begin
+     (match ((w.w_apply assertion tree')) with
+| ROk (uu___) -> begin
+      
+if took_true then begin
+     ROk (((tree'), (staged')))
+     end else begin
+     RErr ("the exit assertion held after the false arm")
+     end
+     end
+| RErr (reason) -> begin
+      
+if took_true then begin
+     RErr ((Prims.strcat "the exit assertion did not hold after the true arm: " reason))
+     end else begin
+     ROk (((tree'), (staged')))
+     end
+     end)
+     end)
+     end)))
+     end
+| ORepeat (count, body) -> begin
+     (plan_repeat w cap stage1 body count tree staged)
      end))
+and plan_repeat = (fun ( w  :  witness<'t, 'b, 'v, 'o, 'q, 'a, 'eff, 'd> ) ( cap  :  Prims.string ) ( stage1  :  opt<('t  ->  'o  ->  ('p * 'v))> ) ( body  :  Prims.list<op_view<'o>> ) ( n  :  Prims.nat ) ( tree  :  't ) ( staged  :  Prims.list<staged_call<'v, 'p>> ) ->  
+if (Prims.op_Equals n (Prims.parse_int "0")) then begin
+     ROk (((tree), (staged)))
+     end else begin
+     (match ((plan_views w cap stage1 body tree staged)) with
+| RErr (code) -> begin
+     RErr (code)
+     end
+| ROk (tree', staged') -> begin
+     (plan_repeat w cap stage1 body (n - (Prims.parse_int "1")) tree' staged')
+     end)
+     end)
+
+
+let plan_ops = (fun ( w  :  witness<'t, 'b, 'v, 'o, 'q, 'a, 'eff, 'd> ) ( cap  :  Prims.string ) ( stage1  :  opt<('t  ->  'o  ->  ('p * 'v))> ) ( ops  :  Prims.list<'o> ) ( tree  :  't ) ( staged  :  Prims.list<staged_call<'v, 'p>> ) -> (plan_views w cap stage1 (views w ops) tree staged))
 
 
 let rec map_bounded = (fun ( ds  :  Prims.list<'d> ) -> (match (ds) with
@@ -815,6 +971,15 @@ if final.ac_halted then begin
      end else begin
      {oc_store = final.ac_store; oc_committed = true; oc_performed = (app (rev final.ac_performed) (rev final.ac_externally)); oc_patches = (rev final.ac_patches); oc_notifications = (rev final.ac_notifications); oc_client_effects = (rev final.ac_client_effects); oc_diagnostics = (rev final.ac_diagnostics)}
      end)))
+
+
+let exit_violation_reason = (fun ( took_true  :  Prims.bool ) ( answer  :  res<'t> ) -> (match (answer) with
+| ROk (uu___) -> begin
+     "the exit assertion held after the false arm"
+     end
+| RErr (reason) -> begin
+     (Prims.strcat "the exit assertion did not hold after the true arm: " reason)
+     end))
 
 
 
