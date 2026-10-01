@@ -158,7 +158,7 @@ let private modelStage (stage: HandlerStage) : ModelStage =
 /// closure as an opaque token, and the BEHAVIOUR applies it. The argument
 /// policy is consulted on the production effect, because the policy's
 /// vocabulary is production's.
-let private modelRegistry (registry: ServerEffectRegistry) : ModelRegistry =
+let private modelRegistry (performance: OpPerformance<TreeOp<obj>>) (registry: ServerEffectRegistry) : ModelRegistry =
     { r_gate = registry.Gate
       r_policy =
         fun effect ->
@@ -177,11 +177,22 @@ let private modelRegistry (registry: ServerEffectRegistry) : ModelRegistry =
                 | Staging.EmitPatch ops -> ServerEffect.EmitPatch ops
                 | Staging.Notify(channel, payload) -> ServerEffect.Notify(channel, payload)
 
-            match ServerArgumentPolicy.check registry production with
+            match ServerArgumentPolicy.check witness.Op registry production with
             | Ok() -> Staging.ONone
             | Error defect -> Staging.OSome(ServerArgumentPolicy.describe defect)
       r_lookup = fun fn -> Map.tryFind fn registry.HostFunctions |> modelOpt
-      r_perf = fun performer args -> performer args |> modelRes }
+      r_perf = fun performer args -> performer args |> modelRes
+      // The op performer, split as the model splits it (Phase 1967): the
+      // TOKEN is production's own closure over the op, the argument inert —
+      // the same shape production stages, so the perform phase runs the two
+      // through one loop on both sides.
+      r_op_perform =
+        match performance with
+        | OpPerformance.InMemory -> Staging.ONone
+        | OpPerformance.Performed perform ->
+            Staging.OSome(fun op ->
+                (fun (_: Fuaran.Core.JVal) -> perform op |> Result.map (fun () -> Fuaran.Core.JObj [])),
+                Fuaran.Core.JObj []) }
 
 let private productionDiagnostic (diagnostic: Staging.diagnostic<BoundedDiagnostic>) : ServerDiagnostic =
     match diagnostic with
@@ -221,6 +232,7 @@ let private projectionOf (outcome: HandlerOutcome) =
        Diagnostics = outcome.Diagnostics |> List.map (sprintf "%A") |}
 
 let private runModel
+    (performance: OpPerformance<TreeOp<obj>>)
     (registry: ServerEffectRegistry)
     (resolve: string -> Result<Fuaran.Core.Table, Fuaran.Core.EvalError>)
     (nodeId: string)
@@ -229,7 +241,7 @@ let private runModel
     : HandlerOutcome =
     Staging.run
         (modelWitness resolve)
-        (modelRegistry registry)
+        (modelRegistry performance registry)
         nodeId
         (handler.Stages |> List.map modelStage)
         { st_tree = store.Tree
@@ -238,26 +250,38 @@ let private runModel
 
 // ─── The scripted performer ─────────────────────────────────────────────────
 
-/// What a performer actually did: the function names it was invoked under,
-/// in invocation order. The ground truth every claim below is checked
-/// against.
+/// What a performer actually did: the CAPABILITIES it was invoked under, in
+/// invocation order — `host:<fn>` for a host function, `ApplyOps` for an op
+/// under a registered op performer (Phase 1967). The ground truth every claim
+/// below is checked against.
 type private Log = System.Collections.Generic.List<string>
 
+/// A scripted performer's two faces over ONE counter: the host functions, by
+/// name, and the op performer. One counter, because the perform phase runs
+/// ops and host calls through one loop in plan order, and a failure position
+/// counts across both.
+type private Scripted =
+    { Host: string -> Performer
+      Op: TreeOp<obj> -> Result<unit, string> }
+
 /// A performer that counts its invocations across every name it is
-/// registered under and refuses at ONE position, or never. Each run builds a
-/// fresh one, so production and the model each start from zero.
-let private scripted (log: Log) (failAt: int option) : string -> Performer =
+/// registered under — and every op it performs — and refuses at ONE position,
+/// or never. Each run builds a fresh one, so production and the model each
+/// start from zero.
+let private scripted (log: Log) (failAt: int option) : Scripted =
     let calls = ref 0
 
-    fun name ->
-        fun _ ->
-            let position = calls.Value
-            calls.Value <- position + 1
-            log.Add name
+    let ask (capability: string) : Result<unit, string> =
+        let position = calls.Value
+        calls.Value <- position + 1
+        log.Add capability
 
-            match failAt with
-            | Some k when k = position -> Error(sprintf "scripted refusal at position %d" k)
-            | _ -> Ok(jstr (sprintf "ran:%s" name))
+        match failAt with
+        | Some k when k = position -> Error(sprintf "scripted refusal at position %d" k)
+        | _ -> Ok()
+
+    { Host = fun name -> fun _ -> ask ("host:" + name) |> Result.map (fun () -> jstr (sprintf "ran:%s" name))
+      Op = fun _ -> ask "ApplyOps" }
 
 /// The functions a case registers, and the registry built around a
 /// performer factory so production and the model each get their own.
@@ -272,7 +296,18 @@ type private StagingCase =
         /// constraints a case narrows with.
         Shape: ServerEffectRegistry -> ServerEffectRegistry
         Resolve: string -> Result<Fuaran.Core.Table, Fuaran.Core.EvalError>
+        /// Whether this case registers the scripted OP performer (Phase 1967),
+        /// making `ApplyOps` a staged arm; `false` is in-memory, every
+        /// placement's default and the UI tier's.
+        PerformOps: bool
     }
+
+/// The op performance a case runs under, over this run's scripted performer.
+let private performanceOf (case: StagingCase) (s: Scripted) : OpPerformance<TreeOp<obj>> =
+    if case.PerformOps then
+        OpPerformance.Performed s.Op
+    else
+        OpPerformance.InMemory
 
 let private registryFor (case: StagingCase) (performer: string -> Performer) : ServerEffectRegistry =
     case.Functions
@@ -292,24 +327,38 @@ let private runCase (case: StagingCase) (failAt: int option) : Run =
     let modelLog = Log()
 
     let production =
-        Handler.run (registryFor case (scripted productionLog failAt)) case.Resolve "call" case.Handler case.Store
+        let s = scripted productionLog failAt
+
+        Fuaran.Program.Server.Handler.runWith
+            witness
+            (registryFor case s.Host)
+            (performanceOf case s)
+            case.Resolve
+            "call"
+            case.Handler
+            case.Store
 
     let model =
-        runModel (registryFor case (scripted modelLog failAt)) case.Resolve "call" case.Handler case.Store
+        let s = scripted modelLog failAt
+        runModel (performanceOf case s) (registryFor case s.Host) case.Resolve "call" case.Handler case.Store
 
     { Production = production
       ProductionLog = List.ofSeq productionLog
       Model = model
       ModelLog = List.ofSeq modelLog }
 
-/// The host calls the performer's log says ran, as capabilities.
-let private ranCapabilities (log: string list) =
-    log |> List.map (fun fn -> "host:" + fn)
+/// The calls the performer's log says ran — the log already records
+/// capabilities.
+let private ranCapabilities (log: string list) = log
 
-/// `Performed`'s host-call suffix — what the handler CLAIMS ran outside.
-let private claimedHostCalls (outcome: HandlerOutcome) =
+/// `Performed`'s external suffix — what the handler CLAIMS ran outside: its
+/// host calls, and, under a registered op performer, its ops. In memory an
+/// `ApplyOps` entry is the plan phase's and is not a claim about the outside.
+let private claimedExternal (case: StagingCase) (outcome: HandlerOutcome) =
     outcome.Performed
-    |> List.filter (fun c -> c.StartsWith("host:", StringComparison.Ordinal))
+    |> List.filter (fun c ->
+        c.StartsWith("host:", StringComparison.Ordinal)
+        || (case.PerformOps && c = "ApplyOps"))
 
 /// The whole comparison, as a reported divergence or nothing. Three checks:
 /// the two outcomes project equal; the two performers were asked the same
@@ -347,12 +396,12 @@ let private divergence (case: StagingCase) (failAt: int option) (run: Run) : str
             | Some k when k < List.length run.ProductionLog -> List.take k run.ProductionLog
             | _ -> run.ProductionLog
 
-        if claimedHostCalls run.Production <> ranCapabilities ran then
+        if claimedExternal case run.Production <> ranCapabilities ran then
             Some(
                 sprintf
                     "%s: Performed claims %A outside, but the performer's log says %A ran"
                     where
-                    (claimedHostCalls run.Production)
+                    (claimedExternal case run.Production)
                     (ranCapabilities ran)
             )
         else
@@ -411,9 +460,13 @@ let private case
       Handler = { Name = name; Stages = stages }
       Store = store
       Shape = id
-      Resolve = Fuaran.Core.DataFrame.noResolve }
+      Resolve = Fuaran.Core.DataFrame.noResolve
+      PerformOps = false }
 
 let private shaped (shape: ServerEffectRegistry -> ServerEffectRegistry) (c: StagingCase) = { c with Shape = shape }
+
+/// The case registers the scripted op performer (Phase 1967).
+let private performingOps (c: StagingCase) = { c with PerformOps = true }
 
 let private loopOrigin = "HandlerLoopTests"
 let private durableOrigin = "DurableInterpreterTests"
@@ -562,20 +615,75 @@ let private planHaltCases: StagingCase list =
           [ Effect(ServerEffect.HostCall("audit", jstr "note", None))
             Effect(ServerEffect.RunQuery("rows", Fuaran.Core.Ref "nowhere", [])) ] ]
 
-/// The failure positions a case is run at: every position of its staged
-/// list, and none. Counted over the `HostCall` stages — a position past what
-/// the plan phase actually staged is simply never reached, and the run is
-/// then the all-succeed run again, compared all the same.
-let private positions (case: StagingCase) : int option list =
-    let hostCalls =
-        case.Handler.Stages
-        |> List.filter (fun stage ->
-            match stage with
-            | Effect(ServerEffect.HostCall _) -> true
-            | _ -> false)
-        |> List.length
+/// The cases that register an OP PERFORMER (Phase 1967): `ApplyOps` is then a
+/// staged arm, performed after the plan commits, one call per op in plan
+/// order beside the host calls — so the same scripted performer, the same
+/// positions and the same three checks cover it. The first case is the same
+/// handler run in memory beside it, so the two placements of one handler are
+/// compared under one roof.
+let private opCases: StagingCase list =
+    [ case
+          "op-performer"
+          "ops and a host call, in memory: nothing but the host call runs outside"
+          [ "audit" ]
+          durableStore
+          [ Effect(ServerEffect.ApplyOps [ TreeOp.RemoveNode(NodeId "refresh") ])
+            Effect(ServerEffect.HostCall("audit", jstr "note", None))
+            Effect(ServerEffect.ApplyOps [ TreeOp.RemoveNode(NodeId "readout") ]) ]
+      case
+          "op-performer"
+          "ops and a host call, performed: each op is its own staged call, in plan order"
+          [ "audit" ]
+          durableStore
+          [ Effect(ServerEffect.ApplyOps [ TreeOp.RemoveNode(NodeId "refresh") ])
+            Effect(ServerEffect.HostCall("audit", jstr "note", None))
+            Effect(ServerEffect.ApplyOps [ TreeOp.RemoveNode(NodeId "readout") ]) ]
+      |> performingOps
+      case
+          "op-performer"
+          "two ops in one stage, then a host call landing"
+          [ "audit" ]
+          durableStore
+          [ Effect(ServerEffect.ApplyOps [ TreeOp.RemoveNode(NodeId "refresh"); TreeOp.RemoveNode(NodeId "readout") ])
+            Compute(Action.SetState("status", Some(jstr "planned"), None))
+            Effect(ServerEffect.HostCall("audit", jstr "note", Some "audited")) ]
+      |> performingOps
+      case
+          "op-performer"
+          "a plan that halts after ops were staged performs none of them"
+          [ "audit" ]
+          durableStore
+          [ Effect(ServerEffect.ApplyOps [ TreeOp.RemoveNode(NodeId "refresh") ])
+            Effect(ServerEffect.HostCall("audit", jstr "note", None))
+            Effect(ServerEffect.ApplyOps [ TreeOp.RemoveNode(NodeId "absent") ]) ]
+      |> performingOps
+      case
+          "op-performer"
+          "an op sequence the policy refuses is refused before anything performs"
+          [ "audit" ]
+          durableStore
+          [ Effect(ServerEffect.HostCall("audit", jstr "note", None))
+            Effect(ServerEffect.ApplyOps [ TreeOp.RemoveNode(NodeId "refresh") ]) ]
+      |> performingOps
+      |> shaped (
+          ServerEffectRegistry.constrain "ApplyOps" [ ServerConstraintClause.AllowList("target", [ "readout" ]) ]
+      ) ]
 
-    None :: [ for k in 0 .. hostCalls - 1 -> Some k ]
+/// The failure positions a case is run at: every position of its staged
+/// list, and none. Counted over the `HostCall` stages and, under a registered
+/// op performer, every op of every `ApplyOps` stage — a position past what the
+/// plan phase actually staged is simply never reached, and the run is then
+/// the all-succeed run again, compared all the same.
+let private positions (case: StagingCase) : int option list =
+    let staged =
+        case.Handler.Stages
+        |> List.sumBy (fun stage ->
+            match stage with
+            | Effect(ServerEffect.HostCall _) -> 1
+            | Effect(ServerEffect.ApplyOps ops) when case.PerformOps -> List.length ops
+            | _ -> 0)
+
+    None :: [ for k in 0 .. staged - 1 -> Some k ]
 
 let private divergences (cases: StagingCase list) : string list =
     [ for c in cases do
@@ -596,7 +704,7 @@ let stagingTests =
               // none of the perform phase. The floor is that the corpus reaches
               // the perform phase, reaches a failure INSIDE it at more than one
               // position, and reaches the all-succeed run.
-              let all = loopCases @ durableCases @ planHaltCases
+              let all = loopCases @ durableCases @ planHaltCases @ opCases
 
               let verdicts =
                   [ for c in all do
@@ -605,7 +713,7 @@ let stagingTests =
 
                             yield
                                 {| Committed = run.Production.Committed
-                                   PerformedOutside = List.length (claimedHostCalls run.Production)
+                                   PerformedOutside = List.length (claimedExternal c run.Production)
                                    Asked = List.length run.ProductionLog |} ]
 
               Expect.isNonEmpty all "the corpus is empty"
@@ -633,6 +741,68 @@ let stagingTests =
               Expect.isEmpty (divergences durableCases) "the extracted model and production diverged"
           }
 
+          test "the oracle agrees with production when ops are PERFORMED after the plan, at every failure position" {
+              // Phase 1967: the staged list holds ops as well as host calls,
+              // and the same three checks cover them — the outcomes agree, the
+              // performers were asked the same things in the same order, and
+              // `Performed`'s claim is the log.
+              Expect.isEmpty (divergences opCases) "the extracted model and production diverged"
+
+              let performed = opCases |> List.filter _.PerformOps
+              Expect.isGreaterThanOrEqual (List.length performed) 3 "the corpus registers an op performer"
+
+              // And the two placements of ONE handler differ exactly as D19
+              // says: in memory `ApplyOps` is performed at plan time and the
+              // log holds the host call alone; performed, each op is a staged
+              // call the log names, and `Performed` is execution order.
+              let inMemory = runCase opCases.Head None
+              let performedRun = runCase opCases.[1] None
+              Expect.isTrue inMemory.Production.Committed "in memory: committed"
+              Expect.equal inMemory.ProductionLog [ "host:audit" ] "in memory: only the host call ran outside"
+
+              Expect.equal
+                  inMemory.Production.Performed
+                  [ "ApplyOps"; "ApplyOps"; "host:audit" ]
+                  "in memory: plan-phase applies, then the staged host call"
+
+              Expect.isTrue performedRun.Production.Committed "performed: committed"
+
+              Expect.equal
+                  performedRun.ProductionLog
+                  [ "ApplyOps"; "host:audit"; "ApplyOps" ]
+                  "performed: each op is a staged call, in plan order beside the host call"
+
+              Expect.equal
+                  performedRun.Production.Performed
+                  performedRun.ProductionLog
+                  "performed: `Performed` is exactly the log — execution order, nothing at plan time"
+
+              // A part-way failure: the op after the host call refuses, and the
+              // residual is the prefix that ran — a positioned `PerformFailed`
+              // under the op's capability, the entry tree, nothing else.
+              let partWay = runCase opCases.[1] (Some 2)
+              Expect.isFalse partWay.Production.Committed "part-way: rolled back"
+              Expect.equal partWay.Production.Performed [ "ApplyOps"; "host:audit" ] "part-way: the prefix that ran"
+
+              Expect.equal
+                  (partWay.Production.Diagnostics |> List.last)
+                  (ServerDiagnostic.PerformFailed("ApplyOps", "scripted refusal at position 2"))
+                  "part-way: the failure names the op's capability and the performer's reason"
+
+              Expect.isTrue
+                  (LanguagePrimitives.PhysicalEquality partWay.Production.Store.Tree durableStore.Tree)
+                  "part-way: the planned tree is discarded"
+
+              // The policy refusal and the apply halt reach no performer at all.
+              for c in
+                  opCases
+                  |> List.filter (fun c -> c.PerformOps && c.Name.Contains "refused" || c.Name.Contains "halts") do
+                  let run = runCase c None
+                  Expect.isFalse run.Production.Committed (sprintf "%s: committed" c.Name)
+                  Expect.isEmpty run.ProductionLog (sprintf "%s: a performer ran" c.Name)
+                  Expect.isEmpty run.Production.Performed (sprintf "%s: something is reported performed" c.Name)
+          }
+
           test "the oracle agrees with production on every plan-phase halt — gate, policy, lookup, slot, apply, query" {
               Expect.isEmpty (divergences planHaltCases) "the extracted model and production diverged"
 
@@ -653,7 +823,7 @@ let stagingTests =
               // effects, and `Performed` exactly the first k staged calls in
               // declaration order — which is the log, minus the refused call.
               let reached =
-                  [ for c in loopCases @ durableCases do
+                  [ for c in loopCases @ durableCases @ opCases do
                         for failAt in positions c do
                             match failAt with
                             | Some k ->
@@ -709,7 +879,7 @@ let stagingTests =
               // claim against the log. If it did not, every green above would
               // be a comparison of two claims with nothing behind them.
               let lying (log: Log) : string -> Performer =
-                  let honest = scripted log None
+                  let honest = (scripted log None).Host
 
                   fun name ->
                       if name = "second" then
@@ -723,7 +893,14 @@ let stagingTests =
               let run =
                   { Production = Handler.run (registryFor c (lying productionLog)) c.Resolve "call" c.Handler c.Store
                     ProductionLog = List.ofSeq productionLog
-                    Model = runModel (registryFor c (lying modelLog)) c.Resolve "call" c.Handler c.Store
+                    Model =
+                      runModel
+                          OpPerformance.InMemory
+                          (registryFor c (lying modelLog))
+                          c.Resolve
+                          "call"
+                          c.Handler
+                          c.Store
                     ModelLog = List.ofSeq modelLog }
 
               Expect.equal
@@ -732,11 +909,11 @@ let stagingTests =
                   "the lie is not a divergence between production and the model — both believed it"
 
               Expect.equal
-                  (claimedHostCalls run.Production)
+                  (claimedExternal c run.Production)
                   [ "host:first"; "host:second"; "host:third" ]
                   "the handler claims all three ran — the lie was believed"
 
-              Expect.equal run.ProductionLog [ "first"; "third" ] "the log says two ran — the lie was not"
+              Expect.equal run.ProductionLog [ "host:first"; "host:third" ] "the log says two ran — the lie was not"
 
               match divergence c None run with
               | Some report ->
@@ -941,7 +1118,7 @@ let private gateModelRegistry (events: Events) (triple: Triple) : GateModelRegis
             events.Add("gate:" + cap)
             triple.Shape.Gate cap)
         |> triple.Shape.Narrow
-        |> modelRegistry
+        |> modelRegistry OpPerformance.InMemory
 
     let contractOf ((fn, _): GateToken) : Staging.opt<EffectGate.contract<Fuaran.Core.JVal>> =
         contracts
@@ -957,7 +1134,8 @@ let private gateModelRegistry (events: Events) (triple: Triple) : GateModelRegis
     { r_gate = policyBearer.r_gate
       r_policy = policyBearer.r_policy
       r_lookup = fun fn -> raw |> Map.tryFind fn |> Option.map (fun perf -> fn, perf) |> modelOpt
-      r_perf = EffectGate.checked_by contractOf rawBehaviour }
+      r_perf = EffectGate.checked_by contractOf rawBehaviour
+      r_op_perform = Staging.ONone }
 
 let private handlerOf (triple: Triple) : Handler =
     { Name = triple.Capability

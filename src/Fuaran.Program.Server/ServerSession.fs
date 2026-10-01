@@ -76,6 +76,12 @@ type ServerServices<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect> =
         Handlers: Map<string, Handler<'Action, 'Op>>
         /// The effect gate + host-function performers.
         Effects: ServerEffectRegistry
+        /// How this placement performs an op (Phase 1967): in memory — the
+        /// apply is the effect, the UI tier's placement and the default — or
+        /// through a registered performer, which makes `ApplyOps` a staged arm
+        /// performed after the plan commits. A host act, like registering a
+        /// performer; `create` leaves it in memory.
+        OpPerformance: OpPerformance<'Op>
         /// Resolves a named data source for `ServerEffect.RunQuery`. Defaults to
         /// refusing every name, so a host that wires no data serves no query.
         Sources: string -> Result<Fuaran.Core.Table, Fuaran.Core.EvalError>
@@ -110,6 +116,7 @@ module ServerServices =
           CanDispatch = fun _ -> false
           Handlers = Map.empty
           Effects = ServerEffectRegistry.denyAll
+          OpPerformance = OpPerformance.InMemory
           Sources = Fuaran.Core.DataFrame.noResolve
           SourceSchemas = SourceSchemas.none
           OnApply = ignore
@@ -445,9 +452,10 @@ module ServerSession =
                                 Diagnostics = tally.Diagnostics @ [ ServerDiagnostic.HandlerUnregistered ] } }
                 | Some handler ->
                     let outcome =
-                        Handler.run
+                        Handler.runWith
                             services.Witness
                             services.Effects
+                            services.OpPerformance
                             services.Sources
                             nodeId
                             handler

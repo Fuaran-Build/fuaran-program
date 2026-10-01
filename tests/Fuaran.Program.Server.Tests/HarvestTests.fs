@@ -173,6 +173,7 @@ let harvestTests =
                             Capabilities = []
                             Functions = fns
                             Channels = []
+                            Reach = []
                             Replay = []
                             Constraints = [] } }
 

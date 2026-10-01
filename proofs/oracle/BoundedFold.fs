@@ -118,6 +118,7 @@ type action_view<'a, 'e, 'v> =
 | VSequence of 'a * Prims.list<action_view<'a, 'e, 'v>>
 | VAssign of 'a * key * opt<'v> * opt<'e>
 | VCall of 'a * Prims.string * Prims.bool
+| VRequire of 'a * 'e
 | VLeaf of 'a
 
 
@@ -202,6 +203,27 @@ let __proj__VCall__item__declares_target = (fun ( projectee  :  action_view<'a, 
      end))
 
 
+let uu___is_VRequire = (fun ( projectee  :  action_view<'a, 'e, 'v> ) -> (match (projectee) with
+| VRequire (act, condition) -> begin
+     true
+     end
+| uu___ -> begin
+     false
+     end))
+
+
+let __proj__VRequire__item__act = (fun ( projectee  :  action_view<'a, 'e, 'v> ) -> (match (projectee) with
+| VRequire (act, condition) -> begin
+     act
+     end))
+
+
+let __proj__VRequire__item__condition = (fun ( projectee  :  action_view<'a, 'e, 'v> ) -> (match (projectee) with
+| VRequire (act, condition) -> begin
+     condition
+     end))
+
+
 let uu___is_VLeaf = (fun ( projectee  :  action_view<'a, 'e, 'v> ) -> (match (projectee) with
 | VLeaf (act) -> begin
      true
@@ -260,42 +282,48 @@ let uu___is_Decline = (fun ( projectee  :  leaf_outcome<'eff> ) -> (match (proje
      false
      end))
 
-type witness<'a, 'e, 'v, 'eff> = {w_view : 'a  ->  action_view<'a, 'e, 'v>; w_lower : Prims.string  ->  'a  ->  store<'v>  ->  leaf_outcome<'eff>; w_describe : 'a  ->  Prims.string; w_resolve : store<'v>  ->  'e  ->  resolution<'v>; w_is_reserved : key  ->  Prims.bool; w_reserved_prefix : Prims.string}
+type witness<'a, 'e, 'v, 'eff> = {w_view : 'a  ->  action_view<'a, 'e, 'v>; w_lower : Prims.string  ->  'a  ->  store<'v>  ->  leaf_outcome<'eff>; w_describe : 'a  ->  Prims.string; w_resolve : store<'v>  ->  'e  ->  resolution<'v>; w_is_reserved : key  ->  Prims.bool; w_reserved_prefix : Prims.string; w_is_true : 'v  ->  Prims.bool}
 
 
 let __proj__Mkwitness__item__w_view = (fun ( projectee  :  witness<'a, 'e, 'v, 'eff> ) -> (match (projectee) with
-| {w_view = w_view; w_lower = w_lower; w_describe = w_describe; w_resolve = w_resolve; w_is_reserved = w_is_reserved; w_reserved_prefix = w_reserved_prefix} -> begin
+| {w_view = w_view; w_lower = w_lower; w_describe = w_describe; w_resolve = w_resolve; w_is_reserved = w_is_reserved; w_reserved_prefix = w_reserved_prefix; w_is_true = w_is_true} -> begin
      w_view
      end))
 
 
 let __proj__Mkwitness__item__w_lower = (fun ( projectee  :  witness<'a, 'e, 'v, 'eff> ) -> (match (projectee) with
-| {w_view = w_view; w_lower = w_lower; w_describe = w_describe; w_resolve = w_resolve; w_is_reserved = w_is_reserved; w_reserved_prefix = w_reserved_prefix} -> begin
+| {w_view = w_view; w_lower = w_lower; w_describe = w_describe; w_resolve = w_resolve; w_is_reserved = w_is_reserved; w_reserved_prefix = w_reserved_prefix; w_is_true = w_is_true} -> begin
      w_lower
      end))
 
 
 let __proj__Mkwitness__item__w_describe = (fun ( projectee  :  witness<'a, 'e, 'v, 'eff> ) -> (match (projectee) with
-| {w_view = w_view; w_lower = w_lower; w_describe = w_describe; w_resolve = w_resolve; w_is_reserved = w_is_reserved; w_reserved_prefix = w_reserved_prefix} -> begin
+| {w_view = w_view; w_lower = w_lower; w_describe = w_describe; w_resolve = w_resolve; w_is_reserved = w_is_reserved; w_reserved_prefix = w_reserved_prefix; w_is_true = w_is_true} -> begin
      w_describe
      end))
 
 
 let __proj__Mkwitness__item__w_resolve = (fun ( projectee  :  witness<'a, 'e, 'v, 'eff> ) -> (match (projectee) with
-| {w_view = w_view; w_lower = w_lower; w_describe = w_describe; w_resolve = w_resolve; w_is_reserved = w_is_reserved; w_reserved_prefix = w_reserved_prefix} -> begin
+| {w_view = w_view; w_lower = w_lower; w_describe = w_describe; w_resolve = w_resolve; w_is_reserved = w_is_reserved; w_reserved_prefix = w_reserved_prefix; w_is_true = w_is_true} -> begin
      w_resolve
      end))
 
 
 let __proj__Mkwitness__item__w_is_reserved = (fun ( projectee  :  witness<'a, 'e, 'v, 'eff> ) -> (match (projectee) with
-| {w_view = w_view; w_lower = w_lower; w_describe = w_describe; w_resolve = w_resolve; w_is_reserved = w_is_reserved; w_reserved_prefix = w_reserved_prefix} -> begin
+| {w_view = w_view; w_lower = w_lower; w_describe = w_describe; w_resolve = w_resolve; w_is_reserved = w_is_reserved; w_reserved_prefix = w_reserved_prefix; w_is_true = w_is_true} -> begin
      w_is_reserved
      end))
 
 
 let __proj__Mkwitness__item__w_reserved_prefix = (fun ( projectee  :  witness<'a, 'e, 'v, 'eff> ) -> (match (projectee) with
-| {w_view = w_view; w_lower = w_lower; w_describe = w_describe; w_resolve = w_resolve; w_is_reserved = w_is_reserved; w_reserved_prefix = w_reserved_prefix} -> begin
+| {w_view = w_view; w_lower = w_lower; w_describe = w_describe; w_resolve = w_resolve; w_is_reserved = w_is_reserved; w_reserved_prefix = w_reserved_prefix; w_is_true = w_is_true} -> begin
      w_reserved_prefix
+     end))
+
+
+let __proj__Mkwitness__item__w_is_true = (fun ( projectee  :  witness<'a, 'e, 'v, 'eff> ) -> (match (projectee) with
+| {w_view = w_view; w_lower = w_lower; w_describe = w_describe; w_resolve = w_resolve; w_is_reserved = w_is_reserved; w_reserved_prefix = w_reserved_prefix; w_is_true = w_is_true} -> begin
+     w_is_true
      end))
 
 type diagnostic =
@@ -350,24 +378,30 @@ let __proj__DRefused__item__reason : diagnostic  ->  Prims.string = (fun ( proje
      reason
      end))
 
-type bounded_outcome<'v, 'eff> = {o_store : store<'v>; o_effects : Prims.list<'eff>; o_diagnostics : Prims.list<diagnostic>}
+type bounded_outcome<'v, 'eff> = {o_store : store<'v>; o_effects : Prims.list<'eff>; o_diagnostics : Prims.list<diagnostic>; o_halted : Prims.bool}
 
 
 let __proj__Mkbounded_outcome__item__o_store = (fun ( projectee  :  bounded_outcome<'v, 'eff> ) -> (match (projectee) with
-| {o_store = o_store; o_effects = o_effects; o_diagnostics = o_diagnostics} -> begin
+| {o_store = o_store; o_effects = o_effects; o_diagnostics = o_diagnostics; o_halted = o_halted} -> begin
      o_store
      end))
 
 
 let __proj__Mkbounded_outcome__item__o_effects = (fun ( projectee  :  bounded_outcome<'v, 'eff> ) -> (match (projectee) with
-| {o_store = o_store; o_effects = o_effects; o_diagnostics = o_diagnostics} -> begin
+| {o_store = o_store; o_effects = o_effects; o_diagnostics = o_diagnostics; o_halted = o_halted} -> begin
      o_effects
      end))
 
 
 let __proj__Mkbounded_outcome__item__o_diagnostics = (fun ( projectee  :  bounded_outcome<'v, 'eff> ) -> (match (projectee) with
-| {o_store = o_store; o_effects = o_effects; o_diagnostics = o_diagnostics} -> begin
+| {o_store = o_store; o_effects = o_effects; o_diagnostics = o_diagnostics; o_halted = o_halted} -> begin
      o_diagnostics
+     end))
+
+
+let __proj__Mkbounded_outcome__item__o_halted = (fun ( projectee  :  bounded_outcome<'v, 'eff> ) -> (match (projectee) with
+| {o_store = o_store; o_effects = o_effects; o_diagnostics = o_diagnostics; o_halted = o_halted} -> begin
+     o_halted
      end))
 
 type handler_answer<'v, 'eff, 'p> = {h_store : store<'v>; h_effects : Prims.list<'eff>; h_diagnostics : Prims.list<diagnostic>; h_placement : 'p}
@@ -408,13 +442,16 @@ let __proj__Mkhandler_arm__item__answer = (fun ( projectee  :  handler_arm<'v, '
 let inert_arm = (fun ( uu___  :  unit ) -> {answer = (fun ( uu___1  :  Prims.string ) ( uu___2  :  Prims.string ) ( uu___3  :  store<'v> ) ( uu___4  :  'p ) -> ONone)})
 
 
-let store_only = (fun ( s  :  store<'v> ) -> {o_store = s; o_effects = []; o_diagnostics = []})
+let store_only = (fun ( s  :  store<'v> ) -> {o_store = s; o_effects = []; o_diagnostics = []; o_halted = false})
 
 
-let declined = (fun ( node_id  :  Prims.string ) ( description  :  Prims.string ) ( s  :  store<'v> ) -> {o_store = s; o_effects = []; o_diagnostics = (DUnsupported (node_id, description))::[]})
+let declined = (fun ( node_id  :  Prims.string ) ( description  :  Prims.string ) ( s  :  store<'v> ) -> {o_store = s; o_effects = []; o_diagnostics = (DUnsupported (node_id, description))::[]; o_halted = false})
 
 
-let refused = (fun ( node_id  :  Prims.string ) ( description  :  Prims.string ) ( reason  :  Prims.string ) ( s  :  store<'v> ) -> {o_store = s; o_effects = []; o_diagnostics = (DRefused (node_id, description, reason))::[]})
+let refused = (fun ( node_id  :  Prims.string ) ( description  :  Prims.string ) ( reason  :  Prims.string ) ( s  :  store<'v> ) -> {o_store = s; o_effects = []; o_diagnostics = (DRefused (node_id, description, reason))::[]; o_halted = false})
+
+
+let halted = (fun ( node_id  :  Prims.string ) ( description  :  Prims.string ) ( reason  :  Prims.string ) ( s  :  store<'v> ) -> {o_store = s; o_effects = []; o_diagnostics = (DRefused (node_id, description, reason))::[]; o_halted = true})
 
 type jval_payload<'v> =
 | POk of opt<'v>
@@ -497,14 +534,31 @@ if declares_target then begin
      (((declined node_id (w.w_describe act) s)), (pl))
      end
 | OSome (ans) -> begin
-     (({o_store = ans.h_store; o_effects = ans.h_effects; o_diagnostics = ans.h_diagnostics}), (ans.h_placement))
+     (({o_store = ans.h_store; o_effects = ans.h_effects; o_diagnostics = ans.h_diagnostics; o_halted = false}), (ans.h_placement))
      end)
      end
+     end
+| VRequire (act, condition) -> begin
+     (((match ((w.w_resolve s condition)) with
+| Resolved (jv) -> begin
+      
+if (w.w_is_true jv) then begin
+     (store_only s)
+     end else begin
+     (halted node_id (w.w_describe act) "the guard did not hold" s)
+     end
+     end
+| NotResolved -> begin
+     (halted node_id (w.w_describe act) "the guard did not resolve to a value" s)
+     end
+| Errored (m) -> begin
+     (halted node_id (w.w_describe act) m s)
+     end)), (pl))
      end
 | VLeaf (act) -> begin
      (((match ((w.w_lower node_id act s)) with
 | Emit (emitted) -> begin
-     {o_store = s; o_effects = (emitted)::[]; o_diagnostics = []}
+     {o_store = s; o_effects = (emitted)::[]; o_diagnostics = []; o_halted = false}
      end
 | Refuse (reason) -> begin
      (refused node_id (w.w_describe act) reason s)
@@ -526,13 +580,18 @@ and fold_many = (fun ( w  :  witness<'a, 'e, 'v, 'eff> ) ( ar  :  handler_arm<'v
 let uu___ = (fold w ar node_id x s pl)
 in (match (uu___) with
 | (o1, p1) -> begin
+      
+if o1.o_halted then begin
+     ((o1), (p1))
+     end else begin
      (
 
 let uu___1 = (fold_many w ar node_id rest o1.o_store p1)
 in (match (uu___1) with
 | (o2, p2) -> begin
-     (({o_store = o2.o_store; o_effects = (app o1.o_effects o2.o_effects); o_diagnostics = (app o1.o_diagnostics o2.o_diagnostics)}), (p2))
+     (({o_store = o2.o_store; o_effects = (app o1.o_effects o2.o_effects); o_diagnostics = (app o1.o_diagnostics o2.o_diagnostics); o_halted = o2.o_halted}), (p2))
      end))
+     end
      end))
      end))
 
@@ -1546,7 +1605,7 @@ let ui_resolve = (fun ( ax  :  axioms<'v, 'b> ) ( s  :  store<'v> ) ( binding  :
      end))
 
 
-let ui_witness = (fun ( ax  :  axioms<'v, 'b> ) -> {w_view = ui_view; w_lower = (ui_lower ax); w_describe = (describe ax); w_resolve = (ui_resolve ax); w_is_reserved = ax.is_reserved; w_reserved_prefix = ax.reserved_prefix})
+let ui_witness = (fun ( ax  :  axioms<'v, 'b> ) -> {w_view = ui_view; w_lower = (ui_lower ax); w_describe = (describe ax); w_resolve = (ui_resolve ax); w_is_reserved = ax.is_reserved; w_reserved_prefix = ax.reserved_prefix; w_is_true = (fun ( uu___  :  'v ) -> false)})
 
 
 let run = (fun ( ax  :  axioms<'v, 'b> ) ( ar  :  arm<'v, 'p> ) ( node_id  :  Prims.string ) ( a  :  action<'v, 'b, 'k> ) ( s  :  store<'v> ) ( pl  :  'p ) -> (run_action (ui_witness ax) ar node_id a s pl))

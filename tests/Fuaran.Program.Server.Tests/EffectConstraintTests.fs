@@ -289,14 +289,19 @@ let tests =
                     let payload = Fuaran.Core.JObj [ "url", jstr "api.example.com" ]
 
                     Expect.equal
-                        (ServerArgumentPolicy.payloadBytes (ServerEffect.HostCall("fetch", payload, None)))
+                        (ServerArgumentPolicy.payloadBytes UiWitness.ops (ServerEffect.HostCall("fetch", payload, None)))
                         (System.Text.Encoding.UTF8.GetByteCount(ProgramWire.render payload))
                         "the bytes the wire carries, not an in-memory estimate"
 
+                    // Since Phase 1967 an op sequence IS measured: the sum of its
+                    // ops' canonical bytes, through the op witness's own encoder —
+                    // the same bytes the handler's wire form splices in.
+                    let op = TreeOp.RemoveNode(NodeId "call")
+
                     Expect.equal
-                        (ServerArgumentPolicy.payloadBytes (ServerEffect.ApplyOps [ TreeOp.RemoveNode(NodeId "call") ]))
-                        0
-                        "an op sequence is NOT a declarative payload — the module header says so, and this is that limit"
+                        (ServerArgumentPolicy.payloadBytes UiWitness.ops (ServerEffect.ApplyOps [ op; op ]))
+                        (2 * System.Text.Encoding.UTF8.GetByteCount(UiWitness.ops.Stream.Encode op))
+                        "an op sequence is measured as its ops' canonical bytes, summed"
                 } ]
 
           testList
@@ -453,11 +458,71 @@ let tests =
 
           testList
               "the argument surface is derived from the effect, never described"
-              [ test "the arms that name nothing a host registers carry no arguments" {
+              [ test "the op-carrying arms carry what their ops REACH, read through the op witness" {
+                    // Phase 1967: before the op witness could say, these two
+                    // arms carried no arguments at all, and a handler that wrote
+                    // files and pushed a branch was bounded by nothing but the
+                    // word `ApplyOps`. At the UI witness an op's reach is the
+                    // nodes it addresses, under the op's own member names.
                     for effect in
                         [ ServerEffect.ApplyOps [ TreeOp.RemoveNode(NodeId "call") ]
                           ServerEffect.EmitPatch [ TreeOp.RemoveNode(NodeId "call") ] ] do
-                        Expect.isEmpty (ServerArgumentPolicy.arguments effect) (ServerEffect.kind effect)
+                        Expect.equal
+                            (ServerArgumentPolicy.arguments UiWitness.ops effect)
+                            [ "target", "call" ]
+                            (ServerEffect.kind effect)
+
+                    Expect.equal
+                        (ServerArgumentPolicy.arguments
+                            UiWitness.ops
+                            (ServerEffect.ApplyOps
+                                [ TreeOp.MoveNode(NodeId "call", NodeId "root")
+                                  TreeOp.RemoveNode(NodeId "call") ]))
+                        [ "newParentId", "root"; "target", "call"; "target", "call" ]
+                        "every op's reach, in op order, every argument it names"
+
+                    Expect.isEmpty
+                        (ServerArgumentPolicy.arguments UiWitness.ops (ServerEffect.ApplyOps []))
+                        "and an empty sequence reaches nothing"
+                }
+
+                test
+                    "an allow-list on ApplyOps binds the ops' reach, and an off-list op is refused before anything performs" {
+                    // W3, closed: the gate admits `ApplyOps`, the policy binds
+                    // which nodes its ops may address, and an op addressing one
+                    // off the list halts the handler while PLANNING — the tree
+                    // is the entry tree, nothing is performed.
+                    let registry =
+                        permitting (ref [])
+                        |> ServerEffectRegistry.constrain
+                            "ApplyOps"
+                            [ ServerConstraintClause.AllowList("target", [ "call" ]) ]
+
+                    let run (target: string) =
+                        Handler.run
+                            registry
+                            sources
+                            "call"
+                            { Name = "edit"
+                              Stages = [ Effect(ServerEffect.ApplyOps [ TreeOp.RemoveNode(NodeId target) ]) ] }
+                            store
+
+                    let admitted = run "call"
+                    Expect.isTrue admitted.Committed "an in-list target is admitted"
+
+                    let refused = run "root"
+                    Expect.isFalse refused.Committed "an off-list target is refused"
+                    Expect.isEmpty refused.Performed "and nothing was performed"
+
+                    Expect.equal
+                        (failedReason refused)
+                        (Some("ApplyOps", "argument-not-allowed:target"))
+                        "naming the argument"
+
+                    Expect.equal
+                        (Fuaran.UI.OpStream.Abstractions.CanonicalJson.encodeNode refused.Store.Tree)
+                        (Fuaran.UI.OpStream.Abstractions.CanonicalJson.encodeNode store.Tree)
+                        "the tree is the entry tree"
                 }
 
                 test "a host call's non-string members are not named arguments" {
@@ -471,7 +536,7 @@ let tests =
                               "request", Fuaran.Core.JObj [ "url", jstr "nested.example.net" ] ]
 
                     Expect.equal
-                        (ServerArgumentPolicy.arguments (ServerEffect.HostCall("fetch", args, None)))
+                        (ServerArgumentPolicy.arguments UiWitness.ops (ServerEffect.HostCall("fetch", args, None)))
                         [ "url", "api.example.com" ]
                         "a nested value is NOT reachable by an allow-list; the bound belongs on the top-level argument"
                 } ] ]

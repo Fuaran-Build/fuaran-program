@@ -74,6 +74,7 @@ module ServerDemanded =
           Capabilities = []
           Functions = []
           Channels = []
+          Reach = []
           // The replay posture is joined AFTER this walk, by the placement's
           // replay module, and every projection this file produces therefore
           // carries an empty one. The derivation it needs sits above the wire
@@ -121,7 +122,10 @@ module ServerDemanded =
     /// one string literal, which is the 892 discipline applied to a second
     /// vocabulary: a demanded capability and a gated one cannot be two spellings
     /// of an intention, because they are one call to one function.
-    let private ofEffect (effect: ServerEffect<'Op>) : DemandedProjection =
+    let private ofEffect
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (effect: ServerEffect<'Op>)
+        : DemandedProjection =
         let kind = ServerEffect.kind effect
         let capability = ServerEffect.capability effect
 
@@ -165,16 +169,27 @@ module ServerDemanded =
                     Capabilities = [ capability ]
                     Channels = [ { Channel = kind; Name = channel } ] }
 
-        // The remaining two arms name nothing a host must be able to serve
-        // beyond the capability itself: the ops they carry are applied to an
-        // in-memory tree or shipped to whatever client is connected, and neither
-        // is a name anyone registers.
-        | ServerEffect.ApplyOps _
-        | ServerEffect.EmitPatch _ ->
+        // The two op-carrying arms demand the capability AND what their ops
+        // REACH (Phase 1967): every named argument of every op, read through
+        // the argument policy's own extraction — the same `(argument, name)`
+        // pairs an allow-list on this capability binds — so the document and
+        // the enforcement cannot be two enumerations of one reach. Before the
+        // op witness could say, this arm reported the discriminator and
+        // nothing else, and a handler that wrote files and pushed a branch
+        // projected as the word `ApplyOps`.
+        | ServerEffect.ApplyOps ops
+        | ServerEffect.EmitPatch ops ->
             tier
                 { noDemand with
                     Effects = [ kind ]
-                    Capabilities = [ capability ] }
+                    Capabilities = [ capability ]
+                    Reach =
+                        ops
+                        |> List.collect (ServerArgumentPolicy.reachOfOp witness.Op)
+                        |> List.map (fun (argument, name) ->
+                            { Capability = capability
+                              Argument = argument
+                              Name = name }) }
 
     /// What one stage demands.
     let private ofStage
@@ -182,7 +197,7 @@ module ServerDemanded =
         (stage: HandlerStage<'Action, 'Op>)
         : DemandedProjection =
         match stage with
-        | Effect effect -> ofEffect effect
+        | Effect effect -> ofEffect witness effect
         | Compute action ->
             let projection = Demanded.ofAction witness action
 

@@ -311,11 +311,16 @@ type ServerConstraintDefect =
 /// session call out" is a different question from "may it call out THERE".
 ///
 /// ── What an allow-list ranges over ──────────────────────────────────────────
-/// The effect's NAMED arguments, as `arguments` below derives them. Three of the
-/// five arms carry one: a host call's declarative argument object, a
-/// notification's channel, and the by-reference sources a query reads. The other
-/// two carry op sequences, which name nothing anyone registers — the same
-/// reason the demanded projection's walk finds nothing in them.
+/// The effect's NAMED arguments, as `arguments` below derives them. All five
+/// arms carry some: a host call's declarative argument object, a notification's
+/// channel, the by-reference sources a query reads, and — since Phase 1967 —
+/// what the ops of the two op-carrying arms REACH, read through the op
+/// witness's `Reach` (`OpWitness`, §3.5): each op's named arguments, plus its
+/// destination's class under the reserved `destination` argument where the op
+/// names one. Before that member existed an op sequence named nothing a policy
+/// could see, and a handler that wrote files and pushed a branch was bounded
+/// by nothing but the word `ApplyOps`; the second witness found that gap (W3,
+/// W4) and this is where it closes.
 ///
 /// ── What is deliberately NOT claimed ────────────────────────────────────────
 /// A host call's arguments are read ONE LEVEL DEEP: a top-level member whose
@@ -323,14 +328,16 @@ type ServerConstraintDefect =
 /// an array is not. A host whose performer reads a nested member cannot express
 /// an allow-list over it, and will get an admission rather than a refusal — so
 /// the bound belongs on the top-level argument the performer takes, or the
-/// performer belongs behind a narrower registration.
+/// performer belongs behind a narrower registration. An op's arguments are
+/// whatever its witness declares them to be, and a witness that declares none
+/// gets the same admission for the same reason.
 ///
 /// A CEILING bounds the declarative payload a capability carries — a host call's
-/// arguments, a notification's payload. It does not bound an op sequence: those
-/// are not a `JVal` at this point in compile order, measuring them would need
-/// the wire codec that compiles after this file, and a ceiling that silently
-/// meant one thing for three arms and another for two would be worse than one
-/// that says which two it does not cover.
+/// arguments, a notification's payload, and, through the op witness's canonical
+/// encoder, the ops an op-carrying arm carries, measured as the sum of their
+/// encoded bytes. A query's pipeline is still not measured: it is a
+/// host-authored declaration, not a payload, and the sources it reaches are
+/// what the allow-list ranges over.
 module ServerArgumentPolicy =
 
     /// The argument name a query's by-reference sources are allow-listed under.
@@ -342,6 +349,28 @@ module ServerArgumentPolicy =
     /// The argument name a notification's channel is allow-listed under.
     [<Literal>]
     let ChannelArgument = "channel"
+
+    /// The argument name an op's DESTINATION CLASS is allow-listed under
+    /// (Phase 1967): the log-safe description of its `EffectDestination` —
+    /// `local`, a remote's host, a non-network scheme — so a policy can bound
+    /// where an op may reach without knowing how the domain names it.
+    /// Reserved: an op witness that declares an argument of this name itself
+    /// has the two read as one list, and an allow-list must admit both.
+    [<Literal>]
+    let DestinationArgument = "destination"
+
+    /// What one op reaches, as `(argument, value)` pairs: its declared
+    /// arguments, then its destination class where it names one. The one
+    /// place an op's reach is read into the policy's vocabulary, so the
+    /// demanded projection reads it here too rather than deriving its own.
+    let reachOfOp (ops: Fuaran.Program.Bounded.OpWitness<'Node, 'Op>) (op: 'Op) : (string * string) list =
+        let reach = ops.Reach op
+
+        match reach.Destination with
+        | Fuaran.Program.Runtime.EffectDestination.Absent -> reach.Arguments
+        | destination ->
+            reach.Arguments
+            @ [ DestinationArgument, Fuaran.Program.Runtime.EffectDestination.describe destination ]
 
     /// The by-reference source names a data source reads. An embedded table
     /// carries its own rows and asks the host for nothing.
@@ -381,7 +410,10 @@ module ServerArgumentPolicy =
     /// An argument may appear more than once — a query reading three sources
     /// yields three `source` pairs — and an allow-list must admit every one of
     /// them, because a pipeline that reaches one off-list table has reached it.
-    let arguments (effect: ServerEffect<'Op>) : (string * string) list =
+    let arguments
+        (ops: Fuaran.Program.Bounded.OpWitness<'Node, 'Op>)
+        (effect: ServerEffect<'Op>)
+        : (string * string) list =
         match effect with
         | ServerEffect.HostCall(_, args, _) ->
             match args with
@@ -396,23 +428,31 @@ module ServerArgumentPolicy =
         | ServerEffect.RunQuery(_, source, pipeline) ->
             (refsOfSource source @ (pipeline |> List.collect refsOfTransform))
             |> List.map (fun name -> SourceArgument, name)
-        | ServerEffect.ApplyOps _
-        | ServerEffect.EmitPatch _ -> []
+        // Every op's reach, in op order: an arm carrying three writes yields
+        // three `path` pairs, and an allow-list must admit every one of them,
+        // because a sequence that reaches one off-list path has reached it.
+        | ServerEffect.ApplyOps opList
+        | ServerEffect.EmitPatch opList -> opList |> List.collect (reachOfOp ops)
 
     /// The size of the effect's declarative payload, in bytes of its canonical
     /// encoding — the same bytes the wire carries, so a ceiling a deployer reads
     /// bounds the thing they would meet rather than an in-memory estimate of it.
     /// Zero for the arms that carry no such payload; see the module header.
-    let payloadBytes (effect: ServerEffect<'Op>) : int =
+    let payloadBytes (ops: Fuaran.Program.Bounded.OpWitness<'Node, 'Op>) (effect: ServerEffect<'Op>) : int =
         let sizeOf (value: Fuaran.Core.JVal) =
             System.Text.Encoding.UTF8.GetByteCount(Fuaran.Program.Bounded.ProgramWire.render value)
 
         match effect with
         | ServerEffect.HostCall(_, args, _) -> sizeOf args
         | ServerEffect.Notify(_, payload) -> sizeOf payload
-        | ServerEffect.RunQuery _
-        | ServerEffect.ApplyOps _
-        | ServerEffect.EmitPatch _ -> 0
+        // The ops' canonical bytes, summed — the same encoder that splices
+        // them into the handler's wire form (K6), so the ceiling bounds the
+        // bytes a handler document carries rather than an in-memory estimate.
+        | ServerEffect.ApplyOps opList
+        | ServerEffect.EmitPatch opList ->
+            opList
+            |> List.sumBy (fun op -> System.Text.Encoding.UTF8.GetByteCount(ops.Stream.Encode op))
+        | ServerEffect.RunQuery _ -> 0
 
     /// Check one effect's arguments against one declared clause.
     ///
@@ -420,6 +460,7 @@ module ServerArgumentPolicy =
     /// for a deployer and an auditor, and a check that invented a meaning for it
     /// would be enforcing a policy nobody wrote.
     let private checkClause
+        (ops: Fuaran.Program.Bounded.OpWitness<'Node, 'Op>)
         (effect: ServerEffect<'Op>)
         (clause: Fuaran.Program.Bounded.ServerConstraintClause)
         : Result<unit, ServerConstraintDefect> =
@@ -432,14 +473,14 @@ module ServerArgumentPolicy =
             // that wants the argument to be mandatory is asking for a different
             // clause than the one it declared.
             if
-                arguments effect
+                arguments ops effect
                 |> List.forall (fun (name, value) -> name <> argument || List.contains value permitted)
             then
                 Ok()
             else
                 Error(ServerConstraintDefect.OffList argument)
         | Fuaran.Program.Bounded.ServerConstraintClause.Ceiling limit ->
-            if payloadBytes effect <= limit then
+            if payloadBytes ops effect <= limit then
                 Ok()
             else
                 Error(ServerConstraintDefect.OverCeiling limit)
@@ -451,9 +492,13 @@ module ServerArgumentPolicy =
     /// An effect whose capability the registry does not constrain passes — the
     /// list is empty, so the fold is vacuous, and "unconstrained" needs no arm of
     /// its own anywhere in this module.
-    let check (registry: ServerEffectRegistry) (effect: ServerEffect<'Op>) : Result<unit, ServerConstraintDefect> =
+    let check
+        (ops: Fuaran.Program.Bounded.OpWitness<'Node, 'Op>)
+        (registry: ServerEffectRegistry)
+        (effect: ServerEffect<'Op>)
+        : Result<unit, ServerConstraintDefect> =
         ServerEffectRegistry.constraintsFor (ServerEffect.capability effect) registry
-        |> List.fold (fun state clause -> state |> Result.bind (fun () -> checkClause effect clause)) (Ok())
+        |> List.fold (fun state clause -> state |> Result.bind (fun () -> checkClause ops effect clause)) (Ok())
 
     /// The refusal as the outcome document carries it: a closed token naming the
     /// CLAUSE that refused and the host's own declaration, never the value or the
@@ -462,3 +507,37 @@ module ServerArgumentPolicy =
         match defect with
         | ServerConstraintDefect.OffList argument -> "argument-not-allowed:" + argument
         | ServerConstraintDefect.OverCeiling limit -> "payload-over-ceiling:" + string limit
+
+/// How this placement PERFORMS an op (Phase 1967, the second witness's F2).
+///
+/// `ApplyOps` has always applied its ops to the in-memory tree while planning,
+/// and for a placement whose tree IS its state — the UI tier — that apply is
+/// the whole effect. A placement whose ops reach the world (a file written, a
+/// branch pushed) needs the apply to be a PLAN and the world act to come
+/// after, with the same two-phase discipline a host call gets: nothing outside
+/// runs until the plan committed, and a failure part-way is reported as the
+/// prefix that ran. Before this type existed that discipline was the
+/// placement's to build beside Program; now it is Program's, by registration.
+[<RequireQualifiedAccess>]
+type OpPerformance<'Op> =
+    /// The in-memory apply is the whole effect, performed in the plan phase —
+    /// the UI tier's placement, and every placement's default. `Performed`
+    /// carries `ApplyOps` once per effect, at plan time, as it always has.
+    | InMemory
+    /// The in-memory apply is a plan; this performer performs it. Each op of a
+    /// committed plan is STAGED as its own call and performed in the perform
+    /// phase, in plan order, interleaved with the host calls in stage order —
+    /// so `Performed` carries `ApplyOps` once per op PERFORMED, in execution
+    /// order, and a part-way failure reports exactly the ops that ran before it
+    /// (D8's residual, unchanged in shape) under a `PerformFailed` naming the
+    /// capability and the performer's own reason. Trusted code, on the terms a
+    /// host function is: what it does when invoked is the host's.
+    | Performed of ('Op -> Result<unit, string>)
+
+module OpPerformance =
+
+    /// The default: ops are performed by being applied.
+    let inMemory<'Op> : OpPerformance<'Op> = OpPerformance.InMemory
+
+    /// Register an op performer.
+    let performedBy (perform: 'Op -> Result<unit, string>) : OpPerformance<'Op> = OpPerformance.Performed perform

@@ -195,6 +195,40 @@ let tests =
                   "the right-hand side of a set-op reaches the host's resolver, exactly as a Union's does"
           }
 
+          test "the op-carrying arms demand what their ops REACH, and the document carries it (Phase 1967)" {
+              // Before the op witness could say, these two arms demanded the
+              // capability and nothing else. At the UI witness an op's reach is
+              // the nodes it addresses, under the op's own member names — and
+              // the projection moved DELIBERATELY for a handler whose ops name
+              // one: the reach rides a new document member, at version 5.
+              let projection =
+                  ServerDemanded.ofHandler (
+                      handlerOf
+                          [ Effect(ServerEffect.ApplyOps [ TreeOp.RemoveNode(NodeId "spinner") ])
+                            Effect(ServerEffect.EmitPatch [ TreeOp.MoveNode(NodeId "row", NodeId "list") ]) ]
+                  )
+
+              Expect.equal
+                  ((tierOf projection).Reach
+                   |> List.map (fun r -> r.Capability, r.Argument, r.Name))
+                  [ "ApplyOps", "target", "spinner"
+                    "EmitPatch", "newParentId", "list"
+                    "EmitPatch", "target", "row" ]
+                  "every node every op addresses, under the capability it rides"
+
+              Expect.stringContains
+                  (Demanded.encode projection)
+                  "\"reach\":[{\"capability\":\"ApplyOps\",\"argument\":\"target\",\"name\":\"spinner\"},{\"capability\":\"EmitPatch\",\"argument\":\"newParentId\",\"name\":\"list\"},{\"capability\":\"EmitPatch\",\"argument\":\"target\",\"name\":\"row\"}]"
+                  "the document carries the reach beside the channels"
+
+              // The empty sequence reaches nothing, and the key is still
+              // present: "walked, and the ops name nothing" is a different
+              // fact from a producer that predates the member.
+              let none = ServerDemanded.ofHandler (handlerOf [ Effect(ServerEffect.ApplyOps []) ])
+              Expect.isEmpty (tierOf none).Reach "nothing reached"
+              Expect.stringContains (Demanded.encode none) "\"reach\":[]" "present and empty"
+          }
+
           test "a Compute stage demands what the same action demands anywhere else" {
               // One algebra, read at the projection rather than at the
               // interpreter: a stage's action is run by the shared fold, so its

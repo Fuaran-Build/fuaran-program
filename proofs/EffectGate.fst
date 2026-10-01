@@ -323,6 +323,22 @@ let rec admitted_sigma (gate: string -> bool) (sigma: policy_spec) (tr: list str
    The plan phase under Π — what it records is admitted.
    ─────────────────────────────────────────────────────────────────── *)
 
+/// Staging ops under an admitted capability keeps the staged capabilities
+/// admitted: every call `stage_ops` prepends carries that one capability
+/// (Phase 1967).
+let rec stage_ops_admitted (#v: Type0) (#o: Type0) (#p: Type0)
+                           (gate: string -> bool) (cap: string) (stage: o -> (p & v))
+                           (ops: list o) (staged: list (staged_call v p))
+  : Lemma (requires gate cap /\ admitted gate (caps staged))
+          (ensures admitted gate (caps (stage_ops cap stage ops staged)))
+          (decreases ops) =
+  match ops with
+  | [] -> ()
+  | op :: rest ->
+    let (tok, args) = stage op in
+    stage_ops_admitted gate cap stage rest
+      ({ sc_capability = cap; sc_performer = tok; sc_args = args; sc_into = ONone } :: staged)
+
 /// One stage keeps `ac_performed` and the staged capabilities admitted:
 /// `plan_effect` extends either only after `r_gate` answered true.
 let plan_stage_admitted (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
@@ -350,7 +366,10 @@ let plan_stage_admitted (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Typ
           | ApplyOps ops ->
             (match apply_all w ops acc.ac_store.st_tree with
              | RErr _ -> ()
-             | ROk _ -> ())
+             | ROk _ ->
+               (match reg.r_op_perform with
+                | ONone -> ()
+                | OSome stage -> stage_ops_admitted reg.r_gate cap stage ops acc.ac_staged))
           | HostCall fn _ into ->
             (match reg.r_lookup fn with
              | ONone -> ()

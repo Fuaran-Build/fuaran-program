@@ -4,11 +4,21 @@
 /// `Hash.sha256Hex` in the signed envelope's tree hash, on the assumption that
 /// the two are byte-identical (SHA-256 over the UTF-8 bytes, lowercase hex).
 /// The falsifier the design note names is an envelope signed before the cut
-/// that fails to verify after it. This is one: signed by the pre-cut code, its
-/// bytes and public key committed verbatim below, and verified here by the
-/// post-cut code. If the hash — or the canonical encoding, or the projection's
-/// bytes — ever drifts, the recomputed preimage stops matching the signature
-/// and this goes red.
+/// that fails to verify after it. The TREE HASH half of that pin is the first
+/// test below, and it is the pre-cut value, byte for byte, still.
+///
+/// The SIGNATURE half was re-pinned by Phase 1967, and the reason is a fact
+/// about the design worth having written down: a signed envelope is verified
+/// by RECOMPUTATION, so its signature is bound to the demanded document's
+/// version as well as to the tree, and when the document moved to version 5
+/// (the op reach) every envelope signed under version 4 — this one included —
+/// began reporting `Unreadable` drift naming the version, which is the honest
+/// refusal the versioning exists to give. The envelope below was therefore
+/// signed afresh by the 0.7.0 code over the SAME tree, with a new key whose
+/// private half was never kept, and the test keeps doing the job the pin was
+/// for: if the hash, the canonical encoding, the projection's bytes or the
+/// preimage ever drift again, the recomputed preimage stops matching and this
+/// goes red — until the next deliberate version move re-pins it, stated here.
 module Fuaran.Program.Bounded.Tests.PreCutEnvelopeTests
 
 open System
@@ -38,21 +48,22 @@ let private tree: Node<obj> =
 let private PreCutTreeHash =
     "sha256:2d221262c858f3488cb0a61e17e3e5472fc17399fb057c2332c0f42a9a16a542"
 
-/// The signer's PUBLIC key (SubjectPublicKeyInfo, P-256), as the pre-cut run
-/// exported it. The private half was never kept.
+/// The signer's PUBLIC key (SubjectPublicKeyInfo, P-256), as the Phase-1967
+/// re-pin exported it. The private half was never kept.
 [<Literal>]
 let private PublicKey =
-    "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEH0cqPzYIBq+fM2NQLININQJQjOs4ySYsP2a0KZmJWF01lm3bsUa202ktuXRASwAOhLGswHWBb7jfcSr1z/qAaA=="
+    "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAENPjonVgsL6lqAZIb6E/ZSGL+BCzKpDhFurQfkXQqViNxHaPkNMDkIKl4QfvfF0cB3VyH3IxClJekAhClYzHzBA=="
 
-/// The signed envelope the pre-cut code produced, byte for byte.
+/// The signed envelope, byte for byte: the pre-cut tree hash, the version-5
+/// demanded document, and the Phase-1967 signature over the two.
 [<Literal>]
 let private PreCutEnvelope =
-    """{"kind":"signed-demanded","version":1,"treeHash":"sha256:2d221262c858f3488cb0a61e17e3e5472fc17399fb057c2332c0f42a9a16a542","envelope":"{\"kind\":\"demanded\",\"version\":4,\"effects\":[\"Navigate\"],\"hostCalls\":[],\"stateNamespaces\":[],\"opaqueHandlers\":[],\"server\":null}","keyId":"k7-pre-cut","signature":"RikaGRTXMcrjUOp1p4ZLuH5/kNg807fOwks8xOlUDLs2t5k0UwKfWSB0vepCHZqXxPlb4qVh4NmHcF7E/mfO6Q=="}"""
+    """{"kind":"signed-demanded","version":1,"treeHash":"sha256:2d221262c858f3488cb0a61e17e3e5472fc17399fb057c2332c0f42a9a16a542","envelope":"{\"kind\":\"demanded\",\"version\":5,\"effects\":[\"Navigate\"],\"hostCalls\":[],\"stateNamespaces\":[],\"opaqueHandlers\":[],\"server\":null}","keyId":"k7-1967","signature":"tjDun2+/ZT7sKbTMKXhucK3WT1Noy4tYBAJNQRl1hJr1yAGXJnBhPU7qDzbSpaP+nmYG1jsw6fc+h7pPKHFFMQ=="}"""
 
 let private publicEntry () : KeyDirectoryEntry =
     let key = ECDsa.Create()
     key.ImportSubjectPublicKeyInfo(Convert.FromBase64String PublicKey) |> ignore
-    EcdsaP256.keyEntry "k7-pre-cut" key
+    EcdsaP256.keyEntry "k7-1967" key
 
 [<Tests>]
 let tests =
@@ -62,7 +73,7 @@ let tests =
               Expect.equal (SignedEnvelope.treeHash tree) PreCutTreeHash "the content address is unchanged"
           }
 
-          test "the pre-cut signed envelope verifies under the post-cut code" {
+          test "the pinned signed envelope verifies under the current code" {
               let signed =
                   match SignedEnvelope.decode PreCutEnvelope with
                   | Ok signed -> signed
@@ -73,7 +84,7 @@ let tests =
                   |> Async.RunSynchronously
               with
               | Ok verified -> Expect.equal verified.TreeHash PreCutTreeHash "verified over the same content address"
-              | Error refusal -> failtestf "the pre-cut envelope no longer verifies: %A" refusal
+              | Error refusal -> failtestf "the pinned envelope no longer verifies: %A" refusal
           }
 
           test "and the check bites: a one-byte edit to the tree is refused" {

@@ -33,6 +33,18 @@
 /// return the same outcome — that host is the only thing that says this
 /// model is about the code that ships.
 ///
+/// Since Phase 1967 the staged list may hold OPS as well as host calls:
+/// a placement that registers an op performer (`r_op_perform`,
+/// `OpPerformance.Performed` in F#) makes `ApplyOps` a staged arm, its
+/// ops applied in memory while planning and performed one staged call
+/// per op in plan order. Nothing in the perform phase changed for it —
+/// an op's staged call is a staged call with no landing slot — which is
+/// why every theorem below is stated over the staged list as before and
+/// re-proves unchanged; `plan_pure` gained the one clause that matters,
+/// that the plan phase reads only WHETHER an op performer is registered
+/// and what it stages, never what it answers. Without one (`ONone`, the
+/// UI tier) the arm is exactly what it was.
+///
 /// DECISIONS.md D8 states the law in prose: nothing external runs in the
 /// plan phase; an uncommitted outcome equals the entry state EXCEPT that
 /// `Performed` names exactly the prefix of staged host calls that ran;
@@ -231,6 +243,20 @@ noeq type registry (v: Type0) (o: Type0) (q: Type0) (p: Type0) = {
   r_lookup: string -> opt p;
   /// The performer itself: what `HostFunctions.[fn] args` answers.
   r_perf: p -> v -> res v;
+  /// The OP performer (Phase 1967, the second witness's F2):
+  /// `OpPerformance.InMemory` is `ONone` — the in-memory apply is the
+  /// whole effect, the UI tier's placement — and `OpPerformance.Performed
+  /// perform` is `OSome`, answering for each op the TOKEN the perform
+  /// phase will apply and the ARGUMENT it will be applied to. In
+  /// production the token is the closure `fun _ -> perform op` and the
+  /// argument is inert; what matters here is the split: the plan phase
+  /// reads only whether a performer is registered and what it stages,
+  /// never what it answers, so `plan_pure` still holds with `r_perf`
+  /// replaced. A registered op performer makes `ApplyOps` a STAGED arm:
+  /// its ops are applied in memory while planning, as always, and
+  /// performed in the perform phase, one staged call per op in plan
+  /// order, exactly as host calls are.
+  r_op_perform: opt (o -> (p & v));
 }
 
 (* ───────────────────────────────────────────────────────────────────
@@ -309,6 +335,23 @@ let reserved_slot (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#
   | OSome key -> w.w_is_reserved key
   | ONone -> false
 
+/// F#: the `List.fold` in `Handler.runEffect`'s `ApplyOps` arm that
+/// STAGES each op under a registered op performer (Phase 1967): one
+/// staged call per op, carrying the arm's capability, the token and
+/// argument the performer answered for the op, and no landing slot —
+/// an op lands nothing. Prepended in op order onto the reversed staged
+/// list, exactly as a host call is, so the perform phase meets them in
+/// plan order.
+let rec stage_ops (#v: Type0) (#o: Type0) (#p: Type0)
+                  (cap: string) (stage: o -> (p & v)) (ops: list o) (staged: list (staged_call v p))
+  : Tot (list (staged_call v p)) (decreases ops) =
+  match ops with
+  | [] -> staged
+  | op :: rest ->
+    let (tok, args) = stage op in
+    stage_ops cap stage rest
+      ({ sc_capability = cap; sc_performer = tok; sc_args = args; sc_into = ONone } :: staged)
+
 (* ───────────────────────────────────────────────────────────────────
    THE PLAN PHASE — `Handler.runEffect`, `Handler.runStage`, and the
    `List.fold` in `Handler.run` that skips every stage after a halt.
@@ -341,7 +384,19 @@ let plan_effect (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a:
          (match apply_all w ops performed.ac_store.st_tree with
           | RErr code -> halt cap code acc
           | ROk tree ->
-            { performed with ac_store = { performed.ac_store with st_tree = tree } })
+            (match reg.r_op_perform with
+             // In memory: the apply IS the effect, and it is performed
+             // here, in the plan phase — the shape every placement had
+             // before Phase 1967, and the UI tier's still.
+             | ONone -> { performed with ac_store = { performed.ac_store with st_tree = tree } }
+             // Performed: the apply is a PLAN. The tree moves — a later
+             // stage reads the planned tree — but the capability is not
+             // recorded as performed; the staged calls are, one per op,
+             // when the perform phase runs them.
+             | OSome stage ->
+               { acc with
+                 ac_store = { acc.ac_store with st_tree = tree };
+                 ac_staged = stage_ops cap stage ops acc.ac_staged }))
        | HostCall fn args into ->
          (match reg.r_lookup fn with
           | ONone -> deny (Unregistered cap) acc
@@ -620,7 +675,10 @@ let plan_stage_pure (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) 
           | ApplyOps ops ->
             (match apply_all w ops acc.ac_store.st_tree with
              | RErr _ -> ()
-             | ROk _ -> ())
+             | ROk _ ->
+               (match reg.r_op_perform with
+                | ONone -> ()
+                | OSome _ -> ()))
           | HostCall fn _ into ->
             (match reg.r_lookup fn with
              | ONone -> ()

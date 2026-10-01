@@ -17,13 +17,16 @@ type ToyExpr =
     | Fail of message: string
     | Missing
 
-/// The toy's action vocabulary. `Seq`, `Put` and `Ring` are its control
-/// structure; `Beep` and `Hush` are its domain acts. `Ring`'s `onAnswer` is a
-/// CLOSURE — the core must never invoke it.
+/// The toy's action vocabulary. `Seq`, `Put`, `Ring` and `Need` are its
+/// control structure; `Beep` and `Hush` are its domain acts. `Ring`'s
+/// `onAnswer` is a CLOSURE — the core must never invoke it. `Need` is the
+/// halting guard (Phase 1967): its condition resolves against the store, and a
+/// guard that does not hold halts the enclosing sequence.
 type ToyAction =
     | Seq of ToyAction list
     | Put of key: string * value: JVal option * from: ToyExpr option
     | Ring of endpoint: string * targeted: bool * onAnswer: (unit -> unit)
+    | Need of condition: ToyExpr
     | Beep of volume: int
     | Hush
 
@@ -75,13 +78,15 @@ let lowerWith (lookup: string -> JVal option) (nodeId: string) (action: ToyActio
     | Hush -> LeafOutcome.Decline
     | Seq _
     | Put _
-    | Ring _ -> LeafOutcome.Decline
+    | Ring _
+    | Need _ -> LeafOutcome.Decline
 
 let describe (action: ToyAction) : string =
     match action with
     | Seq _ -> "Seq"
     | Put(key, _, _) -> sprintf "Put(%s)" key
     | Ring(endpoint, _, _) -> sprintf "Ring(%s)" endpoint
+    | Need _ -> "Need"
     | Beep volume -> sprintf "Beep(%d)" volume
     | Hush -> "Hush"
 
@@ -90,6 +95,7 @@ let view (action: ToyAction) : ActionView<ToyAction, ToyExpr> =
     | Seq actions -> ActionView.Sequence actions
     | Put(key, value, from) -> ActionView.Assign(key, value, from)
     | Ring(endpoint, targeted, _) -> ActionView.Call(endpoint, targeted)
+    | Need condition -> ActionView.Require condition
     | Beep _ ->
         ActionView.Leaf
             { EffectKinds = [ "Sound" ]
@@ -104,6 +110,7 @@ let rec private encodeAction (action: ToyAction) : JVal =
     | Seq actions -> Canon.typed "Seq" [ "ops", JArr(actions |> List.map encodeAction) ]
     | Put(key, _, _) -> Canon.typed "Put" [ "key", JStr key ]
     | Ring(endpoint, targeted, _) -> Canon.typed "Ring" [ "endpoint", JStr endpoint; "targeted", JBool targeted ]
+    | Need _ -> Canon.typed "Need" []
     | Beep volume -> Canon.typed "Beep" [ "volume", JInt volume ]
     | Hush -> Canon.typed "Hush" []
 
@@ -182,7 +189,13 @@ let witness: ProgramWitness<ToyNode, ToyAction, ToyExpr, ToyStore, ToyOp, ToyEff
           AbsoluteTarget =
             fun op ->
                 match op with
-                | Relabel(id, _) -> Some id }
+                | Relabel(id, _) -> Some id
+          Reach =
+            fun op ->
+                match op with
+                | Relabel(id, _) ->
+                    { Arguments = [ "target", id ]
+                      Destination = EffectDestination.Absent } }
       Effect =
         { Kind = fun _ -> "Sound"
           Destination = fun _ -> EffectDestination.Absent

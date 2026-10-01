@@ -19,7 +19,7 @@ let private run (action: ToyAction) (store: ToyStore) =
 let tests =
     testList
         "the generic core at a non-UI witness"
-        [ test "the four shapes fold at the toy's own types" {
+        [ test "the view shapes fold at the toy's own types" {
               let action =
                   Seq
                       [ Put("a", Some(JStr "literal"), None)
@@ -188,4 +188,68 @@ let tests =
                   outcome.Store.Tree.Label
                   (Const(JStr "renamed"))
                   "the op stage applied through the op witness"
+          }
+
+          test "a guard that does not hold HALTS the sequence; a leaf's refusal does not (Phase 1967)" {
+              // The fifth shape. A false guard stops everything after it and
+              // the outcome says so; a refused leaf is a diagnostic the
+              // sequence carries on past, exactly as before.
+              let halting =
+                  run
+                      (Seq
+                          [ Put("before", Some(JStr "1"), None)
+                            Beep 11
+                            Need(Const(JBool false))
+                            Put("after", Some(JStr "2"), None)
+                            Beep 2 ])
+                      Map.empty
+
+              Expect.isTrue halting.Halted "the guard halted the fold"
+
+              Expect.equal
+                  (halting.Store |> Map.toList)
+                  [ "before", JStr "1" ]
+                  "the write before the guard stands; the one after never ran"
+
+              Expect.isEmpty halting.Effects "nothing after the guard emitted"
+
+              Expect.equal
+                  halting.Diagnostics
+                  [ BoundedDiagnostic.Refused("n1", "Beep(11)", "volume 11 is above the ceiling")
+                    BoundedDiagnostic.Refused("n1", "Need", "the guard did not hold") ]
+                  "the leaf's refusal did not halt; the guard's did, and it is the last word"
+
+              let holding = run (Seq [ Need(Const(JBool true)); Beep 2 ]) Map.empty
+              Expect.isFalse holding.Halted "a guard that holds changes nothing"
+              Expect.equal holding.Effects [ Sound("n1", 2) ] "and the sequence runs on"
+
+              // The three ways a guard halts, and what each says.
+              let reasonOf (condition: ToyExpr) =
+                  match (run (Need condition) Map.empty).Diagnostics with
+                  | [ BoundedDiagnostic.Refused(_, _, reason) ] -> reason
+                  | other -> failwithf "expected one refusal, got %A" other
+
+              Expect.equal (reasonOf (Const(JStr "yes"))) "the guard did not hold" "a non-boolean does not hold"
+              Expect.equal (reasonOf Missing) "the guard did not resolve to a value" "an unresolved condition"
+
+              Expect.equal
+                  (reasonOf (Fail "bundle 'x' is ambiguous"))
+                  "bundle 'x' is ambiguous"
+                  "an errored one carries the domain's own text"
+
+              // The static walks read the guard: it costs one step, reads what
+              // its condition reads, and is undecidable on replay.
+              let guarded = Seq [ Need(Read "args.note"); Beep 1 ]
+              Expect.equal (Budget.actionCascadeCost witness guarded) 2 "a guard is one step"
+
+              Expect.equal
+                  ((Demanded.ofAction witness guarded).StateNamespaces
+                   |> List.map (fun n -> n.Namespace, n.Written, n.Read))
+                  [ "args", false, true ]
+                  "a guard reads its condition's namespace and writes nothing"
+
+              Expect.equal
+                  (ProgramWire.replayDefectsOfAction witness guarded)
+                  [ ReplayDefect.UndecidableAction ]
+                  "a guard re-run against a moved store is undecidable"
           } ]

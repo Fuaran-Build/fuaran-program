@@ -495,7 +495,31 @@ let ops: OpWitness<Node<obj>, TreeOp<obj>> =
         fun op ->
             match Json.parse (Fuaran.UI.OpStream.Abstractions.CanonicalJson.encodeOp op) with
             | Ok encoded -> ProgramWire.tryString "target" encoded
-            | Error _ -> None }
+            | Error _ -> None
+      // What a tree op REACHES (Phase 1967): the nodes it addresses, under
+      // the op's own member names — `target`, and the parent an insert,
+      // move or reorder names. Read off the canonical encoding, the declared
+      // form, exactly as `AbsoluteTarget` is. Deliberately NOT every string
+      // member: a prop path, a binding slot and a prop value are what the op
+      // WRITES, not what it reaches, and a reach the document carries must
+      // never be a payload. No destination: a tree op reaches the tree the
+      // host holds and nothing beyond it.
+      Reach =
+        fun op ->
+            let addressing = [ "target"; "parentId"; "newParentId" ]
+
+            { Arguments =
+                match Json.parse (Fuaran.UI.OpStream.Abstractions.CanonicalJson.encodeOp op) with
+                // In the canonical encoding's own member order, so the reach
+                // reads as the declared form does.
+                | Ok(JObj members) ->
+                    members
+                    |> List.choose (fun (name, value) ->
+                        match value with
+                        | JStr id when List.contains name addressing -> Some(name, id)
+                        | _ -> None)
+                | _ -> []
+              Destination = EffectDestination.Absent } }
 
 // ─── the effect witness ─────────────────────────────────────────────────────
 

@@ -87,6 +87,7 @@ let private serverTier: ServerDemand =
         [ { Channel = "Notify"; Name = "ops" }
           { Channel = "RunQuery"
             Name = "orders" } ]
+      Reach = []
       Replay = []
       Constraints = [] }
 
@@ -97,6 +98,7 @@ let private emptyTier: ServerDemand =
       Capabilities = []
       Functions = []
       Channels = []
+      Reach = []
       Replay = []
       Constraints = [] }
 
@@ -119,9 +121,27 @@ let private postures: ReplayPosture list =
           [ { Stage = 1
               Defect = "opaque-host-call" } ] } ]
 
-/// The five documents the round trip is claimed over.
+/// What a verb's ops reach — a path, a remote, and the destination class the
+/// op witness put the remote under — already in canonical order (Phase 1967).
+let private reach: OpReachDemand list =
+    [ { Capability = "ApplyOps"
+        Argument = "destination"
+        Name = "origin" }
+      { Capability = "ApplyOps"
+        Argument = "path"
+        Name = "notes/x.md" }
+      { Capability = "ApplyOps"
+        Argument = "target"
+        Name = "origin" }
+      { Capability = "EmitPatch"
+        Argument = "target"
+        Name = "spinner" } ]
+
+/// The six documents the round trip is claimed over.
 let private corpus: (string * DemandedProjection) list =
     [ "the empty projection", Demanded.empty
+      "a server tier carrying op reach",
+      Demanded.withServer { serverTier with Reach = reach } (Demanded.ofTree richTree)
       "a client tier only", Demanded.ofTree richTree
       "a server tier that walked and found nothing", Demanded.withServer emptyTier (Demanded.ofTree richTree)
       "a server tier with functions, channels and capabilities",
@@ -342,12 +362,12 @@ let private behaviour: Test list =
 
       test "a missing member is refused, naming the member and the version" {
           let dropped =
-              """{"kind":"demanded","version":4,"effects":[],"hostCalls":[],"stateNamespaces":[],"server":null}"""
+              """{"kind":"demanded","version":5,"effects":[],"hostCalls":[],"stateNamespaces":[],"server":null}"""
 
           let missing = refusal dropped
           Expect.equal missing.Defect DemandedDefect.MissingMember "absent, not defaulted"
           Expect.equal missing.Field "opaqueHandlers" "the member is named"
-          Expect.equal missing.Version (Some 4) "and the version it is required by"
+          Expect.equal missing.Version (Some Demanded.Version) "and the version it is required by"
       }
 
       test "a member this version does not declare is refused" {
@@ -389,7 +409,7 @@ let private behaviour: Test list =
           // version, and reading it as 'no walk ran' would silently accept a
           // shape this version does not describe.
           let noServer =
-              """{"kind":"demanded","version":4,"effects":[],"hostCalls":[],"stateNamespaces":[],"opaqueHandlers":[]}"""
+              """{"kind":"demanded","version":5,"effects":[],"hostCalls":[],"stateNamespaces":[],"opaqueHandlers":[]}"""
 
           let failure = refusal noServer
           Expect.equal failure.Defect DemandedDefect.MissingMember "absent is not null"
@@ -441,14 +461,14 @@ let private behaviour: Test list =
           // defect and hand back a value that no longer re-encodes to the bytes
           // it came from.
           let unsorted =
-              """{"kind":"demanded","version":4,"effects":["WriteToClipboard","Navigate"],"hostCalls":[],"stateNamespaces":[],"opaqueHandlers":[],"server":null}"""
+              """{"kind":"demanded","version":5,"effects":["WriteToClipboard","Navigate"],"hostCalls":[],"stateNamespaces":[],"opaqueHandlers":[],"server":null}"""
 
           let failure = refusal unsorted
           Expect.equal failure.Defect DemandedDefect.NotCanonical "not sorted"
           Expect.equal failure.Field "effects" "named"
 
           let duplicated =
-              """{"kind":"demanded","version":4,"effects":[],"hostCalls":[],"stateNamespaces":[{"namespace":"cart","written":true,"read":false},{"namespace":"cart","written":false,"read":true}],"opaqueHandlers":[],"server":null}"""
+              """{"kind":"demanded","version":5,"effects":[],"hostCalls":[],"stateNamespaces":[{"namespace":"cart","written":true,"read":false},{"namespace":"cart","written":false,"read":true}],"opaqueHandlers":[],"server":null}"""
 
           Expect.equal
               (refusal duplicated).Field
@@ -458,7 +478,7 @@ let private behaviour: Test list =
 
       test "a non-canonical SERVER list is refused too" {
           let unsorted =
-              """{"kind":"demanded","version":4,"effects":[],"hostCalls":[],"stateNamespaces":[],"opaqueHandlers":[],"server":{"effects":["Notify","ApplyOps"],"capabilities":[],"functions":[],"channels":[],"replay":[],"constraints":[]}}"""
+              """{"kind":"demanded","version":5,"effects":[],"hostCalls":[],"stateNamespaces":[],"opaqueHandlers":[],"server":{"effects":["Notify","ApplyOps"],"capabilities":[],"functions":[],"channels":[],"reach":[],"replay":[],"constraints":[]}}"""
 
           let failure = refusal unsorted
           Expect.equal failure.Defect DemandedDefect.NotCanonical "the tier's lists carry the same promise"

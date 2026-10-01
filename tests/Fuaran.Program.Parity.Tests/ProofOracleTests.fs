@@ -268,6 +268,8 @@ let private divergence (where: string) (prod: BoundedOutcome) (model: BoundedFol
         Some(sprintf "%s: EFFECTS\n  production: %A\n  oracle:     %A" where prod.Effects modelEffects)
     elif prod.Diagnostics <> modelDiagnostics then
         Some(sprintf "%s: DIAGNOSTICS\n  production: %A\n  oracle:     %A" where prod.Diagnostics modelDiagnostics)
+    elif prod.Halted <> model.o_halted then
+        Some(sprintf "%s: HALTED\n  production: %b\n  oracle:     %b" where prod.Halted model.o_halted)
     else
         None
 
@@ -489,7 +491,8 @@ let private closureInvoking: Fold =
                 { s with
                     State = Map.add "invoked" (Unchecked.nonNull produced) s.State }
               Effects = []
-              Diagnostics = [] },
+              Diagnostics = []
+              Halted = false },
             placement
         | _ -> BoundedActions.runBoundedActionWith arm nodeId action s placement
 
@@ -530,6 +533,7 @@ let rec private toyModelView (a: ToyAction) : BoundedFold.action_view<ToyAction,
     | ActionView.Sequence items -> BoundedFold.VSequence(a, items |> List.map toyModelView)
     | ActionView.Assign(key, value, from) -> BoundedFold.VAssign(a, key, modelOpt value, modelOpt from)
     | ActionView.Call(endpoint, declaresTarget) -> BoundedFold.VCall(a, endpoint, declaresTarget)
+    | ActionView.Require condition -> BoundedFold.VRequire(a, condition)
     | ActionView.Leaf _ -> BoundedFold.VLeaf a
 
 let private toyModelWitness: BoundedFold.witness<ToyAction, ToyExpr, Fuaran.Core.JVal, ToyEffect> =
@@ -548,7 +552,10 @@ let private toyModelWitness: BoundedFold.witness<ToyAction, ToyExpr, Fuaran.Core
             | ExprResolution.NotResolved -> BoundedFold.NotResolved
             | ExprResolution.Errored message -> BoundedFold.Errored message
       w_is_reserved = toyWitness.Store.IsReserved
-      w_reserved_prefix = toyWitness.Store.ReservedPrefix }
+      w_reserved_prefix = toyWitness.Store.ReservedPrefix
+      // The core's own `jv = JBool true`, an arrow here because the model's
+      // value type is abstract — see the model's `w_is_true`.
+      w_is_true = fun jv -> jv = JBool true }
 
 let private toyNoCall = fun () -> failwith "a carried closure was invoked"
 
@@ -577,7 +584,21 @@ let private toyCorpus: (string * ToyAction) list =
             Seq [ Beep 2; Put("f", None, Some(Read "b")) ]
             Ring("/answer", false, toyNoCall)
             Put("g", None, Some(Read "answered"))
-            Seq [] ] ]
+            Seq [] ]
+      // The halting guard (Phase 1967): one that holds, one that is false,
+      // one that is not a boolean, one unresolved, one errored — and each
+      // halting one inside a sequence, so the short-circuit is compared too.
+      "guard holds", Need(Const(JBool true))
+      "guard false", Seq [ Need(Const(JBool false)); Put("never", Some(JStr "no"), None) ]
+      "guard non-boolean", Seq [ Need(Const(JStr "yes")); Beep 1 ]
+      "guard unresolved",
+      Seq
+          [ Put("h", Some(JStr "before"), None)
+            Need Missing
+            Put("i", Some(JStr "after"), None) ]
+      "guard errored", Seq [ Need(Fail "typed refusal"); Ring("/answer", false, toyNoCall) ]
+      "guard reads the store", Seq [ Put("ok", Some(JBool true), None); Need(Read "ok"); Beep 3 ]
+      "nested halt stops the outer sequence", Seq [ Seq [ Beep 1; Need(Const(JBool false)) ]; Beep 2 ] ]
 
 /// A placement that answers `/answer` — writing the store, emitting an effect,
 /// reporting a diagnostic and counting — and declines everything else.
@@ -632,6 +653,7 @@ let private toyDivergences
                     prodState <> modelState
                     || prod.Effects <> model.o_effects
                     || prodDiagnostics <> model.o_diagnostics
+                    || prod.Halted <> model.o_halted
                     || prodCount' <> modelCount'
                 then
                     found
@@ -664,11 +686,19 @@ let private genericTests =
                       | ActionView.Sequence _ -> "Sequence"
                       | ActionView.Assign _ -> "Assign"
                       | ActionView.Call _ -> "Call"
+                      | ActionView.Require _ -> "Require"
                       | ActionView.Leaf _ -> "Leaf")
                   |> Set.ofList
 
-              Expect.equal shapes (Set.ofList [ "Sequence"; "Assign"; "Call"; "Leaf" ]) "all four shapes"
-              Expect.isGreaterThanOrEqual (List.length toyCorpus) 14 "the corpus is the one declared above"
+              Expect.equal shapes (Set.ofList [ "Sequence"; "Assign"; "Call"; "Require"; "Leaf" ]) "all five shapes"
+              Expect.isGreaterThanOrEqual (List.length toyCorpus) 21 "the corpus is the one declared above"
+
+              let halting =
+                  toyCorpus
+                  |> List.filter (fun (_, a) ->
+                      (BoundedActions.runInert toyWitness "n1" a (Map.ofList [ "ok", JBool true ])).Halted)
+
+              Expect.isGreaterThanOrEqual (List.length halting) 5 "the corpus halts, at the top and inside a sequence"
           }
 
           test "the extracted generic fold agrees with the ported core at the toy witness" {

@@ -216,6 +216,7 @@ module SignedEnvelope =
           Capabilities = except a.Capabilities b.Capabilities
           Functions = except a.Functions b.Functions
           Channels = except a.Channels b.Channels
+          Reach = except a.Reach b.Reach
           Replay = except a.Replay b.Replay
           // Whole clause-set per capability, never clause by clause: a host that
           // RELAXED a bound and a host that never declared one are both "this

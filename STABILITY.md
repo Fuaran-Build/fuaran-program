@@ -19,7 +19,85 @@ records, per version slot, what a consumer pays to adopt it and why.
 This document starts at `0.6.0`. The slots before it are recorded where they were cut, in the
 comments beside `<Version>` in `Directory.Build.props`, and are not restated here.
 
-## 0.6.0 — DRAFT (untagged, unreleased) — the core becomes domain-generic (Phase 1896)
+## 0.7.0 — DRAFT (untagged, unreleased) — what the second witness found (Phase 1967)
+
+**Class: breaking**, for `Fuaran.Program.Bounded` and `Fuaran.Program.Server`, and for every
+consumer that constructs a witness. `v0.6.0` is tagged, so this cannot ride it.
+
+A second domain instantiated the generic tier: a handler that is a store-mutating VERB — read a
+store, write and delete files, publish to a named target — run under the unmodified 0.6.0 fold with
+its effects as the `'Op` of `ApplyOps`. It ran correctly and found four things it had to build beside
+Program rather than get from it. `DECISIONS.md` D19 records what was decided about each; this entry
+records what a consumer pays.
+
+### What broke
+
+- **The action view has a fifth shape.** `ActionView<'Action, 'Expr>` gains `Require of condition:
+  'Expr`, the HALTING guard: the condition resolves against the store, the boolean `true` holds and
+  changes nothing, and anything else halts the enclosing sequence with a refusal diagnostic. Every
+  exhaustive `match` over the view in a consumer stops compiling until it names the shape; a witness's
+  `View` need not produce it (the UI witness does not). A leaf's `Refuse` is unchanged and still does
+  not halt.
+- **`BoundedOutcome` gains `Halted: bool`.** Every full-literal construction of the outcome (FS0764)
+  needs the member; `false` on every outcome the UI tier produces. `HandlerAnswer` is unchanged — an
+  answered call never halts.
+- **`OpWitness` gains `Reach: 'Op -> OpReach`** — the op's named arguments and its destination
+  class — so every full-literal witness construction needs the member (FS0764). `OpReach.nothing` is
+  the honest answer for an op that names nothing a policy can bound. The UI adapter's witness fills it
+  with the nodes a tree op addresses.
+- **The demanded document moves to version 5.** The server tier carries a `reach` member — present
+  on every tier, `[]` where the reachable ops name nothing — and the reader reads version 5 ONLY, on
+  the argument every earlier bump made. **Every signed envelope under version 4 reports `Unreadable`
+  drift under this reader**, naming the version: verification is by recomputation, so a signature is
+  bound to the document version as well as to the tree. Re-sign. (This repository's own K7 pin was
+  re-signed; its tree-hash half is unchanged, byte for byte.)
+- **`ServerArgumentPolicy.arguments` / `payloadBytes` / `check` take the op witness** as their first
+  argument, because an op sequence now HAS arguments (its ops' reach) and a size (its ops' canonical
+  bytes). An `AllowList` or a `Ceiling` declared on `ApplyOps` or `EmitPatch` binds, where before it
+  passed vacuously. `DestinationArgument` (`"destination"`) is a reserved argument name: an op's
+  destination class is allow-listed under it.
+- **`Handler.run` keeps its signature; `Handler.runWith` sits beside it** and takes how the placement
+  performs an op (`OpPerformance<'Op>`: `InMemory`, or `Performed of ('Op -> Result<unit, string>)`).
+  `ServerServices` gains an `OpPerformance` member (`create` leaves it in memory) and the session's
+  arm calls `runWith` with it. Under a registered op performer `ApplyOps` is a STAGED arm: its ops are
+  applied in memory while planning and performed after the plan commits, one staged call per op in
+  plan order beside the host calls; `Performed` names `ApplyOps` once per op PERFORMED, and a
+  part-way failure is a `PerformFailed` under that capability with the prefix that ran reported. The
+  durable interpreter runs in memory and does not journal a performed op; that is stated, not
+  covered.
+- **`ServerDemand` gains `Reach: OpReachDemand list`** (FS0764 on full-literal tiers), and
+  `ServerDemanded.ofEffect` reads the witness.
+
+### What did NOT change
+
+- **The program wire.** No schema, no fixture byte and no rule of the program wire specification
+  moved; the codec families and the `driver-semantics` scenarios pass byte for byte. The guard is a
+  shape of the action algebra, which the specification references and does not spell. The one
+  sentence of its §6.2 that a registered op performer reads past — "only `HostCall` is staged" —
+  describes the in-memory placement every conformant host had and every UI host still has; carrying
+  the performer case into the normative text is a specification act, deliberately not taken here
+  (`docs/generic-tier.md` §6).
+- **What a UI-tree program does.** Nothing at the UI witness halts (`ui_never_halts`, proved) and the
+  UI adapter's ops are performed in memory, so every existing test asserts what it asserted. The UI
+  demanded document moved for exactly one class of handler — one whose ops address a node — and
+  moved deliberately: the reach rides the new member, at the new version.
+- **The proofs.** `BoundedFold.fst` was restated over five shapes and re-proved BEFORE the port
+  (D14): the four theorems keep their names and statements, the sequence homomorphism gains a halting
+  clause that `fold_no_require_no_halt` makes vacuous for every view without a guard, and the UI
+  corollaries are unconditional as before. `Staging.fst` models the op performer and re-proves every
+  theorem over the same staged list.
+
+### What a consumer does about it
+
+- A consumer of UI trees takes the adapter as before; its signed envelopes are re-signed.
+- A consumer with its own domain adds `Reach` to its op witness — `OpReach.nothing` is legal — names
+  `ActionView.Require` in every match over the view (producing it is optional), and, if its ops reach
+  the world, registers an `OpPerformance.Performed` and calls `Handler.runWith`. Its guards are
+  expressions resolved against the state channel (K4); what a guard needs to read lives there.
+
+The slot stays a DRAFT: tagging `v0.7.0` is the release gesture, a separate recorded act.
+
+## 0.6.0 — RELEASED (tagged `v0.6.0`, 2026-09-28) — the core becomes domain-generic (Phase 1896)
 
 **Class: breaking**, for `Fuaran.Program.Bounded`, `Fuaran.Program.Runtime` and
 `Fuaran.Program.Server`. `v0.5.0` is tagged, so this cannot ride it.
@@ -105,7 +183,7 @@ so the move changes no behaviour; it rides this draft slot rather than advancing
 boundary test covers the new neighbours: no core package may reference an adapter package, declared
 or resolved, any more than it may reference the UI tier itself.
 
-The slot stays a DRAFT: tagging `v0.6.0` is the release gesture, a separate recorded act.
+The slot was released as `v0.6.0` on 2026-09-28, all six packages at one version.
 
 **Class: additive**, for `Fuaran.Program.Server` (Phase 1759). `ServerEffect.fs` gains a
 `ReturnContract` record (`Name`, `Holds`) with `ReturnContract.describe` / `check`, and

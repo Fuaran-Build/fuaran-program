@@ -398,6 +398,10 @@ module ProgramWire =
     ///   Assign    — a literal write is re-runnable; one taking its value from
     ///               an expression is resolved at dispatch against a store that
     ///               has moved, so it is undecidable rather than unsafe.
+    ///   Require   — a guard is resolved at dispatch against a store that has
+    ///               moved, exactly as a derived write is, and whether it holds
+    ///               on a re-run is not decidable from the declared form: it
+    ///               is undecidable, and reported as such (Phase 1967).
     ///   Leaf      — undecidable, and reported as such.
     let rec replayDefectsOfAction
         (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
@@ -408,6 +412,7 @@ module ProgramWire =
         | ActionView.Sequence items -> items |> List.collect (replayDefectsOfAction witness) |> List.distinct
         | ActionView.Assign(_, _, Some _) -> [ ReplayDefect.NonLiteralWrite ]
         | ActionView.Assign(_, _, None) -> []
+        | ActionView.Require _ -> [ ReplayDefect.UndecidableAction ]
         | ActionView.Leaf _ -> [ ReplayDefect.UndecidableAction ]
 
     /// The defects of an op: one that names its target absolutely re-runs

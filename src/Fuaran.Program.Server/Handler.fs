@@ -64,6 +64,29 @@ open Fuaran.Program.Bounded
 //  carries `Committed = false` with the store rolled back, and `Performed`
 //  naming exactly the host calls that did happen — the one case where an
 //  uncommitted handler reports having performed anything at all.
+//
+//  ── Two amendments from the second witness (Phase 1967) ────────────────────
+//  A domain whose handler is a store-mutating VERB rather than a UI event
+//  handler ran under this fold unchanged and found two things it had to build
+//  beside it (DECISIONS.md D19):
+//
+//    A GUARD THAT HALTS. A `Compute` stage whose action meets the shared fold's
+//    `Require` shape and does not hold comes back `Halted`, and the handler
+//    treats it exactly as an effect that failed: the halt stops every later
+//    stage, nothing reaches the perform phase, and the outcome rolls back with
+//    the fold's own refusal diagnostic saying why. A leaf's refusal is still a
+//    diagnostic the handler carries on past — the UI tier's refusals are all of
+//    that kind.
+//
+//    OPS THAT ARE PERFORMED. Under `OpPerformance.InMemory` — the default, and
+//    the UI tier — `ApplyOps` is what it always was: applied while planning,
+//    and that apply is the effect. Under `OpPerformance.Performed`, the apply
+//    is a PLAN: the tree moves so later stages read it, and each op is STAGED
+//    as a call of its own, performed in the perform phase in plan order beside
+//    the host calls. D8's law then covers the ops too, with no new vocabulary:
+//    `Performed` names `ApplyOps` once per op that ran, a part-way failure is a
+//    `PerformFailed` under that capability with the prefix that ran reported,
+//    and `proofs/Staging.fst` proves it over the same staged list.
 // ============================================================================
 
 /// The state a handler runs against. Two channels, deliberately named apart:
@@ -262,6 +285,21 @@ module Handler =
             Halted = true
             Diagnostics = ServerDiagnostic.Denied denial :: acc.Diagnostics }
 
+    /// A staged op's performer: the registered op performer closed over the op,
+    /// in the shape a staged host call carries, so the perform phase runs ops
+    /// and host calls through ONE loop. The argument is inert (an op lands
+    /// nothing and takes no declarative payload) and the empty object is the
+    /// honest spelling of that, since the wire value has no null.
+    let private stagedOp
+        (perform: 'Op -> Result<Fuaran.Core.JVal, string>)
+        (capability: string)
+        (op: 'Op)
+        : StagedCall =
+        { Capability = capability
+          Performer = fun _ -> perform op
+          Args = Fuaran.Core.JObj []
+          Into = None }
+
     /// PLAN one effect against the store. The gate is consulted FIRST — before a
     /// pipeline is evaluated, before an op reaches the apply engine, and before
     /// a performer is even looked up as a callable — so no side effect of any
@@ -285,6 +323,7 @@ module Handler =
     let private runEffect
         (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
         (registry: ServerEffectRegistry)
+        (performance: OpPerformance<'Op>)
         (resolve: string -> Result<Fuaran.Core.Table, Fuaran.Core.EvalError>)
         (effect: ServerEffect<'Op>)
         (acc: Accumulator<'Node, 'Store, 'Op, 'Effect>)
@@ -296,7 +335,7 @@ module Handler =
             registry.OnDenied denial
             deny denial acc
         else
-            match ServerArgumentPolicy.check registry effect with
+            match ServerArgumentPolicy.check witness.Op registry effect with
             // Reported as a HALT rather than as a denial, and the choice is
             // deliberate. The denial vocabulary is a closed, wire-specified pair
             // — "this host has no such capability" and "this host's gate refused
@@ -341,8 +380,31 @@ module Handler =
                     match applied with
                     | Error code -> halt capability code acc
                     | Ok tree ->
-                        { performed with
-                            Store = { performed.Store with Tree = tree } }
+                        match performance with
+                        // In memory: the apply IS the effect, and it is performed
+                        // here, in the plan phase — the shape every placement had
+                        // before Phase 1967, and the UI tier's still.
+                        | OpPerformance.InMemory ->
+                            { performed with
+                                Store = { performed.Store with Tree = tree } }
+                        // Performed: the apply is a PLAN. The tree moves — a later
+                        // stage reads the planned tree — but the capability is not
+                        // recorded as performed; the staged calls are, one per op,
+                        // when the perform phase runs them. `Performed` is
+                        // deliberately NOT extended here, on the host-call arm's
+                        // terms: it is the audit trail of what happened, and at
+                        // this point nothing has.
+                        | OpPerformance.Performed perform ->
+                            let performOne op =
+                                perform op |> Result.map (fun () -> Fuaran.Core.JObj [])
+
+                            { acc with
+                                Store = { acc.Store with Tree = tree }
+                                Staged =
+                                    ops
+                                    |> List.fold
+                                        (fun staged op -> stagedOp performOne capability op :: staged)
+                                        acc.Staged }
 
                 | ServerEffect.HostCall(fn, args, into) ->
                     match Map.tryFind fn registry.HostFunctions with
@@ -390,6 +452,7 @@ module Handler =
     let private runStage
         (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
         (registry: ServerEffectRegistry)
+        (performance: OpPerformance<'Op>)
         (resolve: string -> Result<Fuaran.Core.Table, Fuaran.Core.EvalError>)
         (nodeId: string)
         (stage: HandlerStage<'Action, 'Op>)
@@ -411,15 +474,23 @@ module Handler =
             // the documented no-op, exactly as at a placement with no registry.
             let outcome = BoundedActions.runInert witness nodeId action acc.Store.Bindings
 
+            // A HALTED fold halts the handler (Phase 1967): the guard's own
+            // refusal diagnostic is the record of why, carried through
+            // `Bounded` exactly as every other fold diagnostic is, and the
+            // flag is what stops every later stage and rolls the handler
+            // back. The fold's store as of the halt is threaded in and then
+            // discarded by the rollback, which is the fold's "store as left"
+            // meeting D8's "nothing happened".
             { acc with
                 Store =
                     { acc.Store with
                         Bindings = outcome.Store }
+                Halted = acc.Halted || outcome.Halted
                 ClientEffects = List.rev outcome.Effects @ acc.ClientEffects
                 Diagnostics =
                     (outcome.Diagnostics |> List.rev |> List.map ServerDiagnostic.Bounded)
                     @ acc.Diagnostics }
-        | Effect effect -> runEffect witness registry resolve effect acc
+        | Effect effect -> runEffect witness registry performance resolve effect acc
 
     /// PERFORM the staged host calls, in declaration order, stopping at the
     /// first failure (D8). This is the only code in the handler that reaches
@@ -456,12 +527,15 @@ module Handler =
                 perform witness rest landed
 
     /// Run a handler's stages in order against `store`, committing only if every
-    /// stage planned and every staged host call then performed. `nodeId` is the
-    /// originating event's node, threaded into the shared interpreter exactly as
-    /// the other placements thread it.
-    let run
+    /// stage planned and every staged call — host call or, under a registered
+    /// op performer, op — then performed. `nodeId` is the originating event's
+    /// node, threaded into the shared interpreter exactly as the other
+    /// placements thread it. `performance` says how this placement performs an
+    /// op (Phase 1967); `run` below is this at `OpPerformance.InMemory`.
+    let runWith
         (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
         (registry: ServerEffectRegistry)
+        (performance: OpPerformance<'Op>)
         (resolve: string -> Result<Fuaran.Core.Table, Fuaran.Core.EvalError>)
         (nodeId: string)
         (handler: Handler<'Action, 'Op>)
@@ -485,7 +559,7 @@ module Handler =
                     if acc.Halted then
                         acc
                     else
-                        runStage witness registry resolve nodeId stage acc)
+                        runStage witness registry performance resolve nodeId stage acc)
                 start
 
         // The phase boundary. Nothing external has run above this line, and
@@ -524,3 +598,17 @@ module Handler =
               Notifications = List.rev final.Notifications
               ClientEffects = List.rev final.ClientEffects
               Diagnostics = List.rev final.Diagnostics }
+
+    /// `runWith` at `OpPerformance.InMemory`: ops are performed by being
+    /// applied, which is every placement before Phase 1967 and the UI tier
+    /// still. A placement whose ops reach the world registers a performer and
+    /// calls `runWith`.
+    let run
+        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (registry: ServerEffectRegistry)
+        (resolve: string -> Result<Fuaran.Core.Table, Fuaran.Core.EvalError>)
+        (nodeId: string)
+        (handler: Handler<'Action, 'Op>)
+        (store: ServerStore<'Node, 'Store>)
+        : HandlerOutcome<'Node, 'Store, 'Op, 'Effect> =
+        runWith witness registry OpPerformance.InMemory resolve nodeId handler store

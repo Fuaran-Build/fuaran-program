@@ -140,7 +140,19 @@
          does about it, and why the core and its UI adapter release together
          are recorded in STABILITY.md, which holds this slot as a DRAFT:
          untagged and unreleased until the adapter ships beside it. -->
-    <Version>0.6.0</Version>
+    <!-- 0.7.0 — Phase 1967. ADVANCES rather than rides: v0.6.0 is TAGGED, and
+         this change is breaking — the action view gains a fifth shape (the
+         halting guard `Require`), the fold's outcome gains a `Halted` member,
+         the op witness gains `Reach`, the demanded document moves to version 5,
+         the argument policy takes the op witness, and the handler's `run`
+         gains a `runWith` beside it that takes how a placement performs an op.
+         Every one of those is a record gaining a member or a function gaining
+         a parameter, which is a source edit for every consumer (FS0764 on each
+         full-literal witness construction). What a consumer pays and why each
+         change is there — the second domain's four findings, recorded in
+         DECISIONS.md D19 — is in STABILITY.md, which holds this slot as a
+         DRAFT until it is tagged. -->
+    <Version>0.7.0</Version>
     <!-- This repository's restore path is PUBLIC: it publishes to nuget.org, so
          a consumer of the published packages reaches the registry and nothing
          else. Undeclared would read as `local-feed`, under which a pin only this

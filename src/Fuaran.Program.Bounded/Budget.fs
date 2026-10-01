@@ -60,6 +60,7 @@ module Budget =
         | ActionView.Sequence xs -> xs |> List.sumBy (actionCascadeCost witness)
         | ActionView.Assign _
         | ActionView.Call _
+        | ActionView.Require _
         | ActionView.Leaf _ -> 1
 
     // ─── Per-node render cost ────────────────────────────────────────────────

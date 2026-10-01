@@ -182,6 +182,27 @@ type ServerConstraintDemand =
         Clauses: ServerConstraintClause list
     }
 
+/// One name an op-carrying arm REACHES, as the document carries it (Phase
+/// 1967, the second witness's W3): the capability the op rides, the argument
+/// the op names it under, and the name itself — a path, a remote, a node id,
+/// or the `destination` class the op witness classified it as.
+///
+/// The same `(argument, name)` pair the server placement's argument policy
+/// reads off the effect and an allow-list binds, so a reach the document
+/// reports and a bound the host declares meet on one vocabulary. Every member
+/// is an op witness's own answer about a host-registered handler's ops — an
+/// author-declared name, never an op's payload (`OpReach`).
+type OpReachDemand =
+    {
+        /// The capability the op rides — `ApplyOps` or `EmitPatch` — which is
+        /// the capability the gate was asked about and a clause is declared on.
+        Capability: string
+        /// The argument the op names the reach under.
+        Argument: string
+        /// What it names there.
+        Name: string
+    }
+
 /// What a SERVER placement's handler registration can ever ask of its host —
 /// the second tier of the document, and the half a program tree cannot express.
 ///
@@ -206,6 +227,18 @@ type ServerDemand =
         /// shape as the client tier's host calls, and checked the same way —
         /// only against a host that DECLARED a surface.
         Channels: HostCallDemand list
+        /// What the handlers' OPS reach — every named argument of every op the
+        /// two op-carrying arms carry, with the capability it rides (Phase
+        /// 1967). The half of a handler's envelope that was invisible before:
+        /// a document that said only `ApplyOps` for a handler that writes
+        /// files and pushes a branch now says which paths and which remote.
+        ///
+        /// DESCRIPTIVE, like `Replay` and `Constraints`: no coverage finding is
+        /// computed from it. The enforcement is the argument policy at the
+        /// placement, which reads the same reach off the same ops; this is the
+        /// fact it enforces against, published so a deployer reads the bound
+        /// (`Constraints`) beside what it bounds without holding the registry.
+        Reach: OpReachDemand list
         /// The replay posture of each handler that contributed to this tier.
         ///
         /// DESCRIPTIVE, like `Effects` and unlike `Capabilities`: no coverage
@@ -557,6 +590,27 @@ module Demanded =
                 Name = endpoint } ],
             []
 
+        // A guard READS what its condition reads, exactly as an assignment's
+        // `from` does, and writes nothing (Phase 1967).
+        | ActionView.Require condition ->
+            let uses = witness.Expr.Uses condition
+
+            let reads =
+                uses
+                |> List.choose (fun u ->
+                    match u with
+                    | BindingUse.State stateKey -> Some(namespaceOf stateKey, false)
+                    | BindingUse.Query _ -> None)
+
+            let calls =
+                uses
+                |> List.choose (fun u ->
+                    match u with
+                    | BindingUse.Query name -> Some { Channel = "Query"; Name = name }
+                    | BindingUse.State _ -> None)
+
+            [], calls, reads
+
         | ActionView.Leaf declaration -> declaration.EffectKinds, declaration.HostCalls, []
 
     /// A node that accepts an event but carries no wire-surviving action for it
@@ -620,6 +674,10 @@ module Demanded =
                   Capabilities = s.Capabilities |> List.distinct |> List.sort
                   Functions = s.Functions |> List.distinct |> List.sortBy (fun f -> f.Function, f.Capability)
                   Channels = s.Channels |> List.distinct |> List.sortBy (fun c -> c.Channel, c.Name)
+                  Reach =
+                    s.Reach
+                    |> List.distinct
+                    |> List.sortBy (fun r -> r.Capability, r.Argument, r.Name)
                   // Sorted by NAME only, and the reasons within a posture are
                   // left in stage order: they are a sequence through one
                   // handler, not a set, and sorting them would destroy the one
@@ -708,6 +766,9 @@ module Demanded =
                       Channels =
                         projections
                         |> List.collect (fun p -> p.Server |> Option.map _.Channels |> Option.defaultValue [])
+                      Reach =
+                        projections
+                        |> List.collect (fun p -> p.Server |> Option.map _.Reach |> Option.defaultValue [])
                       Replay =
                         projections
                         |> List.collect (fun p -> p.Server |> Option.map _.Replay |> Option.defaultValue [])
@@ -807,7 +868,7 @@ module Demanded =
     /// The version this encoder emits, and — see `decodableVersions` — the only
     /// one this reader reads.
     [<Literal>]
-    let Version = 4
+    let Version = 5
 
     // The policy clause's discriminator, written once and read once. A literal
     // spelled at the encoder and again at the reader is the drift this document
@@ -892,6 +953,17 @@ module Demanded =
     /// one member where reading the first as the second is actively dangerous: a
     /// deployer who takes "no clause" for "no bound" when the truth is "I could
     /// not see the bounds" has been told the opposite of the safe thing.
+    ///
+    /// **Version 5 adds the op reach** (Phase 1967), the fourth time on the
+    /// same argument. The `reach` key is present on EVERY server tier from here
+    /// on — `[]` where no reachable op named anything — so an ABSENT `reach`
+    /// says "this producer predates the member" and an EMPTY one says "this
+    /// registration was walked and its ops name nothing". A deployer reading a
+    /// handler that writes files cannot be allowed to take the first for the
+    /// second. The cost, stated: a signed envelope is verified by recomputing
+    /// the document, so every envelope signed under version 4 reports
+    /// `Unreadable` drift under this reader, naming the version — the honest
+    /// refusal, and a re-sign is the remedy (STABILITY.md, 0.7.0).
     let encode (projection: DemandedProjection) : string =
         let effects = projection.Effects |> List.map q |> arr
 
@@ -927,6 +999,12 @@ module Demanded =
                     |> List.map (fun c -> $"""{{"channel":{q c.Channel},"name":{q c.Name}}}""")
                     |> arr
 
+                let reach =
+                    s.Reach
+                    |> List.map (fun r ->
+                        $"""{{"capability":{q r.Capability},"argument":{q r.Argument},"name":{q r.Name}}}""")
+                    |> arr
+
                 let replay =
                     s.Replay
                     |> List.map (fun p ->
@@ -958,7 +1036,7 @@ module Demanded =
                         $"""{{"capability":{q c.Capability},"clauses":{clauses}}}""")
                     |> arr
 
-                $"""{{"effects":{se},"capabilities":{sc},"functions":{fns},"channels":{channels},"replay":{replay},"constraints":{constraints}}}"""
+                $"""{{"effects":{se},"capabilities":{sc},"functions":{fns},"channels":{channels},"reach":{reach},"replay":{replay},"constraints":{constraints}}}"""
 
         $"""{{"kind":{q Kind},"version":{Version},"effects":{effects},"hostCalls":{hostCalls},"stateNamespaces":{namespaces},"opaqueHandlers":{opaque},"server":{server}}}"""
 
@@ -1321,6 +1399,18 @@ module Demanded =
                 { Function = fn
                   Capability = capability }))
 
+    let private decodeReach version path value : Result<OpReachDemand, DemandedDecodeFailure> =
+        declaredOnly version path [ "capability"; "argument"; "name" ] value
+        |> Result.bind (fun () -> requireString version (child path "capability") "capability" value)
+        |> Result.bind (fun capability ->
+            requireString version (child path "argument") "argument" value
+            |> Result.bind (fun argument ->
+                requireString version (child path "name") "name" value
+                |> Result.map (fun name ->
+                    { Capability = capability
+                      Argument = argument
+                      Name = name })))
+
     let private decodeReason version path value : Result<ReplayReasonDemand, DemandedDecodeFailure> =
         declaredOnly version path [ "stage"; "defect" ] value
         |> Result.bind (fun () -> requireInt version (child path "stage") "stage" value)
@@ -1390,7 +1480,17 @@ module Demanded =
                   Clauses = clauses }))
 
     let private decodeServer version path value : Result<ServerDemand, DemandedDecodeFailure> =
-        declaredOnly version path [ "effects"; "capabilities"; "functions"; "channels"; "replay"; "constraints" ] value
+        declaredOnly
+            version
+            path
+            [ "effects"
+              "capabilities"
+              "functions"
+              "channels"
+              "reach"
+              "replay"
+              "constraints" ]
+            value
         |> Result.bind (fun () -> requireStrings version (child path "effects") "effects" value)
         |> Result.bind (fun effects ->
             requireStrings version (child path "capabilities") "capabilities" value
@@ -1399,16 +1499,24 @@ module Demanded =
                 |> Result.bind (fun functions ->
                     requireObjects version (child path "channels") "channels" value decodeHostCall
                     |> Result.bind (fun channels ->
-                        requireObjects version (child path "replay") "replay" value decodePosture
-                        |> Result.bind (fun replay ->
-                            requireObjects version (child path "constraints") "constraints" value decodeConstraint
-                            |> Result.map (fun constraints ->
-                                { Effects = effects
-                                  Capabilities = capabilities
-                                  Functions = functions
-                                  Channels = channels
-                                  Replay = replay
-                                  Constraints = constraints }))))))
+                        requireObjects version (child path "reach") "reach" value decodeReach
+                        |> Result.bind (fun reach ->
+                            requireObjects version (child path "replay") "replay" value decodePosture
+                            |> Result.bind (fun replay ->
+                                requireObjects
+                                    version
+                                    (child path "constraints")
+                                    "constraints"
+                                    value
+                                    decodeConstraint
+                                |> Result.map (fun constraints ->
+                                    { Effects = effects
+                                      Capabilities = capabilities
+                                      Functions = functions
+                                      Channels = channels
+                                      Reach = reach
+                                      Replay = replay
+                                      Constraints = constraints })))))))
 
     /// The four members every version of this document has carried.
     let private decodeClientTier version root : Result<DemandedProjection, DemandedDecodeFailure> =

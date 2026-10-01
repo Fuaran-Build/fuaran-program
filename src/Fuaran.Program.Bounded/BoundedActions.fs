@@ -15,10 +15,13 @@ open Fuaran.Core
 //  re-decide it here.
 //
 //  Since Phase 1896 the fold is DOMAIN-GENERIC (DECISIONS.md D18): it reads an
-//  action only through a witness's VIEW of it — `ActionView`'s four shapes,
-//  `Sequence` / `Assign` / `Call` / `Leaf` — and asks the witness what a leaf
-//  does. It is written to meet `proofs/BoundedFold.fst`'s `fold`, which was
-//  restated over the view and re-proved before this code (D14, Phase 1898).
+//  action only through a witness's VIEW of it — `ActionView`'s five shapes,
+//  `Sequence` / `Assign` / `Call` / `Require` / `Leaf` — and asks the witness
+//  what a leaf does. It is written to meet `proofs/BoundedFold.fst`'s `fold`,
+//  which was restated over the view and re-proved before this code (D14,
+//  Phase 1898), and restated again over the fifth shape — the halting guard
+//  the second witness found missing (Phase 1967, F1) — before the port that
+//  added it.
 //
 //  The case this module serves is an **emitted, wire-decoded** tree, where
 //  there is **no hand-authored `update` and no message type**. The "model" is
@@ -44,7 +47,7 @@ open Fuaran.Core
 //  half, enforced by the driver's per-interaction budget; bounded code + bounded
 //  cost = safe to run untrusted on shared infra.)
 //
-//  ── The four shapes ─────────────────────────────────────────────────────────
+//  ── The five shapes ─────────────────────────────────────────────────────────
 //    - `Assign(key, value, from)` → write the state channel at `key` (the only
 //      mutation), refusing a reserved key and an expression that does not
 //      resolve to a value.
@@ -52,6 +55,10 @@ open Fuaran.Core
 //    - `Call` → the HANDLER-EFFECT ARM (below). A placement that registers
 //      nothing for the endpoint gets the documented no-op this arm has always
 //      been; a placement that does gets its answer folded in place.
+//    - `Require` → the HALTING guard (Phase 1967): resolve the condition
+//      against the store; the boolean true holds, anything else halts the
+//      enclosing sequence with a refusal diagnostic and `Halted = true`. The
+//      one shape that halts, and the one the UI tier never produces.
 //    - `Leaf` → whatever the witness's `Lower` answers: at most one effect, a
 //      refusal with a reason, or a documented decline. The fold does not look
 //      inside it.
@@ -97,13 +104,23 @@ module BoundedDiagnostic =
 
 /// The outcome of interpreting one bounded action: the (possibly-updated) store
 /// + the closure-free effects to perform + the no-op diagnostics
-/// (observability, never behaviour). The store is returned (not mutated in
-/// place) so the loop threads it functionally — one interaction, one new store
-/// value.
+/// (observability, never behaviour) + whether a guard HALTED the fold. The
+/// store is returned (not mutated in place) so the loop threads it
+/// functionally — one interaction, one new store value.
 type BoundedOutcome<'Store, 'Effect> =
-    { Store: 'Store
-      Effects: 'Effect list
-      Diagnostics: BoundedDiagnostic list }
+    {
+        Store: 'Store
+        Effects: 'Effect list
+        Diagnostics: BoundedDiagnostic list
+        /// A `Require` shape did not hold (Phase 1967): nothing after it in the
+        /// enclosing sequence ran, and `Diagnostics` ends with the refusal that
+        /// says why. `Store` is the store AS OF THE HALT — the fold never rolls
+        /// back; a placement that does is the handler, whose atomicity unit it
+        /// is (D8). `false` on every outcome the UI tier produces: none of its
+        /// arms views as a guard, and the model proves it never halts
+        /// (`ui_never_halts`).
+        Halted: bool
+    }
 
 /// A placement's answer to a call action the fold recognised: the store as the
 /// answer left it, the closure-free effects it produced, the diagnostics it
@@ -153,14 +170,16 @@ module BoundedActions =
     let private store (s: 'Store) : BoundedOutcome<'Store, 'Effect> =
         { Store = s
           Effects = []
-          Diagnostics = [] }
+          Diagnostics = []
+          Halted = false }
 
     /// A documented-no-op outcome: unchanged store, no effects, one readable
     /// diagnostic naming the inert action. The model's `declined`.
     let private noOp (nodeId: string) (description: string) (s: 'Store) : BoundedOutcome<'Store, 'Effect> =
         { Store = s
           Effects = []
-          Diagnostics = [ BoundedDiagnostic.UnsupportedOnBoundedPath(nodeId, description) ] }
+          Diagnostics = [ BoundedDiagnostic.UnsupportedOnBoundedPath(nodeId, description) ]
+          Halted = false }
 
     /// A REFUSED outcome: unchanged store, no effects, one readable diagnostic
     /// naming what was refused and why. The model's `refused`.
@@ -172,7 +191,21 @@ module BoundedActions =
         : BoundedOutcome<'Store, 'Effect> =
         { Store = s
           Effects = []
-          Diagnostics = [ BoundedDiagnostic.Refused(nodeId, description, reason) ] }
+          Diagnostics = [ BoundedDiagnostic.Refused(nodeId, description, reason) ]
+          Halted = false }
+
+    /// A HALTED outcome (Phase 1967): the same diagnostic a refusal carries,
+    /// and the flag the enclosing sequence stops on. The model's `halted`.
+    let private halted
+        (nodeId: string)
+        (description: string)
+        (reason: string)
+        (s: 'Store)
+        : BoundedOutcome<'Store, 'Effect> =
+        { Store = s
+          Effects = []
+          Diagnostics = [ BoundedDiagnostic.Refused(nodeId, description, reason) ]
+          Halted = true }
 
     /// Interpret one bounded action against the store, through a domain's
     /// witness, with a placement-supplied **handler-effect arm** for the call
@@ -184,7 +217,7 @@ module BoundedActions =
     /// the safety property at the top of this file.
     ///
     /// THIS IS THE ONLY PLACE ANYTHING IN THIS DOMAIN INTERPRETS AN ACTION. One
-    /// evaluating `match`, over the four view shapes, in one file, reachable
+    /// evaluating `match`, over the five view shapes, in one file, reachable
     /// from every placement — which is D1's "no second evaluator" as a property
     /// a reader can check by grep rather than a claim they have to trust. (Two
     /// other walks read the same view without interpreting it: the resource
@@ -277,43 +310,72 @@ module BoundedActions =
                 match arm.Answer nodeId endpoint s placement with
                 | None -> noOp nodeId (witness.Action.Describe action) s, placement
                 | Some answer ->
+                    // An answered call never halts: a handler is its own
+                    // atomicity unit (D8), so one that failed rolled ITSELF
+                    // back and the fold carries on — `HandlerAnswer` carries
+                    // no halt, by its type.
                     { Store = answer.Store
                       Effects = answer.Effects
-                      Diagnostics = answer.Diagnostics },
+                      Diagnostics = answer.Diagnostics
+                      Halted = false },
                     answer.Placement
+
+        // The halting guard (Phase 1967). The condition resolves against the
+        // store at dispatch — the SAME arrow an `Assign`'s `from` resolves
+        // through — and the fold decides: the boolean true holds and changes
+        // nothing; any other value, an unresolved condition and an errored one
+        // halt, the last carrying the domain's own text as the reason, which
+        // is how a typed refusal reaches the diagnostic. A guard writes nothing
+        // and emits nothing, whichever way it goes. The model's `VRequire` arm;
+        // `fold_total` proves it is the ONLY shape whose step can halt.
+        | ActionView.Require condition ->
+            (match witness.Expr.Resolve s condition with
+             | ExprResolution.Resolved(JBool true) -> store s
+             | ExprResolution.Resolved _ -> halted nodeId (witness.Action.Describe action) "the guard did not hold" s
+             | ExprResolution.NotResolved ->
+                 halted nodeId (witness.Action.Describe action) "the guard did not resolve to a value" s
+             | ExprResolution.Errored m -> halted nodeId (witness.Action.Describe action) m s),
+            placement
 
         // A leaf is the domain's: lowered to at most one effect, refused with a
         // reason, or declined — each with a readable diagnostic, so "this action
         // is inert on the generated-app path" is observable. The fold does not
-        // look inside it, and it never recurses into one.
+        // look inside it, and it never recurses into one. A leaf's refusal does
+        // NOT halt: the sequence carries on past it, as it always has.
         | ActionView.Leaf _ ->
             (match witness.Action.Lower nodeId action s with
              | LeafOutcome.Emit effect ->
                  { Store = s
                    Effects = [ effect ]
-                   Diagnostics = [] }
+                   Diagnostics = []
+                   Halted = false }
              | LeafOutcome.Refuse reason -> refused nodeId (witness.Action.Describe action) reason s
              | LeafOutcome.Decline -> noOp nodeId (witness.Action.Describe action) s),
             placement
 
         // Compose: fold in order, threading the store AND the placement's
-        // accumulation, concatenating effects + diagnostics. Threading the
-        // placement here is what makes a nested call behave exactly as a
-        // top-level one — the sequence is the only structure that could have
-        // made them differ. Left to right and iterative, which is the model's
-        // `fold_many` by its own `sequence_homomorphism`: the store each member
-        // sees is the one its predecessors left, and the lists concatenate in
-        // order.
+        // accumulation, concatenating effects + diagnostics — and stopping at
+        // the first member that halts. Threading the placement here is what
+        // makes a nested call behave exactly as a top-level one — the sequence
+        // is the only structure that could have made them differ. Left to
+        // right and iterative, which is the model's `fold_many` by its own
+        // `sequence_homomorphism`: the store each member sees is the one its
+        // predecessors left, the lists concatenate in order, and a member that
+        // halted is the whole answer.
         | ActionView.Sequence actions ->
             actions
             |> List.fold
                 (fun (acc: BoundedOutcome<'Store, 'Effect>, p) a ->
-                    let next, p' = run witness arm nodeId a acc.Store p
+                    if acc.Halted then
+                        acc, p
+                    else
+                        let next, p' = run witness arm nodeId a acc.Store p
 
-                    { Store = next.Store
-                      Effects = acc.Effects @ next.Effects
-                      Diagnostics = acc.Diagnostics @ next.Diagnostics },
-                    p')
+                        { Store = next.Store
+                          Effects = acc.Effects @ next.Effects
+                          Diagnostics = acc.Diagnostics @ next.Diagnostics
+                          Halted = next.Halted },
+                        p')
                 (store s, placement)
 
     /// Interpret one bounded action against the store at a placement that runs

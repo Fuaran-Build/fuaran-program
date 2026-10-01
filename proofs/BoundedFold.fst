@@ -25,9 +25,14 @@
 ///
 /// **The generic tier** — a model of the fold the generic core will run,
 /// `BoundedActions.run witness` (Phase 1896 writes it): one `match` over
-/// the four shapes of D18's `ActionView`, parameterised by a WITNESS
-/// record that is the fold-read members of `ProgramWitness`. There is no
-/// F# for this layer yet; this model is the specification it meets.
+/// the shapes of D18's `ActionView` — four at the cut, FIVE since Phase
+/// 1967 added the halting guard `Require` (the second witness's F1) —
+/// parameterised by a WITNESS record that is the fold-read members of
+/// `ProgramWitness`. Phase 1896 wrote the F# against the four-shape
+/// model; Phase 1967 restated and re-proved this model over five shapes
+/// BEFORE the port that followed (D14 again), and the one law the fifth
+/// shape changes is the sequence homomorphism, which gains a halting
+/// clause that is vacuous for every view without a guard.
 /// Every definition is captioned with the D18 contract member it models
 /// (§3.2 the action view, §3.3 expressions, §3.4 the store).
 ///
@@ -207,6 +212,14 @@ type action_view (a: Type0) (e: Type0) (v: Type0) =
   /// `Call of endpoint: string * declaresTarget: bool` (today: `Call`; a
   /// declared target is refused, D9).
   | VCall : act: a -> endpoint: string -> declares_target: bool -> action_view a e v
+  /// `Require of condition: 'Expr` — the HALTING guard (Phase 1967, the
+  /// second witness's F1). The condition resolves against the store at
+  /// dispatch exactly as an `Assign`'s `from` does; a guard that holds
+  /// changes nothing, and one that does not HALTS the fold: nothing after
+  /// it in the enclosing sequence runs, and the outcome says so. It is
+  /// the one shape that halts (`fold_total`), and the one a view with no
+  /// guard never reaches (`fold_no_require_no_halt`).
+  | VRequire : act: a -> condition: e -> action_view a e v
   /// `Leaf of LeafDeclaration` — every other domain act. The declaration
   /// is the DEMANDED projection's business and the fold never reads it,
   /// so it is not carried; what the fold does with a leaf is `w_lower`.
@@ -239,6 +252,13 @@ noeq type witness (a: Type0) (e: Type0) (v: Type0) (eff: Type0) = {
   w_is_reserved: key -> bool;
   /// `StoreWitness.ReservedPrefix`, for the refusal's text.
   w_reserved_prefix: string;
+  /// The guard's truth test: whether a resolved value is the boolean
+  /// `true`. NOT a witness member in F# — the core owns `JVal` and the
+  /// fold tests `jv = JBool true` itself — but `v` is abstract in this
+  /// model, exactly as the store is concrete there and abstract here, so
+  /// the test arrives as an arrow the differential host wires to that
+  /// comparison. Nothing proved here depends on what it answers.
+  w_is_true: v -> bool;
 }
 
 /// F#: `BoundedDiagnostic` — program-owned, so not generic. The action
@@ -250,10 +270,15 @@ type diagnostic =
   | DRefused : node_id: string -> action_name: string -> reason: string -> diagnostic
 
 /// F#: `BoundedOutcome`, generic in the effect the witness lowers to.
+/// `o_halted` (Phase 1967) says a guard halted the fold: the store is
+/// the store as of the halt — the fold does not roll back; a placement
+/// that rolls back is the handler (D8) — and nothing after the guard in
+/// the enclosing sequence ran.
 type bounded_outcome (v: Type0) (eff: Type0) = {
   o_store: store v;
   o_effects: list eff;
   o_diagnostics: list diagnostic;
+  o_halted: bool;
 }
 
 /// F#: `HandlerAnswer<'Placement>`.
@@ -283,16 +308,23 @@ let inert_arm (#v: Type0) (#eff: Type0) (#p: Type0) : handler_arm v eff p =
    ─────────────────────────────────────────────────────────────────── *)
 
 let store_only (#v: Type0) (#eff: Type0) (s: store v) : bounded_outcome v eff =
-  { o_store = s; o_effects = []; o_diagnostics = [] }
+  { o_store = s; o_effects = []; o_diagnostics = []; o_halted = false }
 
 let declined (#v: Type0) (#eff: Type0) (node_id: string) (description: string) (s: store v)
   : bounded_outcome v eff =
-  { o_store = s; o_effects = []; o_diagnostics = [ DUnsupported node_id description ] }
+  { o_store = s; o_effects = []; o_diagnostics = [ DUnsupported node_id description ]; o_halted = false }
 
 let refused (#v: Type0) (#eff: Type0)
             (node_id: string) (description: string) (reason: string) (s: store v)
   : bounded_outcome v eff =
-  { o_store = s; o_effects = []; o_diagnostics = [ DRefused node_id description reason ] }
+  { o_store = s; o_effects = []; o_diagnostics = [ DRefused node_id description reason ]; o_halted = false }
+
+/// F#: `BoundedActions.halted` (Phase 1967) — a refusal that HALTS: the
+/// same diagnostic a non-halting refusal carries, and the flag.
+let halted (#v: Type0) (#eff: Type0)
+           (node_id: string) (description: string) (reason: string) (s: store v)
+  : bounded_outcome v eff =
+  { o_store = s; o_effects = []; o_diagnostics = [ DRefused node_id description reason ]; o_halted = true }
 
 /// F#: the `Result<JVal option, string>` the `Assign` arm computes.
 type jval_payload (v: Type0) =
@@ -301,9 +333,10 @@ type jval_payload (v: Type0) =
 
 (* ───────────────────────────────────────────────────────────────────
    THE FOLD — `BoundedActions.run witness` (Phase 1896), one `match`
-   over the four view shapes. It owns sequencing, the one store write,
+   over the five view shapes. It owns sequencing, the one store write,
    the reserved-namespace refusal (K5), D9's refusal of a declared result
-   target, and D7's handler-effect arm. It never recurses into a leaf.
+   target, D7's handler-effect arm, and — since Phase 1967 — the halting
+   guard. It never recurses into a leaf.
 
    Termination is structural on the view. `fold` and `fold_many` are
    mutually recursive with the tree/forest lexicographic measure: the
@@ -358,20 +391,39 @@ let rec fold (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
       (match ar.answer node_id endpoint s pl with
        | ONone -> (declined node_id (w.w_describe act) s, pl)
        | OSome ans ->
-         ({ o_store = ans.h_store; o_effects = ans.h_effects; o_diagnostics = ans.h_diagnostics },
+         ({ o_store = ans.h_store; o_effects = ans.h_effects; o_diagnostics = ans.h_diagnostics;
+            o_halted = false },
           ans.h_placement))
+
+  // The halting guard (Phase 1967). The condition resolves against the
+  // store at dispatch — the SAME arrow an `Assign`'s `from` resolves
+  // through — and the fold decides: the boolean true holds and changes
+  // nothing; any other value, an unresolved condition, and an errored one
+  // halt, the last carrying the domain's own text as the reason, which is
+  // how a typed refusal reaches the diagnostic. A guard writes nothing
+  // and emits nothing, whichever way it goes.
+  | VRequire act condition ->
+    (match w.w_resolve s condition with
+     | Resolved jv ->
+       if w.w_is_true jv then store_only s
+       else halted node_id (w.w_describe act) "the guard did not hold" s
+     | NotResolved ->
+       halted node_id (w.w_describe act) "the guard did not resolve to a value" s
+     | Errored m -> halted node_id (w.w_describe act) m s),
+    pl
 
   // A leaf is the domain's: lowered to at most one effect, refused with
   // a reason, or declined. The fold does not look inside it.
   | VLeaf act ->
     (match w.w_lower node_id act s with
-     | Emit emitted -> { o_store = s; o_effects = [ emitted ]; o_diagnostics = [] }
+     | Emit emitted -> { o_store = s; o_effects = [ emitted ]; o_diagnostics = []; o_halted = false }
      | Refuse reason -> refused node_id (w.w_describe act) reason s
      | Decline -> declined node_id (w.w_describe act) s),
     pl
 
   // Compose: fold in order, threading the store AND the placement's
-  // accumulation, concatenating effects and diagnostics.
+  // accumulation, concatenating effects and diagnostics — and stopping
+  // at the first member that halts.
   | VSequence _ ops -> fold_many w ar node_id ops s pl
 
 and fold_many (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
@@ -382,11 +434,14 @@ and fold_many (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
   | [] -> store_only s, pl
   | x :: rest ->
     let (o1, p1) = fold w ar node_id x s pl in
-    let (o2, p2) = fold_many w ar node_id rest o1.o_store p1 in
-    { o_store = o2.o_store;
-      o_effects = app o1.o_effects o2.o_effects;
-      o_diagnostics = app o1.o_diagnostics o2.o_diagnostics },
-    p2
+    if o1.o_halted then (o1, p1)
+    else
+      let (o2, p2) = fold_many w ar node_id rest o1.o_store p1 in
+      { o_store = o2.o_store;
+        o_effects = app o1.o_effects o2.o_effects;
+        o_diagnostics = app o1.o_diagnostics o2.o_diagnostics;
+        o_halted = o2.o_halted },
+      p2
 
 /// The action-level entry the generic core exposes: view, then fold.
 /// F#: `BoundedActions.run witness arm nodeId action store placement`.
@@ -418,6 +473,7 @@ let handled_view (#a: Type0) (#e: Type0) (#v: Type0) (x: action_view a e v) : bo
   | VSequence _ _ -> true
   | VAssign _ _ _ _ -> true
   | VCall _ _ _ -> true
+  | VRequire _ _ -> true
   | VLeaf _ -> true
 
 [@@ noextract_to "FSharp"]
@@ -445,9 +501,11 @@ let answered_view (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
 /// and one step that is neither the composition shape nor a call the
 /// placement answered is characterised structurally: the placement is
 /// untouched, the store is either unchanged or written at exactly one
-/// key the reserved predicate rejects, and at most one effect and at
-/// most one diagnostic are emitted. For a leaf that is K3 made a
-/// theorem: whatever `w_lower` answers, this is the most it can do.
+/// key the reserved predicate rejects, at most one effect and at most
+/// one diagnostic are emitted, and ONLY A GUARD HALTS. For a leaf that
+/// is K3 made a theorem: whatever `w_lower` answers, this is the most it
+/// can do. For a guard it is the Phase-1967 clause: it writes nothing,
+/// emits nothing, and is the one shape whose step can halt.
 let fold_total (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
                (w: witness a e v eff) (ar: handler_arm v eff p)
                (node_id: string) (x: action_view a e v) (s: store v) (pl: p)
@@ -459,6 +517,8 @@ let fold_total (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
           pl' == pl /\
           at_most_one o.o_effects /\
           at_most_one o.o_diagnostics /\
+          (o.o_halted ==> VRequire? x) /\
+          (VRequire? x ==> (o.o_store == s /\ o.o_effects == [])) /\
           (o.o_store == s \/
            (VAssign? x /\
             (exists (jv: v). o.o_store == write s (VAssign?.state_key x) jv) /\
@@ -479,6 +539,11 @@ let fold_total (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
       (match ar.answer node_id endpoint s pl with
        | ONone -> ()
        | OSome _ -> ())
+  | VRequire _ condition ->
+    (match w.w_resolve s condition with
+     | Resolved jv -> if w.w_is_true jv then () else ()
+     | NotResolved -> ()
+     | Errored _ -> ())
   | VLeaf act ->
     (match w.w_lower node_id act s with
      | Emit _ -> ()
@@ -504,6 +569,8 @@ let rec same_shape (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0)
     w.w_describe ax == w.w_describe ay /\ k1 == k2 /\ v1 == v2 /\ f1 == f2
   | VCall ax e1 t1, VCall ay e2 t2 ->
     w.w_describe ax == w.w_describe ay /\ e1 == e2 /\ t1 == t2
+  | VRequire ax c1, VRequire ay c2 ->
+    w.w_describe ax == w.w_describe ay /\ c1 == c2
   | VLeaf ax, VLeaf ay ->
     w.w_describe ax == w.w_describe ay /\
     (forall (n: string) (st: store v). w.w_lower n ax st == w.w_lower n ay st)
@@ -551,7 +618,7 @@ and fold_blind_list (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0
   | x1 :: r1, x2 :: r2 ->
     fold_blind w ar node_id x1 x2 s pl;
     let (o1, p1) = fold w ar node_id x1 s pl in
-    fold_blind_list w ar node_id r1 r2 o1.o_store p1
+    if o1.o_halted then () else fold_blind_list w ar node_id r1 r2 o1.o_store p1
   | _, _ -> ()
 
 /// **The witness obligation.** A witness is BLIND TO a relation on
@@ -593,14 +660,31 @@ let rec app_nil (#a: Type0) (xs: list a)
   | [] -> ()
   | _ :: rest -> app_nil rest
 
+/// The composition of two outcomes, as the `Sequence` arm composes them:
+/// the second's store and halt, the effects and the diagnostics
+/// concatenated in order. Named so the homomorphism can be stated once
+/// and read at both levels.
+[@@ noextract_to "FSharp"]
+let composed (#v: Type0) (#eff: Type0) (o1: bounded_outcome v eff) (o2: bounded_outcome v eff)
+  : bounded_outcome v eff =
+  { o_store = o2.o_store;
+    o_effects = app o1.o_effects o2.o_effects;
+    o_diagnostics = app o1.o_diagnostics o2.o_diagnostics;
+    o_halted = o2.o_halted }
+
 /// **`sequence_homomorphism`.** Running the concatenation of two
-/// operation lists is running the first and then the second against the
-/// store the first left, with the effects and the diagnostics
-/// concatenated in order and the placement threaded through. This is
-/// DECISIONS.md D7's splice property — a nested call sees the writes
-/// before it and is seen by the writes after it — stated as an equation,
-/// and it is what makes `Sequence` a composition rather than a fifth
-/// special case.
+/// operation lists is running the first and — IF IT DID NOT HALT — then
+/// the second against the store the first left, with the effects and the
+/// diagnostics concatenated in order and the placement threaded through;
+/// a first half that halted is the whole answer, and the second half
+/// never runs. This is DECISIONS.md D7's splice property — a nested call
+/// sees the writes before it and is seen by the writes after it — stated
+/// as an equation, and it is what makes `Sequence` a composition rather
+/// than a special case. The halting clause is Phase 1967's: a guard is a
+/// control structure, so it is the evaluator's, and this is the one law
+/// it changes. At a witness with no guard the clause is vacuous
+/// (`fold_no_require_no_halt`), which is how the UI tier's
+/// `chain_homomorphism` keeps its unconditional form.
 let rec sequence_homomorphism (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
                               (w: witness a e v eff) (ar: handler_arm v eff p)
                               (node_id: string)
@@ -609,11 +693,10 @@ let rec sequence_homomorphism (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) 
   : Lemma
       (ensures
         (let (o1, p1) = fold_many w ar node_id xs s pl in
-         let (o2, p2) = fold_many w ar node_id ys o1.o_store p1 in
-         fold_many w ar node_id (app xs ys) s pl ==
-           ({ o_store = o2.o_store;
-              o_effects = app o1.o_effects o2.o_effects;
-              o_diagnostics = app o1.o_diagnostics o2.o_diagnostics }, p2)))
+         if o1.o_halted then fold_many w ar node_id (app xs ys) s pl == (o1, p1)
+         else
+           (let (o2, p2) = fold_many w ar node_id ys o1.o_store p1 in
+            fold_many w ar node_id (app xs ys) s pl == (composed o1 o2, p2))))
       (decreases xs) =
   match xs with
   | [] ->
@@ -622,11 +705,17 @@ let rec sequence_homomorphism (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) 
     app_nil o2.o_diagnostics
   | x :: rest ->
     let (ox, px) = fold w ar node_id x s pl in
-    sequence_homomorphism w ar node_id rest ys ox.o_store px;
-    let (o1r, p1r) = fold_many w ar node_id rest ox.o_store px in
-    let (o2, _) = fold_many w ar node_id ys o1r.o_store p1r in
-    app_assoc ox.o_effects o1r.o_effects o2.o_effects;
-    app_assoc ox.o_diagnostics o1r.o_diagnostics o2.o_diagnostics
+    if ox.o_halted then ()
+    else begin
+      sequence_homomorphism w ar node_id rest ys ox.o_store px;
+      let (o1r, p1r) = fold_many w ar node_id rest ox.o_store px in
+      if o1r.o_halted then ()
+      else begin
+        let (o2, _) = fold_many w ar node_id ys o1r.o_store p1r in
+        app_assoc ox.o_effects o1r.o_effects o2.o_effects;
+        app_assoc ox.o_diagnostics o1r.o_diagnostics o2.o_diagnostics
+      end
+    end
 
 /// The same statement at the view level, which is the form the
 /// `Sequence` arm is read in. The carried actions are irrelevant to it —
@@ -639,11 +728,10 @@ let sequence_action_homomorphism (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type
   : Lemma
       (ensures
         (let (o1, p1) = fold w ar node_id (VSequence act1 xs) s pl in
-         let (o2, p2) = fold w ar node_id (VSequence act2 ys) o1.o_store p1 in
-         fold w ar node_id (VSequence act (app xs ys)) s pl ==
-           ({ o_store = o2.o_store;
-              o_effects = app o1.o_effects o2.o_effects;
-              o_diagnostics = app o1.o_diagnostics o2.o_diagnostics }, p2))) =
+         if o1.o_halted then fold w ar node_id (VSequence act (app xs ys)) s pl == (o1, p1)
+         else
+           (let (o2, p2) = fold w ar node_id (VSequence act2 ys) o1.o_store p1 in
+            fold w ar node_id (VSequence act (app xs ys)) s pl == (composed o1 o2, p2)))) =
   sequence_homomorphism w ar node_id xs ys s pl
 
 // ─── 4. Reserved keys are untouched ──────────────────────────────────
@@ -698,6 +786,11 @@ let rec fold_reserved_untouched (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0
           | ONone -> ()))
   | VSequence _ ops -> fold_reserved_untouched_list w ar node_id ops s pl kk
   | VCall _ _ _ -> ()
+  | VRequire _ condition ->
+    (match w.w_resolve s condition with
+     | Resolved jv -> if w.w_is_true jv then () else ()
+     | NotResolved -> ()
+     | Errored _ -> ())
   | VLeaf act ->
     (match w.w_lower node_id act s with
      | Emit _ -> ()
@@ -716,7 +809,7 @@ and fold_reserved_untouched_list (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type
   | x :: rest ->
     fold_reserved_untouched w ar node_id x s pl kk;
     let (o1, p1) = fold w ar node_id x s pl in
-    fold_reserved_untouched_list w ar node_id rest o1.o_store p1 kk
+    if o1.o_halted then () else fold_reserved_untouched_list w ar node_id rest o1.o_store p1 kk
 
 /// The inert arm preserves reserved keys under EVERY predicate — it
 /// declines every call, so there is no store for it to have written.
@@ -725,6 +818,78 @@ and fold_reserved_untouched_list (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type
 /// discharged.
 let inert_preserves_reserved (#v: Type0) (#eff: Type0) (#p: Type0) (is_reserved: key -> bool)
   : Lemma (arm_preserves_reserved is_reserved (inert_arm #v #eff #p)) = ()
+
+// ─── 5. Only a guard halts (Phase 1967) ──────────────────────────────
+
+/// A view holds a guard somewhere: at its root, or inside a sequence at
+/// any depth. The one syntactic fact the halting clause keys on.
+[@@ noextract_to "FSharp"]
+let rec has_require (#a: Type0) (#e: Type0) (#v: Type0) (x: action_view a e v)
+  : Tot bool (decreases %[x; 0]) =
+  match x with
+  | VSequence _ ops -> has_require_list ops
+  | VRequire _ _ -> true
+  | VAssign _ _ _ _ -> false
+  | VCall _ _ _ -> false
+  | VLeaf _ -> false
+
+and has_require_list (#a: Type0) (#e: Type0) (#v: Type0) (ops: list (action_view a e v))
+  : Tot bool (decreases %[ops; 1]) =
+  match ops with
+  | [] -> false
+  | x :: rest -> has_require x || has_require_list rest
+
+/// **`fold_no_require_no_halt`.** A view with no guard in it never
+/// halts, under every witness and every placement arm — so the halting
+/// clause of `sequence_homomorphism` is vacuous for it, and a domain
+/// whose `View` produces no `Require` (the UI tier, `ui_view_no_require`)
+/// inherits every pre-1967 statement unchanged. An answered call never
+/// halts either: `handler_answer` carries no halt, by its type, because
+/// a handler is its own atomicity unit (D8) and a handler that failed
+/// rolled ITSELF back and the fold carries on.
+let rec fold_no_require_no_halt (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
+                                (w: witness a e v eff) (ar: handler_arm v eff p)
+                                (node_id: string) (x: action_view a e v) (s: store v) (pl: p)
+  : Lemma (requires not (has_require x))
+          (ensures not (fst (fold w ar node_id x s pl)).o_halted)
+          (decreases %[x; 0]) =
+  match x with
+  | VAssign _ state_key value value_from ->
+    if w.w_is_reserved state_key then ()
+    else
+      (match value_from with
+       | OSome expr ->
+         (match w.w_resolve s expr with
+          | Resolved _ -> ()
+          | _ -> ())
+       | ONone -> (match value with | OSome _ -> () | ONone -> ()))
+  | VCall _ endpoint declares_target ->
+    if declares_target then ()
+    else
+      (match ar.answer node_id endpoint s pl with
+       | ONone -> ()
+       | OSome _ -> ())
+  | VLeaf act ->
+    (match w.w_lower node_id act s with
+     | Emit _ -> ()
+     | Refuse _ -> ()
+     | Decline -> ())
+  | VSequence _ ops -> fold_no_require_no_halt_list w ar node_id ops s pl
+  | VRequire _ _ -> ()
+
+and fold_no_require_no_halt_list (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
+                                 (w: witness a e v eff) (ar: handler_arm v eff p)
+                                 (node_id: string) (ops: list (action_view a e v))
+                                 (s: store v) (pl: p)
+  : Lemma (requires not (has_require_list ops))
+          (ensures not (fst (fold_many w ar node_id ops s pl)).o_halted)
+          (decreases %[ops; 1]) =
+  match ops with
+  | [] -> ()
+  | x :: rest ->
+    fold_no_require_no_halt w ar node_id x s pl;
+    let (o1, p1) = fold w ar node_id x s pl in
+    fold_no_require_no_halt_list w ar node_id rest o1.o_store p1
 
 (* ═══════════════════════════════════════════════════════════════════
    THE UI WITNESS — today's fourteen arms seen through the view.
@@ -1039,7 +1204,11 @@ let ui_witness (#v: Type0) (#b: Type0) (#k: Type0) (ax: axioms v b)
     w_describe = describe ax;
     w_resolve = ui_resolve ax;
     w_is_reserved = ax.is_reserved;
-    w_reserved_prefix = ax.reserved_prefix }
+    w_reserved_prefix = ax.reserved_prefix;
+    // Unreachable at this witness: no arm of the fourteen views as a
+    // guard (`ui_view_no_require`), so the fold never asks. The constant
+    // is the fail-closed answer — were it ever reached, it would halt.
+    w_is_true = (fun _ -> false) }
 
 /// **The fold at the UI witness** — `BoundedActions.runBoundedActionWith`
 /// today, `BoundedActions.run uiWitness` after Phase 1897. Phase 1715's
@@ -1256,12 +1425,41 @@ let rec ui_view_list_app (#v: Type0) (#b: Type0) (#k: Type0)
   | [] -> ()
   | _ :: rest -> ui_view_list_app rest ys
 
+/// No arm of the fourteen views as a guard: `ui_view` produces no
+/// `VRequire` at any depth. The syntactic fact every pre-1967 UI
+/// statement rests on since the halting clause arrived.
+let rec ui_view_no_require (#v: Type0) (#b: Type0) (#k: Type0) (a: action v b k)
+  : Lemma (ensures not (has_require (ui_view a))) (decreases %[a; 0]) =
+  match a with
+  | AChain ops -> ui_view_no_require_list ops
+  | _ -> ()
+
+and ui_view_no_require_list (#v: Type0) (#b: Type0) (#k: Type0) (ops: list (action v b k))
+  : Lemma (ensures not (has_require_list (ui_view_list ops))) (decreases %[ops; 1]) =
+  match ops with
+  | [] -> ()
+  | x :: rest ->
+    ui_view_no_require x;
+    ui_view_no_require_list rest
+
+/// **`ui_never_halts`.** The UI tier never halts: a leaf's refusal is a
+/// diagnostic and the chain carries on, exactly as before Phase 1967.
+/// `fold_no_require_no_halt` at a witness whose view has no guard.
+let ui_never_halts (#v: Type0) (#b: Type0) (#k: Type0) (#p: Type0)
+                   (ax: axioms v b) (ar: arm v p)
+                   (node_id: string) (a: action v b k) (s: store v) (pl: p)
+  : Lemma (ensures not (fst (run ax ar node_id a s pl)).o_halted) =
+  ui_view_no_require a;
+  fold_no_require_no_halt (ui_witness ax) ar node_id (ui_view a) s pl
+
 /// **`chain_homomorphism`.** Phase 1715's action-level statement:
 /// running `AChain (app xs ys)` is running `AChain xs` and then
 /// `AChain ys` against the store the first left, with the effects and
 /// the diagnostics concatenated in order and the placement threaded
-/// through. It is `sequence_homomorphism` at the UI witness, through
-/// `ui_view_list_app`.
+/// through — unconditionally, because nothing at this witness halts. It
+/// is `sequence_homomorphism` at the UI witness, through
+/// `ui_view_list_app`, with its halting clause discharged by
+/// `ui_view_no_require`.
 let chain_homomorphism (#v: Type0) (#b: Type0) (#k: Type0) (#p: Type0)
                        (ax: axioms v b) (ar: arm v p)
                        (node_id: string) (xs: list (action v b k)) (ys: list (action v b k))
@@ -1273,8 +1471,14 @@ let chain_homomorphism (#v: Type0) (#b: Type0) (#k: Type0) (#p: Type0)
          run ax ar node_id (AChain (app xs ys)) s pl ==
            ({ o_store = o2.o_store;
               o_effects = app o1.o_effects o2.o_effects;
-              o_diagnostics = app o1.o_diagnostics o2.o_diagnostics }, p2))) =
+              o_diagnostics = app o1.o_diagnostics o2.o_diagnostics;
+              o_halted = false }, p2))) =
   ui_view_list_app xs ys;
+  ui_view_no_require_list xs;
+  ui_view_no_require_list ys;
+  let (o1, p1) = fold_many (ui_witness ax) ar node_id (ui_view_list xs) s pl in
+  fold_no_require_no_halt_list (ui_witness ax) ar node_id (ui_view_list xs) s pl;
+  fold_no_require_no_halt_list (ui_witness ax) ar node_id (ui_view_list ys) o1.o_store p1;
   sequence_homomorphism (ui_witness ax) ar node_id (ui_view_list xs) (ui_view_list ys) s pl
 
 // ─── 4. Host-reserved keys are untouched ─────────────────────────────

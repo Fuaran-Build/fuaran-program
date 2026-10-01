@@ -103,6 +103,7 @@ let private emptyTier: ServerDemand =
       Capabilities = []
       Functions = []
       Channels = []
+      Reach = []
       Replay = []
       Constraints = [] }
 

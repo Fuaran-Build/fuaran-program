@@ -168,9 +168,9 @@ type LeafDeclaration =
         HostCalls: HostCallDemand list
     }
 
-/// One level of an action, seen by the core. Four shapes, and the fold names
-/// all four: control structure is sequence + assign + call, and everything
-/// else is a leaf (K2).
+/// One level of an action, seen by the core. Five shapes, and the fold names
+/// all five: control structure is sequence + assign + call + require, and
+/// everything else is a leaf (K2, as amended by Phase 1967).
 [<RequireQualifiedAccess>]
 type ActionView<'Action, 'Expr> =
     /// The composition arm.
@@ -181,6 +181,19 @@ type ActionView<'Action, 'Expr> =
     /// A call to a named endpoint. A call that declares its own result target
     /// is refused (D9).
     | Call of endpoint: string * declaresTarget: bool
+    /// The HALTING guard (Phase 1967, the second witness's F1). `condition`
+    /// resolves against the store at dispatch, through the same
+    /// `ExprWitness.Resolve` an `Assign`'s `from` resolves through. The
+    /// boolean `true` holds and changes nothing; any other value, an
+    /// unresolved condition and an errored one HALT the fold — nothing after
+    /// the guard in the enclosing sequence runs, the outcome says so, and a
+    /// handler that meets a halted compute stage rolls back (D8). An errored
+    /// condition's message is the halt's reason verbatim, which is how a
+    /// domain's typed refusal reaches the diagnostic (§3.5, W5). A guard
+    /// writes nothing and emits nothing. Distinct from a leaf's `Refuse`,
+    /// which is a diagnostic the sequence carries on past — the UI tier's
+    /// refusals are all of that kind, and none of its arms views as a guard.
+    | Require of condition: 'Expr
     /// Every other domain act.
     | Leaf of LeafDeclaration
 
@@ -235,17 +248,51 @@ type StoreWitness<'Store> =
 
 // ─── §3.5 ops ───────────────────────────────────────────────────────────────
 
+/// What one op REACHES (Phase 1967, the second witness's W3 and W4): its
+/// named arguments and, where it points outside the tree the host holds, the
+/// destination's class.
+///
+/// `Arguments` are AUTHOR-DECLARED names paired with the values the op names
+/// under them — a node id under `target`, a path under `path`, a remote under
+/// `remote` — in exactly the shape the server placement's argument policy
+/// already reads off a host call, so an allow-list over `ApplyOps` binds an
+/// op's arguments as one over `host:<fn>` binds a call's, and the demanded
+/// document carries them beside the capability. A value here is a NAME the op
+/// reaches, never its payload: a witness that put an op's written content
+/// under an argument would be putting it into every log the document reaches.
+///
+/// `Destination` is the op's reach in the vocabulary the client-effect egress
+/// policy already reasons in — `Local` for a write the host performs on its
+/// own store, `Remote host` for a push — so a policy can bound the CLASS of
+/// an op's reach without knowing how the domain names it. `Absent` for an op
+/// that names no destination at all, which is every tree op.
+type OpReach =
+    { Arguments: (string * string) list
+      Destination: EffectDestination }
+
+module OpReach =
+    /// An op reaching nothing a policy can name: no arguments, no destination.
+    let nothing: OpReach =
+        { Arguments = []
+          Destination = EffectDestination.Absent }
+
 type OpWitness<'Node, 'Op> =
     {
         /// Core's stream witness, reused: apply one op to a tree, and the op
         /// vocabulary's canonical codec (K6). A refusal is reported by the
-        /// string the handler's halt carries.
+        /// string the handler's halt carries — a string, deliberately, and
+        /// §3.5 says what a typed refusal does with it.
         Stream: StreamWitness<'Op, 'Node, string>
         /// The ops that turn one tree into the other.
         Diff: 'Node -> 'Node -> 'Op list
         /// The node an op addresses absolutely, if it names one — an op that
         /// does is re-runnable on replay.
         AbsoluteTarget: 'Op -> string option
+        /// What the op reaches — read by the server placement's argument
+        /// policy and its demanded projection for the two op-carrying arms,
+        /// so a handler's whole reach, its domain ops included, is one
+        /// document Program itself produces and enforces.
+        Reach: 'Op -> OpReach
     }
 
 // ─── §3.6 effects and claims ───────────────────────────────────────────────
