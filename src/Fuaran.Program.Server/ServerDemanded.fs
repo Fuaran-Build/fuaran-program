@@ -309,6 +309,11 @@ module ServerDemanded =
     /// empty clause list. The document then says "unconstrained" by silence,
     /// which is the same thing the registry says by absence, rather than by an
     /// empty record a reader would have to know how to interpret.
+    ///
+    /// Every clause is carried as the host declared it, whatever its kind: a
+    /// deny-list beside an allow-list on one argument (Phase 1975) reaches the
+    /// document as two clauses, so a deployer reads the lock and the writable
+    /// set the gate enforces rather than one list computed from them.
     let withConstraints (registry: ServerEffectRegistry) (projection: DemandedProjection) : DemandedProjection =
         match projection.Server with
         | None -> projection
@@ -399,7 +404,8 @@ module ServerDemanded =
     ///
     /// **The policy is part of what is recomputed, which is the point.** A host
     /// that has RELAXED a bound since the record was signed — widened an
-    /// allow-list, raised a ceiling, dropped a clause — presents as drift with
+    /// allow-list, shortened a deny-list, raised a ceiling, dropped a clause —
+    /// presents as drift with
     /// the signed policy and the recomputed one both enumerated, exactly as a
     /// registration that gained a stage does. Signing the demand without the
     /// policy would have left the bound attestable and unverifiable: a verifier

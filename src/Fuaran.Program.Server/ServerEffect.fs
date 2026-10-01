@@ -294,7 +294,10 @@ module ServerEffectRegistry =
 [<RequireQualifiedAccess>]
 type ServerConstraintDefect =
     /// The effect carries a value for `argument` that the declared allow-list
-    /// for that argument does not permit.
+    /// for that argument does not permit, or that a declared deny-list for it
+    /// refuses (Phase 1975). One token for both, deliberately: the refusal names
+    /// the argument the host constrained, and which list excluded the value is a
+    /// fact about the value this type never carries.
     | OffList of argument: string
     /// The effect's declarative payload is larger than the declared ceiling.
     | OverCeiling of limit: int
@@ -310,7 +313,7 @@ type ServerConstraintDefect =
 /// reaching an endpoint nobody permitted is the confused deputy, and "may this
 /// session call out" is a different question from "may it call out THERE".
 ///
-/// ── What an allow-list ranges over ──────────────────────────────────────────
+/// ── What an allow-list (or a deny-list) ranges over ─────────────────────────
 /// The effect's NAMED arguments, as `arguments` below derives them. All five
 /// arms carry some: a host call's declarative argument object, a notification's
 /// channel, the by-reference sources a query reads, and — since Phase 1967 —
@@ -485,9 +488,34 @@ module ServerArgumentPolicy =
             else
                 Error(ServerConstraintDefect.OverCeiling limit)
         | Fuaran.Program.Bounded.ServerConstraintClause.Label _ -> Ok()
+        | Fuaran.Program.Bounded.ServerConstraintClause.DenyList(argument, refused) ->
+            // Phase 1975 — the complement of the allow-list, on the SAME reading:
+            // vacuously true when the effect carries no value under this
+            // argument, because a deny-list bounds what the effect reaches
+            // there and an effect naming nothing there reaches nothing there.
+            // What it does NOT need is a universe: a name the handler created
+            // during this run is admitted unless the list names it, which is
+            // the case an allow-list over the names that existed before the run
+            // refuses.
+            if
+                arguments ops effect
+                |> List.forall (fun (name, value) -> name <> argument || not (List.contains value refused))
+            then
+                Ok()
+            else
+                Error(ServerConstraintDefect.OffList argument)
 
     /// Check an effect against every clause declared for its capability, in the
     /// order they are declared, reporting the FIRST that refuses.
+    ///
+    /// A deny-list and an allow-list on ONE argument compose as a domain gate
+    /// composes a lock over a writable set — the lock wins, so a value on both
+    /// is refused — and that holds whatever order a host declared them in: each
+    /// clause must admit every value, so a value either one excludes is refused,
+    /// and both refuse with the same `OffList argument`. Declaration order
+    /// decides only WHICH defect a value failing clauses of DIFFERENT kinds is
+    /// reported under — a `Ceiling` declared before a `DenyList` is reported
+    /// first, and after it, second.
     ///
     /// An effect whose capability the registry does not constrain passes — the
     /// list is empty, so the fold is vacuous, and "unconstrained" needs no arm of

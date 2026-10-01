@@ -95,6 +95,32 @@ records what a consumer pays.
   the world, registers an `OpPerformance.Performed` and calls `Handler.runWith`. Its guards are
   expressions resolved against the state channel (K4); what a guard needs to read lives there.
 
+### Rides the draft: a deny-list clause on the server argument policy (Phase 1975)
+
+The third witness (a document pipeline under a server placement) found that a domain's LOCKED set had
+no spelling in the argument policy except an allow-list over the names that existed before the run —
+stale the moment a handler creates a block and then edits it. `docs/generic-tier.md` §3.5 records the
+finding; this records what it costs.
+
+- **`ServerConstraintClause` gains `DenyList of argument: string * refused: string list`** in
+  `Fuaran.Program.Bounded`. An effect carrying a value under `argument` that the list names is refused
+  as `ServerConstraintDefect.OffList argument` — the existing token, so `ServerArgumentPolicy.describe`
+  and every refusal a host already reads are unchanged. Beside an `AllowList` on the same argument a
+  name on both is refused, in either declaration order; clauses of different kinds are still checked
+  in declaration order.
+- **What a consumer pays.** Constructing and declaring clauses is additive: no existing clause,
+  verdict or document byte moves. A consumer with an EXHAUSTIVE `match` over `ServerConstraintClause`
+  stops compiling until it names the new case — a closed union gaining a case is a breaking change of
+  its own, which is why this entry says so rather than calling the change additive. It rides this
+  slot because the slot is already breaking and untagged: a change of no higher class than the draft
+  carries does not advance it.
+- **The demanded document carries it at version 5, without a move.** The clause encodes as
+  `{"clause":"denyList","argument":…,"refused":[…]}` beside the others, with `refused` a sorted set. A
+  move exists so a reader cannot take "predates the member" for "walked and empty"; no version-5
+  producer before this clause could declare a deny-list, so a document's silence about one is true
+  under every producer that wrote version 5, and a reader built before it refuses a document carrying
+  one at the clause rather than misreading it. Envelopes signed under the draft need no re-sign.
+
 The slot stays a DRAFT: tagging `v0.7.0` is the release gesture, a separate recorded act.
 
 ## 0.6.0 — RELEASED (tagged `v0.6.0`, 2026-09-28) — the core becomes domain-generic (Phase 1896)

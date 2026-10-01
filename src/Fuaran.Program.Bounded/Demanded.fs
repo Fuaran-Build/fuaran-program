@@ -137,10 +137,12 @@ type ReplayPosture =
 /// One clause of a capability's declared argument policy — the vocabulary a
 /// host writes a bound in, and the one this document carries it in.
 ///
-/// **A closed set of three, and the closure is the point**: this is what a
+/// **A closed set of four, and the closure is the point**: this is what a
 /// policy gate can decide about an effect's ARGUMENTS without interpreting a
-/// payload, so a fourth kind is a deliberate widening of what the gate reasons
-/// over rather than a new option on a record.
+/// payload, so a further kind is a deliberate widening of what the gate reasons
+/// over rather than a new option on a record. The fourth, `DenyList`, was such a
+/// widening (Phase 1975): "everything except these" has no allow-list spelling
+/// that survives a run which creates the names it later addresses.
 ///
 /// **A clause is PRESENT or it is not; there is no "unconstrained" clause.** An
 /// argument nobody allow-listed, a payload nobody bounded and a capability
@@ -162,6 +164,16 @@ type ServerConstraintClause =
     /// and an auditor, and inventing a meaning for it here would make it a
     /// policy nobody wrote.
     | Label of label: string
+    /// The values REFUSED for one named argument (Phase 1975) — the complement
+    /// of `AllowList`, and the shape of a domain's locked set: every value is
+    /// admitted except the ones named. It exists because an allow-list can only
+    /// say "everything except these" over a universe read BEFORE the run, and
+    /// that universe is stale the moment a handler creates a name and then
+    /// addresses it. Beside an allow-list on the same argument it composes as a
+    /// lock over a writable set: a value either list excludes is refused, so a
+    /// name on both is refused. An EMPTY refused list is a real declaration that
+    /// refuses nothing, never an absent one.
+    | DenyList of argument: string * refused: string list
 
 /// One capability's declared argument policy, as the document carries it.
 ///
@@ -654,6 +666,7 @@ module Demanded =
         | ServerConstraintClause.AllowList(argument, _) -> 0, argument
         | ServerConstraintClause.Ceiling _ -> 1, ""
         | ServerConstraintClause.Label _ -> 2, ""
+        | ServerConstraintClause.DenyList(argument, _) -> 3, argument
 
     /// Put a projection's every list into the canonical form the document
     /// promises: distinct, sorted, one entry per namespace. The single place
@@ -700,6 +713,11 @@ module Demanded =
                                         ServerConstraintClause.AllowList(
                                             argument,
                                             permitted |> List.distinct |> List.sort
+                                        )
+                                    | ServerConstraintClause.DenyList(argument, refused) ->
+                                        ServerConstraintClause.DenyList(
+                                            argument,
+                                            refused |> List.distinct |> List.sort
                                         )
                                     | other -> other)
                                 |> List.distinct
@@ -882,6 +900,9 @@ module Demanded =
     [<Literal>]
     let ClauseLabel = "label"
 
+    [<Literal>]
+    let ClauseDenyList = "denyList"
+
     /// The three common control characters keep their short escapes; every other
     /// control character (U+0000–U+001F) is escaped as `\u00XX`. A raw control
     /// byte inside a JSON string is invalid JSON, so this is a validity
@@ -964,6 +985,19 @@ module Demanded =
     /// the document, so every envelope signed under version 4 reports
     /// `Unreadable` drift under this reader, naming the version — the honest
     /// refusal, and a re-sign is the remedy (STABILITY.md, 0.7.0).
+    ///
+    /// **The `denyList` clause rides version 5 rather than moving it** (Phase
+    /// 1975), and the difference from every move above is the argument each one
+    /// made. A move exists so a reader cannot take "predates the member" for
+    /// "walked and empty"; a deny-list cannot be absent for the first reason,
+    /// because no producer of a version-5 document before this clause could
+    /// declare one, so a document's silence about deny-lists is true under every
+    /// producer that wrote version 5. What a reader built before it does with a
+    /// document that CARRIES one is refuse it — an unknown discriminator is a
+    /// refusal at the clause, never a misreading — and version 5 belongs to a
+    /// draft slot that no released reader reads. A move here would buy no
+    /// reader a truer answer and would cost every envelope signed under the
+    /// draft a re-sign.
     let encode (projection: DemandedProjection) : string =
         let effects = projection.Effects |> List.map q |> arr
 
@@ -1030,7 +1064,11 @@ module Demanded =
                                 | ServerConstraintClause.Ceiling bytes ->
                                     $"""{{"clause":{q ClauseCeiling},"bytes":{bytes}}}"""
                                 | ServerConstraintClause.Label label ->
-                                    $"""{{"clause":{q ClauseLabel},"label":{q label}}}""")
+                                    $"""{{"clause":{q ClauseLabel},"label":{q label}}}"""
+                                | ServerConstraintClause.DenyList(argument, refused) ->
+                                    let values = refused |> List.map q |> arr
+
+                                    $"""{{"clause":{q ClauseDenyList},"argument":{q argument},"refused":{values}}}""")
                             |> arr
 
                         $"""{{"capability":{q c.Capability},"clauses":{clauses}}}""")
@@ -1461,6 +1499,12 @@ module Demanded =
                 declaredOnly version path [ "clause"; "label" ] value
                 |> Result.bind (fun () -> requireString version (child path "label") "label" value)
                 |> Result.map ServerConstraintClause.Label
+            | ClauseDenyList ->
+                declaredOnly version path [ "clause"; "argument"; "refused" ] value
+                |> Result.bind (fun () -> requireString version (child path "argument") "argument" value)
+                |> Result.bind (fun argument ->
+                    requireStrings version (child path "refused") "refused" value
+                    |> Result.map (fun refused -> ServerConstraintClause.DenyList(argument, refused)))
             | other ->
                 failWith
                     DemandedDefect.WrongType

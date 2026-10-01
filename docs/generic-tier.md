@@ -307,6 +307,27 @@ The demanded document carries the reach as a server-tier member, at version 5 (�
 NAME the op reaches, never its payload: the UI witness answers the nodes a tree op addresses and
 deliberately not its prop paths, binding slots or values.
 
+**A reach can be bounded from either side (Phase 1975).** `ServerConstraintClause` was `AllowList |
+Ceiling | Label`: a policy could say which values an argument MAY carry, and not which it may NOT. A
+domain whose own gate is a lock — a set of names nothing may touch, everything else writable — then
+had one spelling for it, an allow-list over every name that existed when the policy was written. The
+third witness (a document pipeline under a server placement) found what that costs: the universe is
+stale the moment a handler creates a block and then edits it, so an insert-then-edit the domain's gate
+admitted was refused here, and an op addressing a block that does not exist — the apply engine's
+question — was refused at the policy instead of rejected as an op. Both are the one cause. `DenyList
+of argument * refused` is the missing half: an effect carrying a value the list names is refused as
+`OffList argument`, the same closed token, naming the argument and never the value; an effect naming
+nothing under the argument passes, on the reading the allow-list takes. Beside an allow-list on the
+same argument it composes as the domain composes its lock over its writable set — the lock wins, so a
+name on both is refused — and since every clause must admit every value, that verdict does not depend
+on which of the two a host declared first. Clauses of different kinds are still checked in
+declaration order, so a value over a `Ceiling` and on a `DenyList` is reported under whichever came
+first. The demanded document carries it as `{"clause":"denyList","argument":…,"refused":[…]}` beside
+the other clauses, a sorted set like a permitted list, and does so at version 5 without a move: a
+document's silence about deny-lists is true under every producer that ever wrote version 5, and a
+reader built before the clause refuses a document carrying one at the clause rather than misreading
+it.
+
 **The rejection stays `string` (W5, decided in D19).** `StreamWitness`'s `'Rej` is fixed at `string`
 here and stays so: a seventh type parameter would reach every public type that names the witness, the
 handler's halt vocabulary and the outcome wire — where a reason is a string by specification — to
