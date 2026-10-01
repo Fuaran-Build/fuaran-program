@@ -262,7 +262,7 @@ For every program in the REVERSIBLE FRAGMENT — `reversible`, decided from the 
 assign, the guard, a branch WITH an exit assertion, a repeat with a LITERAL bound; never a call or a
 leaf — and every store it runs on (the traced run from that store does not halt, and its trace is
 `restorable`: every write overwrote a PRESENT key), folding the inverse of the run from the store the
-run left gives back the store it started from, and does not halt. In the shard's words, `run (reverse
+run left gives back the store it started from, and does not halt. In one line, `run (reverse
 p) (run p s) = s`, with `reverse` applied to the RUN — the program and the trace `fold_traced`
 recorded for it — which is what the Bennett embedding of `Assign` makes it: an assignment destroys
 the value it overwrites, so a reversible run records that value and the inverse restores it with an

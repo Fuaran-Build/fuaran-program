@@ -1622,7 +1622,7 @@ let reverse_many_cons (#a: Type0) (#e: Type0) (#v: Type0)
 /// its trace is restorable — folding the inverse of the run from the
 /// store the run left gives back `s`, and does not halt. The forward run
 /// is at placement `pl` and the inverse at any `pl'`: the fragment has no
-/// call, so neither touches its placement. In the shard's words:
+/// call, so neither touches its placement. In one line:
 /// `run (reverse p) (run p s) = s`, with `reverse` applied to the RUN
 /// (the program and its trace), which is what the Bennett embedding of
 /// `Assign` makes it.
