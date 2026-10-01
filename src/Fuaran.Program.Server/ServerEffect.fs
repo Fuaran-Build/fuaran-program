@@ -119,6 +119,49 @@ module ServerEffectDenial =
         | ServerEffectDenial.GateRefused capability ->
             sprintf "effect '%s' was not performed: the policy gate refused it" capability
 
+/// A host-declared post-condition on a performer's RESULT — SCIO*'s `import`
+/// wrapper in this estate's shape (Phase 1759). A performer is unverified code;
+/// what the handler can do about that is check what it ANSWERS before the
+/// answer re-enters the interpreter's state, and that check is this: a name,
+/// which is the host's own vocabulary and so safe to surface, and the
+/// predicate. `ServerEffectRegistry.registerChecked` composes it with a
+/// performer at registration, so the handler's perform phase never sees a
+/// result the contract rejected — it sees a refusal, and rolls back.
+///
+/// `proofs/EffectGate.fst` (`contract`, `check_return`) models this record and
+/// the wrapper and proves `return_contract`: every result that reaches the
+/// store honours its contract, and a rejected one is a typed `PerformFailed`
+/// naming the capability and the contract's NAME, never the value.
+type ReturnContract =
+    {
+        /// What the host calls this contract — the one thing a refusal says.
+        Name: string
+        /// Whether a result satisfies it.
+        Holds: Fuaran.Core.JVal -> bool
+    }
+
+module ReturnContract =
+
+    /// The refusal's text, on the terms a denial keeps: the NAME and never the
+    /// value. A result the contract rejected is not echoed anywhere.
+    let describe (contract: ReturnContract) : string = "return-contract:" + contract.Name
+
+    /// The wrapper: a result the contract rejects becomes the host's own
+    /// refusal, carrying the contract's name; a raw refusal passes through
+    /// unchanged. `EffectGate.check_return` is this, clause for clause.
+    let check
+        (contract: ReturnContract)
+        (performer: Fuaran.Core.JVal -> Result<Fuaran.Core.JVal, string>)
+        : Fuaran.Core.JVal -> Result<Fuaran.Core.JVal, string> =
+        fun args ->
+            match performer args with
+            | Error reason -> Error reason
+            | Ok result ->
+                if contract.Holds result then
+                    Ok result
+                else
+                    Error(describe contract)
+
 /// A closed, default-deny registry of the server placement's effect
 /// permissions, plus the performers for the one arm that needs them.
 type ServerEffectRegistry =
@@ -180,6 +223,19 @@ module ServerEffectRegistry =
         : ServerEffectRegistry =
         { registry with
             HostFunctions = Map.add fn performer registry.HostFunctions }
+
+    /// Register a `HostCall` performer under a function name WITH a return
+    /// contract: the performer the registry holds is `ReturnContract.check
+    /// contract performer`, so a result the contract rejects reaches the
+    /// handler as a refusal and never as a value. Registering does NOT permit,
+    /// on exactly `register`'s terms.
+    let registerChecked
+        (fn: string)
+        (contract: ReturnContract)
+        (performer: Fuaran.Core.JVal -> Result<Fuaran.Core.JVal, string>)
+        (registry: ServerEffectRegistry)
+        : ServerEffectRegistry =
+        register fn (ReturnContract.check contract performer) registry
 
     /// Replace the policy gate.
     let withGate (gate: string -> bool) (registry: ServerEffectRegistry) : ServerEffectRegistry =

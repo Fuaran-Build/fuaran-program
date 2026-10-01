@@ -2,8 +2,8 @@
 <#
 .SYNOPSIS
     The whole proof leg for every model under proofs/ — Phase 1715's
-    bounded-fold theorem, Phase 1716's budget theorem and Phase 1717's
-    staging theorem.
+    bounded-fold theorem, Phase 1716's budget theorem, Phase 1717's
+    staging theorem and Phase 1759's effect-gate theorem.
 
 .DESCRIPTION
     Self-contained and runnable from the repository root:
@@ -32,7 +32,7 @@
       6. RUN each module's differential host — an Expecto list inside
          the test project the module names (`Fuaran.Program.Parity.Tests`
          for the fold and the budget, `Fuaran.Program.Server.Tests` for
-         staging) that runs the extracted model beside production and
+         staging and the effect gate) that runs the extracted model beside production and
          requires them to agree. Production at the UI witness is the UI
          adapter package (`src/Fuaran.Program.UI`), so the host names
          below follow that code, not the core's. Skippable with
@@ -135,6 +135,15 @@ $modules = @(
         HostList     = "Phase 1717 - the proved staging as oracle"
         HostMinCases = 6
         HostSubject  = "the HandlerLoopTests and DurableInterpreterTests staging cases and every plan-phase halt, each with a scripted performer failing at every position of the staged list, against Handler.run through the UI witness (src/Fuaran.Program.Server.UI)"
+    }
+    @{
+        Name         = "EffectGate"
+        Source       = "EffectGate.fst"
+        Oracle       = "oracle/EffectGate.fs"
+        HostProject  = "Fuaran.Program.Server.Tests"
+        HostList     = "Phase 1759 - the proved effect gate as oracle"
+        HostMinCases = 7
+        HostSubject  = "the ServerEffectTests registry shapes and the generated (capability, gate, performer) triples, comparing the denial stream, the performed set and the post-state against Handler.run with ReturnContract-wrapped performers; the go-red lookup-before-gate mutant"
     }
 )
 

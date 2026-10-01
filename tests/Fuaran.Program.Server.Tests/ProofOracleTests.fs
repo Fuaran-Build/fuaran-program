@@ -748,3 +748,731 @@ let stagingTests =
                   failtest
                       "the comparison harness did not report a performer that lied — a harness that cannot lose is not evidence"
           } ]
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Phase 1759 — the proved effect gate as oracle.
+//
+//  `proofs/EffectGate.fst` proves, OVER the staging model above, that the gate
+//  is consulted before any performer (`gate_before_perform`), that a stateless
+//  gate is sufficient for every policy inductive under it (`policy_sufficient`)
+//  and that a return contract checks a performer's result before it reaches
+//  the store (`return_contract`). The runtime piece it adds is one wrapper,
+//  `check_return`, which is `ReturnContract.check` in production; the host
+//  below builds the model's registry so that the model wraps the RAW
+//  performer with the EXTRACTED wrapper while production wraps it with its
+//  own, and compares the two over the `ServerEffectTests` registry shapes and
+//  generated (capability, gate, performer) triples: the outcomes, the
+//  performers' logs, the DENIAL STREAM (production's `OnDenied` sink against
+//  both sides' `Denied` diagnostics) and the ORDER of events — every performer
+//  invocation preceded by the gate's decision on its capability.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// The model's performer token for this host: the function NAME and the raw
+/// closure, so `checked_by` can key a contract by the name the host declared
+/// it under — which is how `registerChecked` keys it.
+type private GateToken = string * Performer
+
+type private GateModelRegistry = Staging.registry<Fuaran.Core.JVal, TreeOp<obj>, Query, GateToken>
+
+type private GateAccumulator =
+    Staging.accumulator<
+        Node<obj>,
+        BindingSources,
+        Fuaran.Core.JVal,
+        TreeOp<obj>,
+        ClientEffect,
+        BoundedDiagnostic,
+        GateToken
+     >
+
+/// What happened, in order: `gate:<capability>` when the gate was asked,
+/// `perform:<fn>` when a performer was invoked, `deny:<capability>` when the
+/// sink fired. The ground truth `gate_before_perform` is checked against.
+type private Events = System.Collections.Generic.List<string>
+
+/// The three performer behaviours a triple ranges over.
+type private Behaviour =
+    /// Answers a string — the value the `text` contract admits.
+    | Answers
+    /// Answers a number — admitted by no contract, so a checked function
+    /// refuses it and an unchecked one lands it.
+    | AnswersWrongly
+    /// Refuses outright, with the host's own reason.
+    | Refuses
+
+let private behave (events: Events) (behaviour: Behaviour) : string -> Performer =
+    fun name ->
+        fun _ ->
+            events.Add("perform:" + name)
+
+            match behaviour with
+            | Answers -> Ok(jstr ("ran:" + name))
+            | AnswersWrongly -> Ok(Fuaran.Core.JInt 1)
+            | Refuses -> Error("host refused " + name)
+
+/// The one contract the corpus declares, on `audit` only: the result is text.
+let private textContract: ReturnContract =
+    { Name = "text"
+      Holds =
+        fun value ->
+            match value with
+            | Fuaran.Core.JStr _ -> true
+            | _ -> false }
+
+/// The functions a triple registers: `audit` behind the contract, `raw`
+/// without one. `missing` is never registered and is what the lookup misses.
+let private checkedFunctions = [ "audit", Some textContract; "raw", None ]
+
+/// A gate SHAPE — the gate itself plus the argument policy a case narrows
+/// with, applied to both sides alike.
+type private GateShape =
+    { Label: string
+      Gate: string -> bool
+      Narrow: ServerEffectRegistry -> ServerEffectRegistry }
+
+let private gateShapes: GateShape list =
+    [ { Label = "deny-all"
+        Gate = (fun _ -> false)
+        Narrow = id }
+      { Label = "permissive"
+        Gate = (fun _ -> true)
+        Narrow = id }
+      { Label = "reads-only"
+        Gate = (fun cap -> cap = "RunQuery")
+        Narrow = id }
+      { Label = "host-only"
+        Gate = (fun cap -> cap.StartsWith("host:", StringComparison.Ordinal))
+        Narrow = id }
+      { Label = "an-exact-set"
+        Gate = (fun cap -> List.contains cap [ "ApplyOps"; "host:audit"; "Notify" ])
+        Narrow = id }
+      { Label = "permissive, with the notification channel allow-listed elsewhere"
+        Gate = (fun _ -> true)
+        Narrow = ServerEffectRegistry.constrain "Notify" [ ServerConstraintClause.AllowList("channel", [ "other" ]) ] }
+      { Label = "permissive, with a four-byte ceiling on audit"
+        Gate = (fun _ -> true)
+        Narrow = ServerEffectRegistry.constrain "host:audit" [ ServerConstraintClause.Ceiling 4 ] } ]
+
+/// The effects a triple ranges over — one per capability the corpus can name,
+/// including the unregistered host function.
+let private effects: (string * ServerEffect<TreeOp<obj>>) list =
+    [ "RunQuery", ServerEffect.RunQuery("rows", Fuaran.Core.Embedded rows, limitTwo)
+      "ApplyOps", ServerEffect.ApplyOps [ TreeOp.RemoveNode(NodeId "call") ]
+      "host:audit", ServerEffect.HostCall("audit", jstr "note", Some "audited")
+      "host:raw", ServerEffect.HostCall("raw", jstr "note", Some "rawed")
+      "host:missing", ServerEffect.HostCall("missing", jstr "note", None)
+      "EmitPatch", ServerEffect.EmitPatch [ TreeOp.RemoveNode(NodeId "call") ]
+      "Notify", ServerEffect.Notify("channel", jstr "note") ]
+
+/// The programs a triple's effect is run in: alone, after a checked host
+/// call, and after an unchecked and a checked host call.
+let private programs (effect: ServerEffect<TreeOp<obj>>) : (string * HandlerStage list) list =
+    [ "alone", [ Effect effect ]
+      "after audit",
+      [ Effect(ServerEffect.HostCall("audit", jstr "first", Some "first"))
+        Effect effect ]
+      "after raw and audit",
+      [ Effect(ServerEffect.HostCall("raw", jstr "one", None))
+        Effect(ServerEffect.HostCall("audit", jstr "two", Some "second"))
+        Effect effect ] ]
+
+/// A (capability, gate, performer) triple, as a runnable case.
+type private Triple =
+    { Capability: string
+      Program: string
+      Stages: HandlerStage list
+      Shape: GateShape
+      Behaviour: Behaviour }
+
+let private triples: Triple list =
+    [ for capability, effect in effects do
+          for program, stages in programs effect do
+              for shape in gateShapes do
+                  for behaviour in [ Answers; AnswersWrongly; Refuses ] do
+                      { Capability = capability
+                        Program = program
+                        Stages = stages
+                        Shape = shape
+                        Behaviour = behaviour } ]
+
+/// Production's registry for a triple: the contract-bearing functions through
+/// `registerChecked`, the rest through `register`; the gate and the sink both
+/// logging to the event list.
+let private productionRegistry (events: Events) (triple: Triple) : ServerEffectRegistry =
+    let performer = behave events triple.Behaviour
+
+    checkedFunctions
+    |> List.fold
+        (fun r (fn, contract) ->
+            match contract with
+            | Some c -> ServerEffectRegistry.registerChecked fn c (performer fn) r
+            | None -> ServerEffectRegistry.register fn (performer fn) r)
+        ServerEffectRegistry.denyAll
+    |> ServerEffectRegistry.withGate (fun cap ->
+        events.Add("gate:" + cap)
+        triple.Shape.Gate cap)
+    |> triple.Shape.Narrow
+    |> ServerEffectRegistry.onDenied (fun denial ->
+        match denial with
+        | ServerEffectDenial.Unregistered cap -> events.Add("deny:unregistered:" + cap)
+        | ServerEffectDenial.GateRefused cap -> events.Add("deny:gate:" + cap))
+
+/// The model's registry for the same triple: the gate and the argument policy
+/// are production's own members (the assumed rung, as above); the lookup
+/// answers the RAW closure as a token, and the behaviour is the EXTRACTED
+/// `checked_by` over it — so what the model wraps with is the model's.
+let private gateModelRegistry (events: Events) (triple: Triple) : GateModelRegistry =
+    let performer = behave events triple.Behaviour
+
+    let raw =
+        checkedFunctions |> List.map (fun (fn, _) -> fn, performer fn) |> Map.ofList
+
+    let contracts =
+        checkedFunctions
+        |> List.choose (fun (fn, contract) -> contract |> Option.map (fun c -> fn, c))
+        |> Map.ofList
+
+    // Production's gate and policy, read through the staging bridge above —
+    // the registry it is given has no performers, which is fine, because the
+    // bridge is only consulted for `r_gate` and `r_policy` here.
+    let policyBearer =
+        ServerEffectRegistry.denyAll
+        |> ServerEffectRegistry.withGate (fun cap ->
+            events.Add("gate:" + cap)
+            triple.Shape.Gate cap)
+        |> triple.Shape.Narrow
+        |> modelRegistry
+
+    let contractOf ((fn, _): GateToken) : Staging.opt<EffectGate.contract<Fuaran.Core.JVal>> =
+        contracts
+        |> Map.tryFind fn
+        |> Option.map (fun c ->
+            { EffectGate.ct_name = c.Name
+              EffectGate.ct_holds = c.Holds })
+        |> modelOpt
+
+    let rawBehaviour ((_, perf): GateToken) (args: Fuaran.Core.JVal) : Staging.res<Fuaran.Core.JVal> =
+        perf args |> modelRes
+
+    { r_gate = policyBearer.r_gate
+      r_policy = policyBearer.r_policy
+      r_lookup = fun fn -> raw |> Map.tryFind fn |> Option.map (fun perf -> fn, perf) |> modelOpt
+      r_perf = EffectGate.checked_by contractOf rawBehaviour }
+
+let private handlerOf (triple: Triple) : Handler =
+    { Name = triple.Capability
+      Stages = triple.Stages }
+
+let private modelStore: Staging.store<Node<obj>, BindingSources> =
+    { st_tree = loopStore.Tree
+      st_bindings = loopStore.Bindings }
+
+type private GateRun =
+    { Production: HandlerOutcome
+      ProductionEvents: string list
+      Model: HandlerOutcome
+      ModelEvents: string list }
+
+/// One triple on both sides — production, and the model through `run`, which
+/// is the extraction's `Staging.run` unless a mutant is handed in.
+let private runTripleWith
+    (run:
+        ModelWitness
+            -> GateModelRegistry
+            -> string
+            -> ModelStage list
+            -> Staging.store<Node<obj>, BindingSources>
+            -> HandlerOutcome)
+    (triple: Triple)
+    : GateRun =
+    let productionEvents = Events()
+    let modelEvents = Events()
+
+    let production =
+        Handler.run
+            (productionRegistry productionEvents triple)
+            Fuaran.Core.DataFrame.noResolve
+            "call"
+            (handlerOf triple)
+            loopStore
+
+    let model =
+        run
+            (modelWitness Fuaran.Core.DataFrame.noResolve)
+            (gateModelRegistry modelEvents triple)
+            "call"
+            (triple.Stages |> List.map modelStage)
+            modelStore
+
+    { Production = production
+      ProductionEvents = List.ofSeq productionEvents
+      Model = model
+      ModelEvents = List.ofSeq modelEvents }
+
+let private runTriple (triple: Triple) : GateRun =
+    runTripleWith (fun w reg nodeId stages store -> Staging.run w reg nodeId stages store |> productionShaped) triple
+
+/// The denials an outcome's diagnostics carry, in order, as the sink spells
+/// them — so the sink's log and the diagnostics compare as one list.
+let private deniedIn (outcome: HandlerOutcome) : string list =
+    outcome.Diagnostics
+    |> List.choose (fun d ->
+        match d with
+        | ServerDiagnostic.Denied(ServerEffectDenial.Unregistered cap) -> Some("deny:unregistered:" + cap)
+        | ServerDiagnostic.Denied(ServerEffectDenial.GateRefused cap) -> Some("deny:gate:" + cap)
+        | _ -> None)
+
+let private sinkLog (events: string list) =
+    events |> List.filter (fun e -> e.StartsWith("deny:", StringComparison.Ordinal))
+
+let private performerLog (events: string list) =
+    events
+    |> List.filter (fun e -> e.StartsWith("perform:", StringComparison.Ordinal))
+
+let private describeTriple (triple: Triple) =
+    sprintf "%s, %s, gate %s, performer %A" triple.Capability triple.Program triple.Shape.Label triple.Behaviour
+
+/// The whole comparison for one triple, as a reported divergence or nothing:
+/// the outcomes project equal; the performers were asked the same things in
+/// the same order; and the denial stream is one list three ways — production's
+/// sink, production's diagnostics, the model's diagnostics.
+let private gateDivergence (triple: Triple) (run: GateRun) : string option =
+    let where = describeTriple triple
+    let production = projectionOf run.Production
+    let model = projectionOf run.Model
+
+    if production <> model then
+        Some(sprintf "%s: the outcomes differ\n  production: %A\n  model:      %A" where production model)
+    elif performerLog run.ProductionEvents <> performerLog run.ModelEvents then
+        Some(
+            sprintf
+                "%s: the performers were asked different things\n  production: %A\n  model:      %A"
+                where
+                (performerLog run.ProductionEvents)
+                (performerLog run.ModelEvents)
+        )
+    elif sinkLog run.ProductionEvents <> deniedIn run.Production then
+        Some(
+            sprintf
+                "%s: production's sink saw %A but its diagnostics carry %A"
+                where
+                (sinkLog run.ProductionEvents)
+                (deniedIn run.Production)
+        )
+    elif deniedIn run.Production <> deniedIn run.Model then
+        Some(
+            sprintf
+                "%s: the denial streams differ\n  production: %A\n  model:      %A"
+                where
+                (deniedIn run.Production)
+                (deniedIn run.Model)
+        )
+    else
+        None
+
+/// `gate_before_perform`, read off production's event log: every performer
+/// invocation is preceded by the gate's decision on that function's
+/// capability.
+let private performerPrecededByGate (events: string list) : string option =
+    let indexed = events |> List.indexed
+
+    indexed
+    |> List.tryPick (fun (i, e) ->
+        if e.StartsWith("perform:", StringComparison.Ordinal) then
+            let capability = "host:" + e.Substring("perform:".Length)
+
+            let gated = indexed |> List.exists (fun (j, g) -> j < i && g = "gate:" + capability)
+
+            if gated then
+                None
+            else
+                Some(sprintf "%s ran with no prior gate decision on %s: %A" e capability events)
+        else
+            None)
+
+// ─── The ServerEffectTests registry shapes, re-declared ────────────────────
+
+/// What `ServerEffectTests` pins about the registry, as triples: the default
+/// refuses every kind; registration does not permit; permission does not
+/// register; a host call is namespaced away from the built-in arms. Each is a
+/// shape the generated corpus also reaches; naming them here is what ties the
+/// differential to the suite the shard names.
+let private registryShapeTriples: Triple list =
+    let shape label gate =
+        { Label = label
+          Gate = gate
+          Narrow = id }
+
+    [ // the default registry refuses everything — every kind, under deny-all
+      for capability, effect in effects do
+          { Capability = capability
+            Program = "alone"
+            Stages = [ Effect effect ]
+            Shape = shape "deny-all (the default)" (fun _ -> false)
+            Behaviour = Answers }
+      // registration does not permit: audit is registered, the gate refuses it
+      { Capability = "host:audit"
+        Program = "alone"
+        Stages = [ Effect(ServerEffect.HostCall("audit", jstr "note", None)) ]
+        Shape = shape "everything but host:audit" (fun cap -> cap <> "host:audit")
+        Behaviour = Answers }
+      // permission does not register: missing is permitted, nobody performs it
+      { Capability = "host:missing"
+        Program = "alone"
+        Stages = [ Effect(ServerEffect.HostCall("missing", jstr "note", None)) ]
+        Shape = shape "permissive" (fun _ -> true)
+        Behaviour = Answers }
+      // a host function named like a built-in arm is still host:<fn>
+      { Capability = "host:ApplyOps"
+        Program = "alone"
+        Stages = [ Effect(ServerEffect.HostCall("ApplyOps", jstr "note", None)) ]
+        Shape = shape "ApplyOps only" (fun cap -> cap = "ApplyOps")
+        Behaviour = Answers } ]
+
+// ─── The go-red mutant: lookup before the gate ──────────────────────────────
+
+/// A model whose `HostCall` arm consults the performer LOOKUP before the gate
+/// — the one reordering the shard names — with every other clause the
+/// extraction's. Observable exactly when a host call is both unregistered and
+/// refused: production and the honest model land `GateRefused`, this lands
+/// `Unregistered`, because it asked the registry about the performer before
+/// asking the gate whether it may.
+let private lookupFirstPlanStage
+    (w: ModelWitness)
+    (reg: GateModelRegistry)
+    (nodeId: string)
+    (stage: ModelStage)
+    (acc: GateAccumulator)
+    : GateAccumulator =
+    match stage with
+    | Staging.SEffect(Staging.HostCall(fn, _, _) as effect) ->
+        match reg.r_lookup fn with
+        | Staging.ONone -> Staging.deny (Staging.Unregistered(Staging.capability effect)) acc
+        | Staging.OSome _ -> Staging.plan_stage w reg nodeId stage acc
+    | _ -> Staging.plan_stage w reg nodeId stage acc
+
+let rec private lookupFirstPlan
+    (w: ModelWitness)
+    (reg: GateModelRegistry)
+    (nodeId: string)
+    (stages: ModelStage list)
+    (acc: GateAccumulator)
+    : GateAccumulator =
+    match stages with
+    | [] -> acc
+    | stage :: rest ->
+        lookupFirstPlan
+            w
+            reg
+            nodeId
+            rest
+            (if acc.ac_halted then
+                 acc
+             else
+                 lookupFirstPlanStage w reg nodeId stage acc)
+
+/// `Staging.run` with the mutant plan phase; the phase boundary, the perform
+/// phase and the two outcome constructors are the extraction's.
+let private lookupFirstRun
+    (w: ModelWitness)
+    (reg: GateModelRegistry)
+    (nodeId: string)
+    (stages: ModelStage list)
+    (store: Staging.store<Node<obj>, BindingSources>)
+    : HandlerOutcome =
+    let planned = lookupFirstPlan w reg nodeId stages (Staging.start store)
+
+    let final =
+        if planned.ac_halted then
+            planned
+        else
+            Staging.perform w reg (Staging.rev planned.ac_staged) planned
+
+    let outcome: ModelOutcome =
+        if final.ac_halted then
+            { oc_store = store
+              oc_committed = false
+              oc_performed = Staging.rev final.ac_externally
+              oc_patches = []
+              oc_notifications = []
+              oc_client_effects = []
+              oc_diagnostics = Staging.rev final.ac_diagnostics }
+        else
+            { oc_store = final.ac_store
+              oc_committed = true
+              oc_performed = Staging.app (Staging.rev final.ac_performed) (Staging.rev final.ac_externally)
+              oc_patches = Staging.rev final.ac_patches
+              oc_notifications = Staging.rev final.ac_notifications
+              oc_client_effects = Staging.rev final.ac_client_effects
+              oc_diagnostics = Staging.rev final.ac_diagnostics }
+
+    productionShaped outcome
+
+// ─── The tests ──────────────────────────────────────────────────────────────
+
+[<Tests>]
+let effectGateTests =
+    testList
+        "Phase 1759 - the proved effect gate as oracle"
+        [ test
+              "the corpus reaches every verdict - a gate refusal, a missing performer, a policy halt, a contract refusal, a raw refusal and a commit" {
+              // A corpus whose every run committed, or whose every run was
+              // refused at the gate, would compare two sides over none of the
+              // clauses the theorems are about. The floor is that every arm
+              // of the plan phase's decision and every verdict of the perform
+              // phase is reached at least once.
+              let runs = triples |> List.map (fun t -> t, runTriple t)
+
+              let has (predicate: Triple -> GateRun -> bool) =
+                  runs |> List.exists (fun (t, r) -> predicate t r)
+
+              let hasDiagnostic (predicate: ServerDiagnostic -> bool) =
+                  has (fun _ r -> r.Production.Diagnostics |> List.exists predicate)
+
+              Expect.isTrue (List.length triples >= 100) "the generated corpus is smaller than a hundred triples"
+              Expect.isTrue (has (fun _ r -> r.Production.Committed)) "no run committed"
+
+              Expect.isTrue
+                  (has (fun _ r -> deniedIn r.Production |> List.exists (fun d -> d.StartsWith "deny:gate:")))
+                  "no run was refused at the gate"
+
+              Expect.isTrue
+                  (has (fun _ r ->
+                      deniedIn r.Production
+                      |> List.exists (fun d -> d.StartsWith "deny:unregistered:")))
+                  "no run missed a performer"
+
+              Expect.isTrue
+                  (hasDiagnostic (fun d ->
+                      match d with
+                      | ServerDiagnostic.Failed(_, reason) ->
+                          reason.StartsWith "argument-not-allowed:"
+                          || reason.StartsWith "payload-over-ceiling:"
+                      | _ -> false))
+                  "no run halted on the argument policy"
+
+              Expect.isTrue
+                  (hasDiagnostic (fun d ->
+                      match d with
+                      | ServerDiagnostic.PerformFailed(_, reason) -> reason = ReturnContract.describe textContract
+                      | _ -> false))
+                  "no run had a result refused by the return contract"
+
+              Expect.isTrue
+                  (hasDiagnostic (fun d ->
+                      match d with
+                      | ServerDiagnostic.PerformFailed(_, reason) -> reason.StartsWith "host refused"
+                      | _ -> false))
+                  "no run had a performer refuse outright"
+
+              Expect.isTrue
+                  (has (fun t r ->
+                      t.Capability = "host:raw"
+                      && t.Behaviour = AnswersWrongly
+                      && r.Production.Committed))
+                  "no unchecked function landed the value the contract would have refused"
+          }
+
+          test "the oracle agrees with production on the ServerEffectTests registry shapes" {
+              let divergences =
+                  registryShapeTriples |> List.choose (fun t -> gateDivergence t (runTriple t))
+
+              Expect.isEmpty divergences "the extracted model and production diverged"
+          }
+
+          test
+              "the oracle agrees with production on every generated (capability, gate, performer) triple - outcome, denial stream, performed set" {
+              let divergences = triples |> List.choose (fun t -> gateDivergence t (runTriple t))
+
+              Expect.isEmpty divergences "the extracted model and production diverged"
+          }
+
+          test "the gate is consulted before any performer, and every performed capability is one the gate admitted" {
+              // `gate_before_perform` and `policy_sufficient`, as instances
+              // against production: the event log orders every invocation
+              // after its gate decision, and `Performed` passes the extracted
+              // `admitted` under the triple's own gate.
+              for t in triples @ registryShapeTriples do
+                  let run = runTriple t
+                  let where = describeTriple t
+
+                  match performerPrecededByGate run.ProductionEvents with
+                  | Some report -> failtest (sprintf "%s: %s" where report)
+                  | None -> ()
+
+                  Expect.isTrue
+                      (EffectGate.admitted t.Shape.Gate run.Production.Performed)
+                      (sprintf
+                          "%s: Performed carries a capability the gate did not admit: %A"
+                          where
+                          run.Production.Performed)
+
+                  Expect.isTrue
+                      (EffectGate.admitted t.Shape.Gate run.Model.Performed)
+                      (sprintf "%s: the model's Performed carries a capability the gate did not admit" where)
+          }
+
+          test
+              "a refused capability lands exactly one denial carrying the capability, and nothing after it is planned or performed" {
+              // `gate_refusal_halts_run`: for every triple whose program's own
+              // effect the gate refuses after the stages before it were
+              // admitted — the outcome is uncommitted, the store is the entry
+              // store, nothing is performed, and the diagnostics end with the
+              // one GateRefused denial, which by its type carries the
+              // capability and nothing else.
+              let refused =
+                  [ for t in triples do
+                        let before =
+                            t.Stages
+                            |> List.take (List.length t.Stages - 1)
+                            |> List.forall (fun s ->
+                                match s with
+                                | Effect e -> t.Shape.Gate(ServerEffect.capability e)
+                                | Compute _ -> true)
+
+                        if before && not (t.Shape.Gate t.Capability) then
+                            yield t, runTriple t ]
+
+              Expect.isTrue (List.length refused >= 20) "fewer than twenty triples end in a gate refusal"
+
+              for t, run in refused do
+                  let where = describeTriple t
+                  let outcome = run.Production
+                  Expect.isFalse outcome.Committed (sprintf "%s: committed past a refusal" where)
+
+                  Expect.isTrue
+                      (LanguagePrimitives.PhysicalEquality outcome.Store.Tree loopStore.Tree)
+                      (sprintf "%s: the tree is not the entry tree" where)
+
+                  Expect.isEmpty outcome.Performed (sprintf "%s: something is reported performed" where)
+                  Expect.isEmpty (performerLog run.ProductionEvents) (sprintf "%s: a performer ran" where)
+
+                  Expect.equal
+                      (deniedIn outcome |> List.filter (fun d -> d.StartsWith "deny:gate:"))
+                      [ "deny:gate:" + t.Capability ]
+                      (sprintf "%s: not exactly one gate denial naming the capability" where)
+
+                  match List.tryLast outcome.Diagnostics with
+                  | Some(ServerDiagnostic.Denied(ServerEffectDenial.GateRefused cap)) ->
+                      Expect.equal cap t.Capability (sprintf "%s: the denial names another capability" where)
+                  | other -> failtest (sprintf "%s: the last diagnostic is %A, not the denial" where other)
+          }
+
+          test
+              "a result the return contract rejects is a typed refusal naming the contract, the handler rolls back, and the store never sees it" {
+              // `return_contract`: the checked function answering a value the
+              // contract rejects, under a gate that admits it. Position k is
+              // where `audit` sits among the staged calls; everything before
+              // it ran, nothing after it did, the store is the entry store,
+              // and the last diagnostic names the capability and the
+              // contract's NAME — not the value.
+              let rejected =
+                  [ for t in triples do
+                        if t.Behaviour = AnswersWrongly && t.Shape.Label = "permissive" then
+                            let staged =
+                                t.Stages
+                                |> List.choose (fun s ->
+                                    match s with
+                                    | Effect(ServerEffect.HostCall(fn, _, _)) when fn <> "missing" -> Some fn
+                                    | _ -> None)
+
+                            // The theorem's hypothesis is that the plan completed: a
+                            // program the plan phase halts — a missing performer
+                            // after the checked call — never reaches the perform
+                            // phase, and is the staging theorem's case, not this one.
+                            let plans =
+                                t.Stages
+                                |> List.forall (fun s ->
+                                    match s with
+                                    | Effect(ServerEffect.HostCall("missing", _, _)) -> false
+                                    | _ -> true)
+
+                            match List.tryFindIndex ((=) "audit") staged with
+                            | Some k when plans -> yield t, k, staged, runTriple t
+                            | _ -> () ]
+
+              Expect.isTrue (List.length rejected >= 3) "fewer than three triples reach a contract refusal"
+
+              for t, k, staged, run in rejected do
+                  let where = describeTriple t
+                  let outcome = run.Production
+                  Expect.isFalse outcome.Committed (sprintf "%s: committed past a contract refusal" where)
+
+                  Expect.isTrue
+                      (LanguagePrimitives.PhysicalEquality outcome.Store.Tree loopStore.Tree)
+                      (sprintf "%s: the tree is not the entry tree" where)
+
+                  Expect.equal
+                      outcome.Store.Bindings.State
+                      loopStore.Bindings.State
+                      (sprintf "%s: the state moved" where)
+
+                  Expect.equal
+                      outcome.Performed
+                      (staged |> List.take k |> List.map (fun fn -> "host:" + fn))
+                      (sprintf "%s: Performed is not exactly the %d calls before the rejected one" where k)
+
+                  Expect.equal
+                      (performerLog run.ProductionEvents)
+                      (staged |> List.take (k + 1) |> List.map (fun fn -> "perform:" + fn))
+                      (sprintf "%s: the perform phase did not stop at the rejected result" where)
+
+                  match List.tryLast outcome.Diagnostics with
+                  | Some(ServerDiagnostic.PerformFailed(cap, reason)) ->
+                      Expect.equal cap "host:audit" (sprintf "%s: the refusal names another capability" where)
+
+                      Expect.equal
+                          reason
+                          "return-contract:text"
+                          (sprintf "%s: the refusal is not the contract's name" where)
+                  | other -> failtest (sprintf "%s: the last diagnostic is %A, not the typed refusal" where other)
+
+                  Expect.isNone (gateDivergence t run) (sprintf "%s: the model disagrees" where)
+          }
+
+          test "GO RED: a model that looks up the performer before consulting the gate loses the differential" {
+              // The honest run first: an unregistered function under a gate
+              // that refuses it is a triple production and the extraction
+              // agree on, so what the mutant loses is the ordering and not the
+              // fixture. Then the mutant, which asks the lookup first and so
+              // lands `Unregistered` where the gate's `GateRefused` should be.
+              let t =
+                  { Capability = "host:missing"
+                    Program = "alone"
+                    Stages = [ Effect(ServerEffect.HostCall("missing", jstr "note", None)) ]
+                    Shape = gateShapes |> List.find (fun s -> s.Label = "deny-all")
+                    Behaviour = Answers }
+
+              Expect.isNone
+                  (gateDivergence t (runTriple t))
+                  "production and the oracle disagree on the very triple the mutant is run against"
+
+              // And the mutant agrees whenever the gate admits — so it is the
+              // ORDER it gets wrong, not the arm.
+              let admitted =
+                  { t with
+                      Shape = gateShapes |> List.find (fun s -> s.Label = "permissive") }
+
+              Expect.isNone
+                  (gateDivergence admitted (runTripleWith lookupFirstRun admitted))
+                  "the mutant diverges even where the ordering is unobservable"
+
+              let run = runTripleWith lookupFirstRun t
+
+              Expect.equal
+                  (deniedIn run.Production)
+                  [ "deny:gate:host:missing" ]
+                  "production did not refuse at the gate"
+
+              Expect.equal
+                  (deniedIn run.Model)
+                  [ "deny:unregistered:host:missing" ]
+                  "the mutant did not report the lookup's denial"
+
+              match gateDivergence t run with
+              | Some report ->
+                  Expect.stringContains report "differ" "the harness reported a divergence, but not the outcome one"
+              | None ->
+                  failtest
+                      "the comparison harness did not report a model that consulted the lookup before the gate - a harness that cannot lose is not evidence"
+          } ]

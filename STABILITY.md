@@ -106,3 +106,13 @@ boundary test covers the new neighbours: no core package may reference an adapte
 or resolved, any more than it may reference the UI tier itself.
 
 The slot stays a DRAFT: tagging `v0.6.0` is the release gesture, a separate recorded act.
+
+**Class: additive**, for `Fuaran.Program.Server` (Phase 1759). `ServerEffect.fs` gains a
+`ReturnContract` record (`Name`, `Holds`) with `ReturnContract.describe` / `check`, and
+`ServerEffectRegistry.registerChecked fn contract performer registry`, which registers
+`ReturnContract.check contract performer` under `fn`. `ServerEffectRegistry` itself is unchanged —
+no field, so every full-literal construction still compiles — and `register` is unchanged, so a
+consumer that declares no contract sees no difference. It rides this draft slot. The behaviour it
+adds is proved (`proofs/EffectGate.fst`, `return_contract`): a result the contract rejects reaches
+the handler as `PerformFailed` naming the contract, never as a value.
+

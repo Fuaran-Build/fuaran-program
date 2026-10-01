@@ -20,10 +20,17 @@ with the leg that checks them and the seam that ties each model back to the code
 - **[The interaction budget](#the-budget-theorem)** — `Budget.fst`, five theorems (Phase 1716).
   Bounded COST: a generated tree cannot be priced cheaper than it is, and a breach changes
   nothing.
+- **[Two-phase staging](#the-staging-theorem)** — `Staging.fst`, four theorems (Phase 1717).
+  Bounded RESIDUE: what a handler that reaches outside can leave behind is exactly the prefix of
+  host calls that ran.
+- **[The effect gate](#the-effect-gate-theorem)** — `EffectGate.fst`, three theorems (Phase 1759),
+  proved over the staging model. A CONSTRAINED boundary: policy before the effect, contract on
+  return, against an arbitrary performer.
 
 **"Formally verified" appears in this repository in exactly one place — the ladders below — and
-it is spent on the laws in the two ladders and nothing else** — the fold's four, each stated over
-the generic view and again at the UI witness, and the budget's five. What is proved is narrow and
+it is spent on the laws in the four ladders and nothing else** — the fold's four, each stated over
+the generic view and again at the UI witness, the budget's five, the staging theorem's four and the
+effect gate's three. What is proved is narrow and
 stated precisely;
 what is not is stated just as precisely, because an unstated exclusion reads, to whoever finds
 it later, as a claim that failed. `proofs.json` at the repository root is the same ladders as
@@ -592,6 +599,158 @@ every green case rests on. A comparison that could not lose would not be evidenc
   theorem bounds what the handler reports and when it stops asking; it cannot bound what an
   invocation did.
 
+## The effect-gate theorem
+
+`ServerEffectRegistry.Gate` is a boolean over a capability name, consulted before anything else
+in `Handler.runEffect` (`src/Fuaran.Program.Server/Handler.fs`). What that buys was stated in
+prose — the policy gate is consulted before the performer, so no performer side effect can
+precede the policy decision — and the Broch trust ledger's row read "host performers are
+TRUSTED; what the Sandbox buys is a bounded blast radius, not a proof of the performer". The
+policy an operator actually means is a predicate over the TRACE of performed effects, and nothing
+connected the boolean to the predicate. `EffectGate.fst` connects them, on SCIO\*'s split: an
+executable check Π run before every operation, a policy specification Σ over the ghost trace, a
+monitor state with an `abstracts` relation to the trace, and proofs that Π implies Σ. The perform
+path is not re-modelled: the module `open`s `Staging` (Phase 1717) and proves over its
+`plan_effect`, `plan`, `perform` and `run`. Three headline theorems, one runtime definition.
+
+**Where the perform path actually is.** The shard that filed this theorem placed the gate's
+consultation in `ServerEffect.fs`; that file holds the registry record, the gate, the argument
+policy and — since this phase — the return contract, and the consultation itself is
+`Handler.runEffect`, which 1717 modelled. That is why this module is proved over 1717's
+definitions rather than beside them.
+
+### 1. `gate_before_perform` — a refused capability reaches no performer, and lands one denial
+
+An effect the gate refuses: the planned accumulator is halted, its diagnostics are EXACTLY ONE
+new entry over what was there — the denial naming the capability, which by the type of `denial`
+carries nothing else — every other field is the entry field, and the result is EQUAL under every
+performer lookup, every performer behaviour, every argument policy and every witness. "Reaches no
+performer" as an equation: none of those is read before the gate has answered.
+`gate_refusal_halts_run` lifts it to the handler: when the stages before a refused effect planned
+without halting, the handler rolls back to the entry store, commits nothing, reports nothing
+performed, carries no patches, notifications or client effects, its diagnostics are what those
+stages produced followed by that one denial — and the outcome is the SAME whatever stages follow
+the refused one and whatever the performers would have answered.
+
+### 2. `policy_sufficient` — the gate is sufficient for every policy inductive under it
+
+For a declared Σ with `sufficient_for Π Σ` — `Σ []`, and `Σ tr /\ Π c ==> Σ (tr ++ [c])` —
+every trace the handler produces satisfies Σ: the ghost trace of everything that reached the
+state or a performer, and `Performed` as the outcome reports it (the whole trace on commit, the
+performed host calls on rollback). Quantified over every performer, every witness, every program
+and every entry store. The performer is an abstract parameter, and that quantification is the
+point: nothing it answers can put a capability the gate did not admit into the trace.
+
+**The finding this theorem records.** Production's gate reads the capability and NOTHING ELSE —
+no history, no count. SCIO\*'s monitor state is therefore the trivial one here (`monitor` has
+one value, `abstracts` holds of every trace, and `abstracts_preserved` is discharged by `()`),
+and a stateless Π is sufficient for exactly the Σ that are inductive under it. "Only the effects
+in envelope E" (Phase 1744) and "only to the endpoints in allow-list A" (Phase 1739) are of that
+class. "At most B host calls per handler" is NOT, and no proof over this gate can reach it —
+Phase 1716's budget bounds the fold's steps, not the effects' count. The stronger statement is
+stated here rather than proved: a gate that takes a monitor state, `Π : m -> string -> bool`,
+with `abstracts m tr` and the preservation obligation on every update. It needs the production
+gate to take a state before it is a theorem about anything that ships, and widening the gate's
+signature is a contract change that rides no draft slot by accident.
+
+### 3. `return_contract` — a performer's result is checked before it re-enters the state
+
+The one runtime definition this module adds. A `ReturnContract` (`ServerEffect.fs`) is a
+host-declared post-condition on a performer's RESULT — a name, which is the host's own
+vocabulary, and the predicate — and `ServerEffectRegistry.registerChecked` composes
+`ReturnContract.check` with the performer at registration: SCIO\*'s `import` wrapper, re-expressed
+as an F# check. The model's `check_return` is that wrapper clause for clause, and the theorem,
+for a registry whose raw behaviour is wrapped by `checked_by`, says three things. The bindings
+the perform phase leaves are exactly the landed results folded through `Assign`
+(`perform_store`), and every landed result honours its contract (`landed_honour`) — so a result
+is checked BEFORE it re-enters the interpreter's state, and one the contract rejects never does.
+And when the raw performer's first rejected result is at position `k`, before any raw refusal,
+the handler rolls back to the entry store, commits nothing, reports `Performed` as exactly the
+first `k` staged capabilities, and its last diagnostic is `PerformFailed` naming that call's
+capability and the contract's NAME — a typed refusal, never a silent accept, and never the value
+(`violation_refuses`, `perform_diag`, with 1717's `residual_is_prefix` for the rollback).
+
+### What the effect-gate model does NOT own
+
+The same two records of arrows as the staging model — the witness and the registry's gate,
+argument policy and lookup — and they are the assumed rung on the same terms. The denial sink
+is a unit-returning observer, not modelled; the differential host compares its log against the
+`Denied` diagnostics on both sides, which is the only place the sink's behaviour is checked.
+
+### The effect-gate claims ladder
+
+#### Proved
+
+1. **A refused capability reaches no performer and lands exactly one denial** —
+   `gate_before_perform`, `gate_refusal_halts_run`.
+2. **The gate is sufficient for every policy inductive under it** — `policy_sufficient`, with
+   `admitted_sigma` lifting one gated step to a whole trace.
+3. **A performer's result is checked against its contract before it enters the state, and a
+   rejected one is a typed refusal** — `return_contract`, with `perform_store`, `landed_honour`
+   and `violation_refuses`.
+
+No `admit`, no `assume`; `--report_assumes error` is on for this module exactly as for the
+other three. "Formally verified" is spent on these three and nothing else in this section.
+
+#### Differentially tested
+
+The extracted model agrees with production over the `ServerEffectTests` registry shapes (the
+default refuses every kind; registration does not permit; permission does not register; a host
+function named like a built-in arm is still `host:<fn>`) and over 441 generated (capability,
+gate, performer) triples — seven capabilities including an unregistered host function, three
+programs (alone, after a checked host call, after an unchecked and a checked one), seven gate
+shapes including two argument-policy narrowings, three performer behaviours (answers text,
+answers a number the contract rejects, refuses). The model's registry wraps the RAW performer
+with the EXTRACTED `checked_by`; production's wraps it with `registerChecked`. Four things are
+compared per triple: the outcomes (projected as the staging host projects them), the performers'
+logs, and the DENIAL STREAM three ways — production's `OnDenied` sink, production's `Denied`
+diagnostics, the model's. Then the theorems as instances against production: every performer
+invocation in the event log is preceded by the gate's decision on its capability; `Performed`
+passes the extracted `admitted` under the triple's own gate; a refused capability lands exactly
+one `GateRefused` naming it with nothing performed; a rejected result is `PerformFailed` naming
+`host:audit` and `return-contract:text`, with the store the entry store and the perform phase
+stopped at it.
+
+The **go-red case** is the one the shard names: a model whose `HostCall` arm consults the lookup
+BEFORE the gate, with every other clause the extraction's. It agrees with production whenever
+the gate admits — so it is the order it gets wrong, not the arm — and loses the comparison on an
+unregistered function the gate refuses: production and the honest model land `GateRefused`, the
+mutant lands `Unregistered`, because it asked about the performer before asking whether it may.
+A second probe, run while the host was built and not committed: production's wrapper edited to
+accept every result lost three of the seven cases.
+
+#### Assumed, and stated
+
+- **The witness and the registry's gate, policy and lookup**, on the staging theorem's terms. In
+  the host the gate and the policy are production's own members, and a contract is keyed by the
+  function NAME, which is how `registerChecked` keys it.
+- **The performer is a function of the call**, as the staging theorem assumes, with the same
+  mitigation.
+- **The toolchain**, on the same terms as the fold theorem's.
+
+#### Not claimed
+
+- **The performer's own correctness.** The theorems bound what reaches it (the gate, the
+  argument policy) and what it can hand back (the return contract); what it DOES when invoked is
+  the host's, as the staging ladder says.
+- **The honesty of an allow-listed endpoint.** Phase 1739's bound narrows where a call may go;
+  nothing here says the endpoint on the list behaves.
+- **History-dependent policies.** A Σ that counts or sequences is outside `sufficient_for`,
+  because the gate is stateless — the finding above, with the stronger statement proposed.
+- **The state discipline.** SecRef\*'s `private` / `shareable` / `encapsulated` labels are read
+  against this seam in [`docs/performer-boundary.md`](../docs/performer-boundary.md): a performer
+  is handed VALUES and no reference, so the rule is trivially statable at the handler seam and
+  not statable for the extension hook, which stays host-trust territory. The ledger says so
+  rather than claiming a label model.
+
+**What the trust ledger says now.** The Broch plan's row "host performers, native companions and
+the extension hook are trusted" moves, for performers, to: performers are CONSTRAINED at the
+boundary — policy before the effect (`gate_before_perform`, `policy_sufficient`), contract on
+return (`return_contract`), values in and no reference — and the interpreter's theorems hold
+against an arbitrary performer; this phase is the mechanism reference. Native companions and the
+extension hook are unchanged by it. It is still not a proof of the performer, and the ladder
+above says so.
+
 ## Running it
 
 ```powershell
@@ -603,8 +762,8 @@ pwsh ./proofs/check.ps1 -SkipHost    # the proof half only; no solution build ne
 Six steps, each refusing rather than warning: resolve the pinned prover, CHECK, EXTRACT,
 BYTE-DIFF against the committed `oracle/*.fs`, BUILD the oracle project, RUN the differential
 host. A module names the test project that hosts its differential: the fold's and the
-budget's live in `Fuaran.Program.Parity.Tests`, the staging theorem's in
-`Fuaran.Program.Server.Tests` beside the handler suites it re-declares — which means step 6 for
+budget's live in `Fuaran.Program.Parity.Tests`, the staging theorem's and the effect gate's in
+`Fuaran.Program.Server.Tests` beside the handler suites they re-declare — which means step 6 for
 that module needs the conformance corpus the server suite loads at start-up
 (`FUARAN_PROGRAM_SPEC`, or the sibling clone), exactly as `run.ps1` does.
 
@@ -620,7 +779,8 @@ each against a fresh extraction, so a hand edit is a change the leg refuses rath
 absorbs. When a model changes legitimately, its two files move in the same commit and the
 script prints the copy command. `Budget.fs` needed no addition to the `Prims` shim below: it
 uses `string_of_int`, which was already there, and native operators on `Prims.int`. `Staging.fs`
-needed none either: `strcat` and the `Prims` type aliases are all it references.
+needed none either: `strcat` and the `Prims` type aliases are all it references. `EffectGate.fs`
+needed none: it references `Prims.strcat` and `Staging`'s own types.
 
 ### Why the pin, and why three runs
 

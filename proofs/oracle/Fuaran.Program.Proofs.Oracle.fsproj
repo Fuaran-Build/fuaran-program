@@ -62,5 +62,10 @@
              abstract. Independent of the two above; the order here is the
              order the modules landed in. -->
         <Compile Include="Staging.fs" />
+        <!-- GENERATED from ../EffectGate.fst — do not edit. Phase 1759, the
+             effect gate: the policy-sufficiency measure and the return-contract
+             wrapper, proved OVER Staging's handler model (it opens Staging, so
+             it must follow it). -->
+        <Compile Include="EffectGate.fs" />
     </ItemGroup>
 </Project>
