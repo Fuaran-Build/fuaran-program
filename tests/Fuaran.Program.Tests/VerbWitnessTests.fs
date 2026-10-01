@@ -73,6 +73,42 @@ let private runIn
 let private run (world: World) (failAt: int option) (handler: VerbHandler) =
     runIn registry world failAt handler { empty with Files = world.Files }
 
+// ─── Phase 1976: the two flow shapes on the op axis ─────────────────────────
+
+/// The archive policy, widened for the flow tests: the marker the false arm
+/// writes, and a CEILING on a repeat's count — the verb names the count as an
+/// argument of the repeat's reach, so an allow-list bounds how many times a
+/// body may run, and an over-bound repeat is refused before anything performs.
+let private flowRegistry: ServerEffectRegistry =
+    ServerEffectRegistry.permissive ServerEffectRegistry.denyAll
+    |> ServerEffectRegistry.constrain
+        "ApplyOps"
+        [ ServerConstraintClause.AllowList("path", [ "notes/x.md"; "notes/archive/x.md"; "notes/created.marker" ])
+          ServerConstraintClause.AllowList("target", [ "origin" ])
+          ServerConstraintClause.AllowList(ServerArgumentPolicy.DestinationArgument, [ "local"; "origin" ])
+          ServerConstraintClause.AllowList("count", [ "1"; "2"; "3" ]) ]
+
+/// The verb's two-arm construct, IN Program: migrate the shard if it is there,
+/// create it (and leave a marker) if not, then publish. The exit assertion —
+/// no marker — holds after the true arm and fails after the false arm, which
+/// is the Janus discipline the inverse rests on.
+let private migrate: VerbHandler =
+    { Name = "migrate"
+      Stages =
+        [ Effect(
+              ServerEffect.ApplyOps
+                  [ Branch(
+                        Exists "notes/x.md",
+                        [ Write("notes/x.md", "migrated") ],
+                        [ Write("notes/x.md", "created"); Write("notes/created.marker", "") ],
+                        Some(Missing "notes/created.marker")
+                    )
+                    Publish "origin" ]
+          ) ] }
+
+let private flowRun (world: World) (handler: VerbHandler) =
+    runIn flowRegistry world None handler { empty with Files = world.Files }
+
 [<Tests>]
 let tests =
     testList
@@ -464,4 +500,182 @@ let tests =
 
               Expect.isTrue noLanding.Committed "a host call that lands nothing needs no channel"
               Expect.isTrue called.Value "and runs"
+          }
+
+          // ── Phase 1976: selection and bounded iteration on the op axis ──────
+
+          test "a two-arm branch whose arms both continue, planned IN Program, ends in different outcomes" {
+              let present = seeded ()
+              let took = flowRun present migrate
+              Expect.isTrue took.Committed "the true arm commits"
+
+              Expect.equal
+                  (present.Files |> Map.toList)
+                  [ "notes/x.md", "migrated" ]
+                  "the true arm migrated, and left no marker"
+
+              Expect.equal
+                  took.Performed
+                  [ "ApplyOps"; "ApplyOps" ]
+                  "one edit and the publish performed; the conditions never"
+
+              Expect.equal present.Published [ "origin" ] "and the sequence continued past the branch"
+
+              let absent = World()
+              let created = flowRun absent migrate
+              Expect.isTrue created.Committed "the false arm commits"
+
+              Expect.equal
+                  (absent.Files |> Map.toList)
+                  [ "notes/created.marker", ""; "notes/x.md", "created" ]
+                  "the false arm created, with the marker"
+
+              Expect.equal created.Performed [ "ApplyOps"; "ApplyOps"; "ApplyOps" ] "two edits and the publish"
+              Expect.notEqual took.Store.Tree created.Store.Tree "two arms, two outcomes"
+
+              Expect.isFalse
+                  (absent.Invocations
+                   |> List.exists (fun op -> op.Contains "Exists" || op.Contains "Missing"))
+                  "no condition reached the performer"
+          }
+
+          test
+              "a violated exit assertion refuses the effect after the arm planned, naming the assertion, with nothing performed" {
+              let world = seeded ()
+
+              // The true arm leaves the marker it must not: the exit assertion
+              // fails after the true arm.
+              let broken =
+                  { Name = "broken"
+                    Stages =
+                      [ Effect(
+                            ServerEffect.ApplyOps
+                                [ Branch(
+                                      Exists "notes/x.md",
+                                      [ Write("notes/created.marker", "") ],
+                                      [],
+                                      Some(Missing "notes/created.marker")
+                                  )
+                                  Publish "origin" ]
+                        ) ] }
+
+              let outcome = flowRun world broken
+              Expect.isFalse outcome.Committed "halted"
+              Expect.isEmpty outcome.Performed "nothing performed"
+              Expect.isEmpty world.Invocations "the performer was never asked"
+              Expect.equal (world.Files |> Map.toList) [ "notes/x.md", "live" ] "the world is untouched"
+
+              Expect.equal
+                  outcome.Diagnostics
+                  [ ServerDiagnostic.Failed(
+                        "ApplyOps",
+                        "the exit assertion did not hold after the true arm: "
+                        + VerbRefusal.render
+                            { Code = "present"
+                              Detail = "notes/created.marker" }
+                    ) ]
+                  "the assertion's own refusal names it"
+
+              // And the other way: an exit assertion that HOLDS after the
+              // false arm is the same defect.
+              let heldAfterFalse =
+                  { Name = "held"
+                    Stages =
+                      [ Effect(
+                            ServerEffect.ApplyOps
+                                [ Branch(Missing "notes/x.md", [], [ Publish "origin" ], Some(Exists "notes/x.md")) ]
+                        ) ] }
+
+              let world' = seeded ()
+              let outcome' = flowRun world' heldAfterFalse
+              Expect.isFalse outcome'.Committed "halted"
+              Expect.isEmpty world'.Published "the arm's publish was planned, never performed"
+
+              Expect.equal
+                  outcome'.Diagnostics
+                  [ ServerDiagnostic.Failed("ApplyOps", "the exit assertion held after the false arm") ]
+                  "named the other way"
+          }
+
+          test
+              "a condition that refuses takes the false arm: on the op channel a typed refusal is the false value, not a halt" {
+              let world = seeded ()
+
+              let refusing =
+                  { Name = "refusing"
+                    Stages =
+                      [ Effect(
+                            ServerEffect.ApplyOps
+                                [ Branch(
+                                      Refused { Code = "undecided"; Detail = "x" },
+                                      [ Write("notes/x.md", "true") ],
+                                      [ Write("notes/x.md", "false") ],
+                                      None
+                                  ) ]
+                        ) ] }
+
+              let outcome = flowRun world refusing
+              Expect.isTrue outcome.Committed "no halt"
+              Expect.equal world.Files.["notes/x.md"] "false" "the false arm ran"
+              Expect.isEmpty outcome.Diagnostics "and the refusal is not a diagnostic — it was the answer"
+          }
+
+          test
+              "a bounded repeat plans its body that many times; an over-bound count is refused by the policy before anything performs" {
+              let world = seeded ()
+
+              let thrice =
+                  { Name = "thrice"
+                    Stages = [ Effect(ServerEffect.ApplyOps [ Times(3, [ Publish "origin" ]) ]) ] }
+
+              let outcome = flowRun world thrice
+              Expect.isTrue outcome.Committed "commits"
+              Expect.equal world.Published [ "origin"; "origin"; "origin" ] "three publishes, in order"
+              Expect.equal outcome.Performed [ "ApplyOps"; "ApplyOps"; "ApplyOps" ] "three staged edits"
+
+              let world' = seeded ()
+
+              let tooMany =
+                  { Name = "too-many"
+                    Stages = [ Effect(ServerEffect.ApplyOps [ Times(4, [ Publish "origin" ]) ]) ] }
+
+              let refused = flowRun world' tooMany
+              Expect.isFalse refused.Committed "refused"
+              Expect.isEmpty refused.Performed "nothing performed"
+              Expect.isEmpty world'.Invocations "the performer was never asked"
+              Expect.isEmpty world'.Published "nothing published"
+
+              Expect.equal
+                  (refused.Diagnostics |> List.last)
+                  (ServerDiagnostic.Failed("ApplyOps", "argument-not-allowed:count"))
+                  "refused while planning, naming the argument the host bounded — the count — and never the value"
+          }
+
+          test "the demanded document carries BOTH arms' reach, and the policy binds the untaken arm" {
+              let projection = ServerDemanded.ofHandler witness migrate
+
+              let tier =
+                  match projection.Server with
+                  | Some tier -> tier
+                  | None -> failtest "the walk ran, so the document must carry a server tier"
+
+              let reach = tier.Reach |> List.map (fun r -> r.Argument, r.Name)
+              Expect.contains reach ("path", "notes/created.marker") "the false arm's marker path is in the document"
+              Expect.contains reach ("path", "notes/x.md") "and the shared path"
+              Expect.contains reach ("target", "origin") "and the publish target after the branch"
+
+              // An arm the run would NOT take still reaches: under the archive
+              // policy, which does not name the marker path, the branch is
+              // refused even though the true arm — which never touches the
+              // marker — is the one that would run.
+              let present = seeded ()
+              let outcome = run present None migrate
+              Expect.isFalse outcome.Committed "refused by the policy: the untaken arm reaches an off-list path"
+              Expect.isEmpty present.Invocations "before anything performed"
+              Expect.equal (present.Files |> Map.toList) [ "notes/x.md", "live" ] "the world is untouched"
+
+              Expect.equal
+                  (outcome.Diagnostics |> List.last)
+                  (ServerDiagnostic.Failed("ApplyOps", "argument-not-allowed:path"))
+                  "naming the argument"
           } ]

@@ -466,6 +466,18 @@ let store: StoreWitness<BindingSources> =
         fun key jv s ->
             { s with
                 State = Map.add key (JValObj.toObj jv) s.State }
+      // The read a REVERSIBLE run records an overwritten value through (Phase
+      // 1976): the `State` key, resolved back through the binding resolver
+      // exactly as a `Binding.State` re-resolution reads it, so what the trace
+      // records is what the tier itself would have read. Never called by the
+      // forward fold, and the UI tier views nothing as a branch or a repeat.
+      Read =
+        fun key s ->
+            match BindingResolver.resolveJVal s (Binding.State(key, None)) with
+            | Resolved jv -> Some jv
+            | NotResolved
+            | Errored _
+            | I18nUnresolved _ -> None
       LandQuery =
         fun slot table s ->
             { s with

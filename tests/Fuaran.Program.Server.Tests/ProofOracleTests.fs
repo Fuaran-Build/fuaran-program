@@ -153,11 +153,19 @@ let private modelWitness
             |> Result.mapError evalErrorKind
             |> modelRes
       w_apply = fun op tree -> witness.State.Stream.Apply op tree |> modelRes
+      // The production `View`, taken to exhaustion — the model's `w_op_view`
+      // (Phase 1976): an edit and a guard carry the op the handler holds, a
+      // branch's arms and a repeat's body are viewed in turn.
       w_op_view =
-        fun op ->
+        let rec view (op: TreeOp<obj>) : Staging.op_view<TreeOp<obj>> =
             match witness.State.View op with
-            | OpView.Edit -> Staging.OEdit
-            | OpView.Require -> Staging.ORequire
+            | OpView.Edit -> Staging.OEdit op
+            | OpView.Require -> Staging.ORequire op
+            | OpView.Choose(entry, whenTrue, whenFalse, exit) ->
+                Staging.OChoose(entry, whenTrue |> List.map view, whenFalse |> List.map view, modelOpt exit)
+            | OpView.Repeat(count, body) -> Staging.ORepeat(bigint count, body |> List.map view)
+
+        view
       w_assign = witness.Dispatch.Store.Assign
       // The landing-slot refusal as production renders it (Phase 1974): the
       // reserved-namespace text over this witness's predicate and prefix.

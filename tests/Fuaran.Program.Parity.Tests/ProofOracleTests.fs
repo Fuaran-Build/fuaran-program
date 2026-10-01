@@ -527,13 +527,24 @@ let private toyLookup (s: BoundedFold.store<Fuaran.Core.JVal>) (key: string) : F
     | BoundedFold.OSome value -> Some value
     | BoundedFold.ONone -> None
 
-/// The production `View`, taken to exhaustion — the model's `w_view`.
+/// A bound, in the model's shape: the model's count is a `nat`, which the
+/// extraction renders as `BigInteger`.
+let private modelBound (bound: Bound<ToyExpr>) : BoundedFold.bound<ToyExpr> =
+    match bound with
+    | Bound.Literal count -> BoundedFold.BLiteral(bigint count)
+    | Bound.Parameter(count, lo, hi) -> BoundedFold.BParameter(count, bigint lo, bigint hi)
+
+/// The production `View`, taken to exhaustion — the model's `w_view`. Seven
+/// shapes since Phase 1976, named without a wildcard, as the model names them.
 let rec private toyModelView (a: ToyAction) : BoundedFold.action_view<ToyAction, ToyExpr, Fuaran.Core.JVal> =
     match toyWitness.Dispatch.Action.View a with
     | ActionView.Sequence items -> BoundedFold.VSequence(a, items |> List.map toyModelView)
     | ActionView.Assign(key, value, from) -> BoundedFold.VAssign(a, key, modelOpt value, modelOpt from)
     | ActionView.Call(endpoint, declaresTarget) -> BoundedFold.VCall(a, endpoint, declaresTarget)
     | ActionView.Require condition -> BoundedFold.VRequire(a, condition)
+    | ActionView.Choose(entry, whenTrue, whenFalse, exit) ->
+        BoundedFold.VChoose(a, entry, toyModelView whenTrue, toyModelView whenFalse, modelOpt exit)
+    | ActionView.Repeat(bound, body) -> BoundedFold.VRepeat(a, modelBound bound, toyModelView body)
     | ActionView.Leaf _ -> BoundedFold.VLeaf a
 
 let private toyModelWitness: BoundedFold.witness<ToyAction, ToyExpr, Fuaran.Core.JVal, ToyEffect> =
@@ -555,7 +566,13 @@ let private toyModelWitness: BoundedFold.witness<ToyAction, ToyExpr, Fuaran.Core
       w_reserved_prefix = toyWitness.Dispatch.Store.ReservedPrefix
       // The core's own `jv = JBool true`, an arrow here because the model's
       // value type is abstract — see the model's `w_is_true`.
-      w_is_true = fun jv -> jv = JBool true }
+      w_is_true = fun jv -> jv = JBool true
+      // The core reads `JInt n` itself; the model's arrow, wired to that.
+      w_as_count =
+        fun jv ->
+            match jv with
+            | JInt n when n >= 0 -> BoundedFold.OSome(bigint n)
+            | _ -> BoundedFold.ONone }
 
 let private toyNoCall = fun () -> failwith "a carried closure was invoked"
 
@@ -598,7 +615,42 @@ let private toyCorpus: (string * ToyAction) list =
             Put("i", Some(JStr "after"), None) ]
       "guard errored", Seq [ Need(Fail "typed refusal"); Ring("/answer", false, toyNoCall) ]
       "guard reads the store", Seq [ Put("ok", Some(JBool true), None); Need(Read "ok"); Beep 3 ]
-      "nested halt stops the outer sequence", Seq [ Seq [ Beep 1; Need(Const(JBool false)) ]; Beep 2 ] ]
+      "nested halt stops the outer sequence", Seq [ Seq [ Beep 1; Need(Const(JBool false)) ]; Beep 2 ]
+      // The two flow shapes (Phase 1976): every arm of the branch and the
+      // repeat, every way each halts, and the two nested.
+      "branch true arm, no exit",
+      Pick(Const(JBool true), Put("p", Some(JStr "t"), None), Put("p", Some(JStr "f"), None), None)
+      "branch false arm, exit fails as it must",
+      Pick(Const(JBool false), Beep 1, Put("q", Some(JStr "f"), None), Some(Const(JBool false)))
+      "branch true arm, exit holds as it must", Pick(Read "ok", Put("r", Some(JStr "t"), None), Hush, Some(Read "ok"))
+      "branch exit violated after the true arm",
+      Seq
+          [ Pick(Const(JBool true), Put("s", Some(JStr "t"), None), Hush, Some(Const(JBool false)))
+            Beep 2 ]
+      "branch exit held after the false arm",
+      Seq [ Pick(Const(JStr "no"), Beep 1, Beep 2, Some(Const(JBool true))); Beep 3 ]
+      "branch condition unresolved halts", Seq [ Pick(Missing, Beep 1, Beep 2, None); Beep 3 ]
+      "branch condition errored halts with its text", Pick(Fail "typed refusal", Beep 1, Beep 2, None)
+      "branch exit unresolved", Pick(Const(JBool true), Beep 1, Beep 2, Some Missing)
+      "branch exit errored", Pick(Const(JBool false), Beep 1, Beep 2, Some(Fail "exit typed"))
+      "repeat literal", Times(Bound.Literal 3, Seq [ Beep 1; Put("n", Some(JStr "x"), None) ])
+      "repeat zero times", Times(Bound.Literal 0, Beep 9)
+      "repeat parameter in range", Seq [ Put("k", Some(JInt 2), None); Times(Bound.Parameter(Read "k", 0, 5), Beep 1) ]
+      "repeat over its bound halts before the body", Seq [ Times(Bound.Parameter(Const(JInt 9), 0, 5), Beep 1); Beep 4 ]
+      "repeat bound not a count", Times(Bound.Parameter(Const(JStr "x"), 0, 5), Beep 1)
+      "repeat bound unresolved", Times(Bound.Parameter(Missing, 0, 5), Beep 1)
+      "repeat bound errored", Times(Bound.Parameter(Fail "bound typed", 0, 5), Beep 1)
+      "repeat halts inside its body", Seq [ Times(Bound.Literal 3, Seq [ Beep 1; Need(Const(JBool false)) ]); Beep 2 ]
+      "a branch inside a repeat inside a branch",
+      Pick(
+          Const(JBool true),
+          Times(
+              Bound.Literal 2,
+              Pick(Const(JBool false), Beep 1, Put("m", Some(JStr "f"), None), Some(Const(JBool false)))
+          ),
+          Hush,
+          Some(Const(JBool true))
+      ) ]
 
 /// A placement that answers `/answer` — writing the store, emitting an effect,
 /// reporting a diagnostic and counting — and declines everything else.
@@ -678,7 +730,33 @@ let private toyDivergences
 let private genericTests =
     testList
         "the GENERIC fold through a non-UI test witness (Phase 1896)"
-        [ test "the toy corpus names every view shape, and the fold's every refusal" {
+        [ test "the UI witness views no action as a branch or a repeat, at any depth (Phase 1976)" {
+              // The UI tier branches in the TREE and repeats through data
+              // binding, so its handlers are straight-line: `ui_view_no_flow`
+              // in the model, checked here over the arm-complete corpus. If a
+              // UI handler ever genuinely needed either shape, the finding
+              // would land here first, as a failure of this test.
+              let view = UiWitness.witness.Dispatch.Action.View
+
+              let rec flowFree (action: Action<obj>) : bool =
+                  match view action with
+                  | ActionView.Choose _
+                  | ActionView.Repeat _ -> false
+                  | ActionView.Sequence members -> members |> List.forall flowFree
+                  | ActionView.Assign _
+                  | ActionView.Call _
+                  | ActionView.Require _
+                  | ActionView.Leaf _ -> true
+
+              for (label, _, action) in armCompleteCases do
+                  Expect.isTrue (flowFree action) (sprintf "%s views as neither shape" label)
+
+              Expect.isTrue
+                  (flowFree (Action.Chain [ Action.Chain [ Action.Print ]; Action.Print ]))
+                  "nor does a nested chain"
+          }
+
+          test "the toy corpus names every view shape, and the fold's every refusal" {
               let shapes =
                   toyCorpus
                   |> List.map (fun (_, a) ->
@@ -687,10 +765,16 @@ let private genericTests =
                       | ActionView.Assign _ -> "Assign"
                       | ActionView.Call _ -> "Call"
                       | ActionView.Require _ -> "Require"
+                      | ActionView.Choose _ -> "Choose"
+                      | ActionView.Repeat _ -> "Repeat"
                       | ActionView.Leaf _ -> "Leaf")
                   |> Set.ofList
 
-              Expect.equal shapes (Set.ofList [ "Sequence"; "Assign"; "Call"; "Require"; "Leaf" ]) "all five shapes"
+              Expect.equal
+                  shapes
+                  (Set.ofList [ "Sequence"; "Assign"; "Call"; "Require"; "Choose"; "Repeat"; "Leaf" ])
+                  "all seven shapes"
+
               Expect.isGreaterThanOrEqual (List.length toyCorpus) 21 "the corpus is the one declared above"
 
               let halting =

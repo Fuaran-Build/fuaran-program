@@ -337,18 +337,28 @@ module Handler =
           Into = None }
 
     /// The `ApplyOps` arm's fold over its ops — the model's `plan_ops`
-    /// (Phase 1974). Each op is resolved through the state witness's apply
-    /// against the state the ops before it left, short-circuiting at the
-    /// first refusal, whose text is the arm's halt reason verbatim.
+    /// (Phase 1974; `plan_views` since Phase 1976). Each op is VIEWED, then
+    /// planned against the state the ops before it left, short-circuiting at
+    /// the first refusal, whose text is the arm's halt reason verbatim.
     ///
-    /// An op the state witness views as a GUARD (`OpView.Require`) holds
-    /// without moving the state — its answer is discarded, so it cannot
-    /// write — and is never staged: `guard_holds_moves_nothing`. Its refusal
-    /// is the sequence's (`guard_refusal_halts`). Every other op is an EDIT:
-    /// the state moves, and under a registered op performer it is staged with
-    /// the state it produced, prepended onto the reversed staged list exactly
-    /// as a host call is, so the perform phase meets the ops in plan order.
-    /// In memory, nothing is staged and the arm is the apply it always was.
+    /// An op the state witness views as a GUARD (`OpView.Require`) is applied
+    /// for its answer and holds without moving the state — the answer is
+    /// discarded, so it cannot write — and is never staged:
+    /// `guard_holds_moves_nothing`. Its refusal is the sequence's
+    /// (`guard_refusal_halts`). An EDIT moves the state, and under a
+    /// registered op performer is staged with the state it produced,
+    /// prepended onto the reversed staged list exactly as a host call is, so
+    /// the perform phase meets the ops in plan order; in memory, nothing is
+    /// staged and the arm is the apply it always was. A BRANCH (Phase 1976)
+    /// applies its entry condition for its answer — `Ok` takes the true arm,
+    /// `Error` the false arm — plans that arm as a sequence, and then, when it
+    /// carries an exit assertion, applies it against the state the arm left:
+    /// it must hold after the true arm and fail after the false arm, or the
+    /// whole effect is refused with the assertion named
+    /// (`choose_plans_the_taken_arm`, `exit_violation_halts`). Neither
+    /// condition is applied for its state, staged or performed. A REPEAT
+    /// plans its body that many times, threaded as a sequence
+    /// (`repeat_plans_as_unrolling`); a negative count is refused.
     let private planOps
         (state: StateWitness<'Node, 'Op>)
         (performance: OpPerformance<'Node, 'Op>)
@@ -361,16 +371,56 @@ module Handler =
             match ops with
             | [] -> Ok(tree, staged)
             | op :: rest ->
+                match one op tree staged with
+                | Error code -> Error code
+                | Ok(tree', staged') -> go rest tree' staged'
+
+        and one (op: 'Op) (tree: 'Node) (staged: StagedCall list) =
+            match state.View op with
+            | OpView.Require ->
+                match state.Stream.Apply op tree with
+                | Error code -> Error code
+                | Ok _ -> Ok(tree, staged)
+            | OpView.Edit ->
                 match state.Stream.Apply op tree with
                 | Error code -> Error code
                 | Ok tree' ->
-                    match state.View op with
-                    | OpView.Require -> go rest tree staged
-                    | OpView.Edit ->
-                        match performance with
-                        | OpPerformance.InMemory -> go rest tree' staged
-                        | OpPerformance.Performed perform ->
-                            go rest tree' (stagedOp perform capability tree' op :: staged)
+                    match performance with
+                    | OpPerformance.InMemory -> Ok(tree', staged)
+                    | OpPerformance.Performed perform -> Ok(tree', stagedOp perform capability tree' op :: staged)
+            | OpView.Choose(entry, whenTrue, whenFalse, exit) ->
+                let tookTrue = Result.isOk (state.Stream.Apply entry tree)
+
+                match go (if tookTrue then whenTrue else whenFalse) tree staged with
+                | Error code -> Error code
+                | Ok(tree', staged') ->
+                    match exit with
+                    | None -> Ok(tree', staged')
+                    | Some assertion ->
+                        match state.Stream.Apply assertion tree' with
+                        | Ok _ ->
+                            if tookTrue then
+                                Ok(tree', staged')
+                            else
+                                Error "the exit assertion held after the false arm"
+                        | Error reason ->
+                            if tookTrue then
+                                Error(sprintf "the exit assertion did not hold after the true arm: %s" reason)
+                            else
+                                Ok(tree', staged')
+            | OpView.Repeat(count, body) ->
+                if count < 0 then
+                    Error "the repeat's count is negative"
+                else
+                    let rec times (remaining: int) (tree: 'Node) (staged: StagedCall list) =
+                        if remaining = 0 then
+                            Ok(tree, staged)
+                        else
+                            match go body tree staged with
+                            | Error code -> Error code
+                            | Ok(tree', staged') -> times (remaining - 1) tree' staged'
+
+                    times count tree staged
 
         go ops tree staged
 

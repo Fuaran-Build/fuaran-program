@@ -17,16 +17,20 @@ type ToyExpr =
     | Fail of message: string
     | Missing
 
-/// The toy's action vocabulary. `Seq`, `Put`, `Ring` and `Need` are its
-/// control structure; `Beep` and `Hush` are its domain acts. `Ring`'s
-/// `onAnswer` is a CLOSURE — the core must never invoke it. `Need` is the
-/// halting guard (Phase 1967): its condition resolves against the store, and a
-/// guard that does not hold halts the enclosing sequence.
+/// The toy's action vocabulary. `Seq`, `Put`, `Ring`, `Need`, `Pick` and
+/// `Times` are its control structure; `Beep` and `Hush` are its domain acts.
+/// `Ring`'s `onAnswer` is a CLOSURE — the core must never invoke it. `Need` is
+/// the halting guard (Phase 1967): its condition resolves against the store,
+/// and a guard that does not hold halts the enclosing sequence. `Pick` is the
+/// two-arm branch and `Times` the bounded repeat (Phase 1976), viewed as the
+/// core's `Choose` and `Repeat`.
 type ToyAction =
     | Seq of ToyAction list
     | Put of key: string * value: JVal option * from: ToyExpr option
     | Ring of endpoint: string * targeted: bool * onAnswer: (unit -> unit)
     | Need of condition: ToyExpr
+    | Pick of entry: ToyExpr * whenTrue: ToyAction * whenFalse: ToyAction * exit: ToyExpr option
+    | Times of bound: Bound<ToyExpr> * body: ToyAction
     | Beep of volume: int
     | Hush
 
@@ -79,7 +83,9 @@ let lowerWith (lookup: string -> JVal option) (nodeId: string) (action: ToyActio
     | Seq _
     | Put _
     | Ring _
-    | Need _ -> LeafOutcome.Decline
+    | Need _
+    | Pick _
+    | Times _ -> LeafOutcome.Decline
 
 let describe (action: ToyAction) : string =
     match action with
@@ -87,6 +93,8 @@ let describe (action: ToyAction) : string =
     | Put(key, _, _) -> sprintf "Put(%s)" key
     | Ring(endpoint, _, _) -> sprintf "Ring(%s)" endpoint
     | Need _ -> "Need"
+    | Pick _ -> "Pick"
+    | Times _ -> "Times"
     | Beep volume -> sprintf "Beep(%d)" volume
     | Hush -> "Hush"
 
@@ -96,6 +104,8 @@ let view (action: ToyAction) : ActionView<ToyAction, ToyExpr> =
     | Put(key, value, from) -> ActionView.Assign(key, value, from)
     | Ring(endpoint, targeted, _) -> ActionView.Call(endpoint, targeted)
     | Need condition -> ActionView.Require condition
+    | Pick(entry, whenTrue, whenFalse, exit) -> ActionView.Choose(entry, whenTrue, whenFalse, exit)
+    | Times(bound, body) -> ActionView.Repeat(bound, body)
     | Beep _ ->
         ActionView.Leaf
             { EffectKinds = [ "Sound" ]
@@ -111,6 +121,19 @@ let rec private encodeAction (action: ToyAction) : JVal =
     | Put(key, _, _) -> Canon.typed "Put" [ "key", JStr key ]
     | Ring(endpoint, targeted, _) -> Canon.typed "Ring" [ "endpoint", JStr endpoint; "targeted", JBool targeted ]
     | Need _ -> Canon.typed "Need" []
+    | Pick(_, whenTrue, whenFalse, exit) ->
+        Canon.typed
+            "Pick"
+            [ "exit", JBool(Option.isSome exit)
+              "whenFalse", encodeAction whenFalse
+              "whenTrue", encodeAction whenTrue ]
+    | Times(bound, body) ->
+        let encodedBound =
+            match bound with
+            | Bound.Literal count -> JInt count
+            | Bound.Parameter(_, lo, hi) -> JArr [ JInt lo; JInt hi ]
+
+        Canon.typed "Times" [ "body", encodeAction body; "bound", encodedBound ]
     | Beep volume -> Canon.typed "Beep" [ "volume", JInt volume ]
     | Hush -> Canon.typed "Hush" []
 
@@ -195,6 +218,7 @@ let witness: FullWitness<ToyNode, ToyAction, ToyExpr, ToyStore, ToyOp, ToyEffect
                     | _ -> [] }
           Store =
             { Assign = Map.add
+              Read = Map.tryFind
               LandQuery = fun slot table store -> Map.add slot (JInt(List.length table.Columns)) store
               IsReserved = fun key -> key.StartsWith ReservedPrefix
               ReservedPrefix = ReservedPrefix }

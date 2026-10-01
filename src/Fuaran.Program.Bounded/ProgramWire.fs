@@ -400,6 +400,15 @@ module ProgramWire =
     ///               moved, exactly as a derived write is, and whether it holds
     ///               on a re-run is not decidable from the declared form: it
     ///               is undecidable, and reported as such (Phase 1967).
+    ///   Choose    — its entry condition is resolved at dispatch against a
+    ///               store that has moved, exactly as a guard's is, so which
+    ///               arm re-runs is undecidable from the declared form; the
+    ///               distinct union of both arms' defects beside it, because
+    ///               either arm may be the one that re-runs (Phase 1976).
+    ///   Repeat    — a literal bound re-runs the body the same number of
+    ///               times, so its defects are the body's; a parameter bound
+    ///               is resolved at dispatch, which is undecidable, beside the
+    ///               body's (Phase 1976).
     ///   Leaf      — undecidable, and reported as such.
     let rec replayDefectsOfAction
         (witness: ProgramWitness<'Node, 'Op, 'Walk, DispatchWitness<'Node, 'Action, 'Expr, 'Store, 'Effect>>)
@@ -411,6 +420,14 @@ module ProgramWire =
         | ActionView.Assign(_, _, Some _) -> [ ReplayDefect.NonLiteralWrite ]
         | ActionView.Assign(_, _, None) -> []
         | ActionView.Require _ -> [ ReplayDefect.UndecidableAction ]
+        | ActionView.Choose(_, whenTrue, whenFalse, _) ->
+            ReplayDefect.UndecidableAction
+            :: (replayDefectsOfAction witness whenTrue @ replayDefectsOfAction witness whenFalse)
+            |> List.distinct
+        | ActionView.Repeat(Bound.Literal _, body) -> replayDefectsOfAction witness body
+        | ActionView.Repeat(Bound.Parameter _, body) ->
+            ReplayDefect.UndecidableAction :: replayDefectsOfAction witness body
+            |> List.distinct
         | ActionView.Leaf _ -> [ ReplayDefect.UndecidableAction ]
 
     /// The defects of an op: one that names its target absolutely re-runs
@@ -418,12 +435,28 @@ module ProgramWire =
     /// left things does not; and one the op codec cannot encode cannot be
     /// classified at all.
     let replayDefectsOfOp (witness: ProgramWitness<'Node, 'Op, 'Walk, 'Dispatch>) (op: 'Op) : ReplayDefect list =
-        match encodeOp witness op with
-        | Error _ -> [ ReplayDefect.UnencodableOp ]
-        | Ok _ ->
-            match witness.State.AbsoluteTarget op with
-            | Some target when target <> "" -> []
-            | _ -> [ ReplayDefect.RelativeAddressing ]
+        let ofOne (op: 'Op) : ReplayDefect list =
+            match encodeOp witness op with
+            | Error _ -> [ ReplayDefect.UnencodableOp ]
+            | Ok _ ->
+                match witness.State.AbsoluteTarget op with
+                | Some target when target <> "" -> []
+                | _ -> [ ReplayDefect.RelativeAddressing ]
+
+        match witness.State.View op with
+        | OpView.Edit
+        | OpView.Require -> ofOne op
+        // A branch or a repeat (Phase 1976) re-runs through the ops beneath
+        // it, so its defects are the distinct union of theirs — both arms, an
+        // untaken arm included, since which arm re-runs is decided against a
+        // state that has moved — beside whether the op itself encodes.
+        | OpView.Choose _
+        | OpView.Repeat _ ->
+            (match encodeOp witness op with
+             | Error _ -> [ ReplayDefect.UnencodableOp ]
+             | Ok _ -> [])
+            @ (OpView.beneath witness.State.View op |> List.collect ofOne)
+            |> List.distinct
 
     let replaySafetyOfAction
         (witness: ProgramWitness<'Node, 'Op, 'Walk, DispatchWitness<'Node, 'Action, 'Expr, 'Store, 'Effect>>)

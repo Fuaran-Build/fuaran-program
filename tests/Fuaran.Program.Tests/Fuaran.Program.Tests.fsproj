@@ -20,6 +20,7 @@
          tree, at a composition filling the state and walk axes. -->
     <Compile Include="DocDomain.fs" />
     <Compile Include="DocWitnessTests.fs" />
+    <Compile Include="FlowTests.fs" />
     <Compile Include="CoreBoundaryTests.fs" />
     <Compile Include="SchemaClockTests.fs" />
     <Compile Include="Program.fs" />

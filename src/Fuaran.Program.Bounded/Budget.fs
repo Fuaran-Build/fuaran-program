@@ -49,9 +49,37 @@ module InteractionBudget =
 
 module Budget =
 
-    /// The leaf-action count of one bounded-action cascade. A `Sequence`
-    /// flattens; every other shape costs 1. Read through the witness's view,
-    /// so what counts as composition is the fold's own notion of it.
+    /// Saturating `int` arithmetic — a cost is a budget comparand, and an
+    /// overflow that wrapped NEGATIVE would read as "cheap" and admit the very
+    /// tree the budget exists to refuse. Public so a witness's `Walk.Cost`
+    /// composes its weights with the same arithmetic.
+    let satAdd (a: int) (b: int) : int =
+        let sum = int64 a + int64 b
+
+        if sum > int64 System.Int32.MaxValue then
+            System.Int32.MaxValue
+        else
+            int sum
+
+    let satMul (a: int) (b: int) : int =
+        let product = int64 a * int64 b
+
+        if product > int64 System.Int32.MaxValue then
+            System.Int32.MaxValue
+        else
+            int product
+
+    /// The step count of one bounded-action cascade — the price the budget
+    /// compares against `MaxActions` BEFORE the run. A `Sequence` sums its
+    /// members; a `Choose` is one step (its condition) plus the MORE EXPENSIVE
+    /// arm, because the price must bound the run whichever arm it takes; a
+    /// `Repeat` is one step (its bound) plus its body times the bound, a
+    /// parameter bound priced at the TOP of its range so the price needs no
+    /// store; every other shape costs 1. Read through the witness's view, so
+    /// what counts as composition is the fold's own notion of it, and in
+    /// saturating arithmetic. `fold_steps_within_cost` in
+    /// `proofs/BoundedFold.fst` is the statement that a run never takes more
+    /// steps than this prices (Phase 1976).
     ///
     /// Reads the DISPATCH axis (the action view) and nothing else.
     let actionCascadeCost
@@ -62,7 +90,10 @@ module Budget =
 
         let rec cost (a: 'Action) : int =
             match view a with
-            | ActionView.Sequence xs -> xs |> List.sumBy cost
+            | ActionView.Sequence xs -> xs |> List.fold (fun acc x -> satAdd acc (cost x)) 0
+            | ActionView.Choose(_, whenTrue, whenFalse, _) -> satAdd 1 (max (cost whenTrue) (cost whenFalse))
+            | ActionView.Repeat(Bound.Literal count, body) -> satAdd 1 (satMul (max count 0) (cost body))
+            | ActionView.Repeat(Bound.Parameter(_, _, hi), body) -> satAdd 1 (satMul (max hi 0) (cost body))
             | ActionView.Assign _
             | ActionView.Call _
             | ActionView.Require _
@@ -93,26 +124,6 @@ module Budget =
     /// payloads applies the same cap.
     [<Literal>]
     let maxCountedRows = 100_000
-
-    /// Saturating `int` arithmetic — a cost is a budget comparand, and an
-    /// overflow that wrapped NEGATIVE would read as "cheap" and admit the very
-    /// tree the budget exists to refuse. Public so a witness's `Walk.Cost`
-    /// composes its weights with the same arithmetic.
-    let satAdd (a: int) (b: int) : int =
-        let sum = int64 a + int64 b
-
-        if sum > int64 System.Int32.MaxValue then
-            System.Int32.MaxValue
-        else
-            int sum
-
-    let satMul (a: int) (b: int) : int =
-        let product = int64 a * int64 b
-
-        if product > int64 System.Int32.MaxValue then
-            System.Int32.MaxValue
-        else
-            int product
 
     /// The render cost of ONE node, excluding its children: the node itself,
     /// plus whatever data it carries.

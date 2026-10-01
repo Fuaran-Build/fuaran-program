@@ -148,6 +148,38 @@ type ExprResolution =
     | NotResolved
     | Errored of string
 
+/// The trace of a REVERSIBLE run (Phase 1976) — the Bennett history the
+/// inverse is built from, mirroring the view: one leaf entry per
+/// non-composition step (`Wrote old` for an assignment that wrote, carrying
+/// the value it overwrote and `None` if the key was absent; `Nothing` for
+/// every other step and for an assignment that was refused), the members
+/// that RAN of a sequence or a repeat (a halted prefix is shorter), and which
+/// arm a branch took. Recorded only by `BoundedActions.runTraced`; the forward
+/// `run` records nothing, so a program that never reverses pays nothing. The
+/// model's `trace`.
+[<RequireQualifiedAccess>]
+type Trace =
+    | Nothing
+    | Wrote of old: JVal option
+    | Seq of steps: Trace list
+    | Choose of tookTrue: bool * arm: Trace
+    | Repeat of iterations: Trace list
+
+module Trace =
+    /// Whether every write the trace recorded overwrote a PRESENT key, so
+    /// every one can be undone by an assignment: the run-dependent half of
+    /// reversibility. A key that was absent before the run cannot be restored
+    /// — the store has no delete (K4) — and the inverse is refused rather
+    /// than built wrong. The model's `restorable`.
+    let rec restorable (trace: Trace) : bool =
+        match trace with
+        | Trace.Nothing -> true
+        | Trace.Wrote None -> false
+        | Trace.Wrote(Some _) -> true
+        | Trace.Seq steps -> steps |> List.forall restorable
+        | Trace.Choose(_, arm) -> restorable arm
+        | Trace.Repeat iterations -> iterations |> List.forall restorable
+
 // ═══ THE STATE AXIS — required (§3.1) ═══════════════════════════════════════
 
 /// What one op REACHES (Phase 1967, the second witness's W3 and W4): its
@@ -178,10 +210,14 @@ module OpReach =
         { Arguments = []
           Destination = EffectDestination.Absent }
 
-/// What one op IS to the handler (Phase 1974, the third witness's F-GUARD).
-/// Two shapes, and the handler's `ApplyOps` arm names both.
+/// What one op IS to the handler (Phase 1974, the third witness's F-GUARD;
+/// Phase 1976, the two flow shapes the second witness's re-run found
+/// missing). Four shapes, and the handler's `ApplyOps` arm names all four.
+/// One level, like `ActionView`: a branch's arms are ops, and the handler
+/// re-views each as it reaches it; the obligation that `View` unfolds a
+/// FINITE tree sits on the witness, as it does for the action view.
 [<RequireQualifiedAccess>]
-type OpView =
+type OpView<'Op> =
     /// An op that moves the state. Applied while planning, so a later op and
     /// a later stage read the state it produced; under a registered op
     /// performer it is staged, with that state, and performed after the plan
@@ -199,11 +235,48 @@ type OpView =
     /// guards are over that thing. `guard_holds_moves_nothing` and
     /// `guard_refusal_halts` in `proofs/Staging.fst`.
     | Require
+    /// SELECTION over ops (Phase 1976). `entry` is an op applied for its
+    /// ANSWER, exactly as a guard is: `Ok` takes `whenTrue`, `Error` takes
+    /// `whenFalse` — on this channel a domain's typed refusal is the false
+    /// value, not a halt, because the channel has two answers and no third.
+    /// The arm runs as the ops of an `ApplyOps` effect run. `exit`, when
+    /// carried, is applied against the state the arm left and must HOLD after
+    /// the true arm and FAIL after the false arm (the Janus discipline that
+    /// lets an inverse pick the arm to undo): violated, the whole effect is
+    /// refused with the assertion named, after the arm planned — a defect in
+    /// the program, caught. Neither condition is applied for its state,
+    /// staged or performed. `choose_plans_the_taken_arm` and
+    /// `exit_violation_halts` in `proofs/Staging.fst`.
+    | Choose of entry: 'Op * whenTrue: 'Op list * whenFalse: 'Op list * exit: 'Op option
+    /// BOUNDED ITERATION over ops (Phase 1976, D2). The body plans `count`
+    /// times, threaded as a sequence is; `count` is a literal the domain's
+    /// view produces — on the state axis there is no value channel to read a
+    /// parameter from, so D2's range check is the domain's, at its codec, and
+    /// a ceiling a deployer can bound is the argument policy's (an op whose
+    /// reach names its count as an argument is bounded there). A negative
+    /// count is refused. `repeat_plans_as_unrolling` in `proofs/Staging.fst`.
+    | Repeat of count: int * body: 'Op list
 
 module OpView =
     /// A state witness whose ops are all edits — a domain with no op-channel
-    /// guard fills `View` with this.
-    let edits (_: 'Op) : OpView = OpView.Edit
+    /// guard, branch or repeat fills `View` with this.
+    let edits (_: 'Op) : OpView<'Op> = OpView.Edit
+
+    /// Every op BENEATH an op in its view, to exhaustion: none for an edit or
+    /// a guard; a branch's entry, both arms' ops (and theirs), and its exit; a
+    /// repeat's body (and its ops). The argument policy and the demanded
+    /// projection read an op's reach over itself AND these, so a sequence
+    /// that reaches an off-list path in an UNTAKEN arm has reached it: an
+    /// untaken arm's reach is still reach. A condition is applied, never
+    /// viewed, so entry and exit are listed once and not opened.
+    let rec beneath (view: 'Op -> OpView<'Op>) (op: 'Op) : 'Op list =
+        match view op with
+        | OpView.Edit
+        | OpView.Require -> []
+        | OpView.Choose(entry, whenTrue, whenFalse, exit) ->
+            let arms = whenTrue @ whenFalse
+            (entry :: arms) @ Option.toList exit @ (arms |> List.collect (beneath view))
+        | OpView.Repeat(_, body) -> body @ (body |> List.collect (beneath view))
 
 /// The STATE axis: the state the ops apply to, and everything Program reads
 /// of an op. Required — every domain fills it. Six members; `Stream` is
@@ -228,9 +301,9 @@ type StateWitness<'Node, 'Op> =
         Canonical: 'Node -> string
         /// The ops that turn one state into the other.
         Diff: 'Node -> 'Node -> 'Op list
-        /// Which ops are guards (Phase 1974). `OpView.edits` for a domain
-        /// with none.
-        View: 'Op -> OpView
+        /// Which ops are guards (Phase 1974), branches or repeats (Phase
+        /// 1976). `OpView.edits` for a domain with none.
+        View: 'Op -> OpView<'Op>
     }
 
 // ═══ THE WALK AXIS — optional (§3.2) ════════════════════════════════════════
@@ -269,9 +342,24 @@ type LeafDeclaration =
         HostCalls: HostCallDemand list
     }
 
-/// One level of an action, seen by the core. Five shapes, and the fold names
-/// all five: control structure is sequence + assign + call + require, and
-/// everything else is a leaf (K2, as amended by Phase 1967).
+/// The bound of a repeat (Phase 1976; D2: a literal count, or a parameter
+/// checked against a range). `Literal` is known from the tree alone, which is
+/// what admits a repeat to the reversible fragment. `Parameter` resolves at
+/// dispatch through `ExprWitness.Resolve` to a `JInt`, once, at entry, and is
+/// checked against `[lo, hi]`: outside it the repeat halts BEFORE its first
+/// iteration — the over-bound refusal — so the budget prices it at `hi`
+/// without consulting the store. The model's `bound`.
+[<RequireQualifiedAccess>]
+type Bound<'Expr> =
+    | Literal of count: int
+    | Parameter of count: 'Expr * lo: int * hi: int
+
+/// One level of an action, seen by the core. Seven shapes, and the fold names
+/// all seven: control structure is sequence + assign + call + require +
+/// choose + repeat, and everything else is a leaf (K2, as amended by Phase
+/// 1967 and Phase 1976). Three are COMPOSITION shapes — a sequence, a
+/// selection, a repeat — whose step is their members' steps; the other four
+/// are one step each (`fold_total` in `proofs/BoundedFold.fst`).
 [<RequireQualifiedAccess>]
 type ActionView<'Action, 'Expr> =
     /// The composition arm.
@@ -296,6 +384,28 @@ type ActionView<'Action, 'Expr> =
     /// refusals are all of that kind, and none of its arms views as a guard.
     /// A guard over the STATE is the op channel's (`OpView.Require`).
     | Require of condition: 'Expr
+    /// SELECTION (Phase 1976, D1's typed branching). `entry` resolves against
+    /// the store at dispatch exactly as a guard's condition does: the boolean
+    /// `true` takes `whenTrue`, any other value takes `whenFalse`, and an
+    /// unresolved or errored condition HALTS as a guard's would — a branch
+    /// that cannot decide is a defect, not a default. The arm runs as a member
+    /// of a sequence runs. `exit`, when carried, resolves against the store
+    /// the arm left and must be `true` after the true arm and not after the
+    /// false arm (the Janus discipline that lets an inverse pick the arm to
+    /// undo): violated, unresolved or errored, it halts AFTER the arm — the
+    /// arm's writes and effects stand as of the halt, the handler rolls back
+    /// (D8) — with the failure named in the diagnostic. Absent, the branch
+    /// runs forwards exactly the same and is outside the reversible fragment
+    /// (`BoundedActions.reversible`). The model's `VChoose`.
+    | Choose of entry: 'Expr * whenTrue: 'Action * whenFalse: 'Action * exit: 'Expr option
+    /// BOUNDED ITERATION (Phase 1976, D2). The body runs `bound` times in
+    /// sequence, stopping at the first halt, and sees NO index: its one
+    /// channel to state is the store it writes, and an index it could
+    /// overwrite would not be a function of the bound alone, which is what
+    /// running an inverse the same number of times rests on. A repeat IS its
+    /// unrolling (`repeat_is_unrolling`), so every sequence law covers it.
+    /// A negative literal bound is refused. The model's `VRepeat`.
+    | Repeat of bound: Bound<'Expr> * body: 'Action
     /// Every other domain act.
     | Leaf of LeafDeclaration
 
@@ -339,6 +449,13 @@ type StoreWitness<'Store> =
         /// Write one key of the state channel (K4). Converting the value to
         /// the store's own representation is the store's business.
         Assign: string -> JVal -> 'Store -> 'Store
+        /// Read one key of the state channel (Phase 1976): the value an
+        /// assignment is about to overwrite, which a REVERSIBLE run records
+        /// (the Bennett trace, `BoundedActions.runTraced`) and nothing else
+        /// reads — the forward fold never calls it. K4's read-after-write
+        /// law, `Read k (Assign k v s) = Some v`, is the witness's obligation;
+        /// the model's `write_restore` is what a reversal rests on.
+        Read: string -> 'Store -> JVal option
         /// Land a server read's table in a query slot.
         LandQuery: string -> Table -> 'Store -> 'Store
         /// The reserved namespace the fold refuses to write into (K5).

@@ -605,25 +605,64 @@ module Demanded =
         // A guard READS what its condition reads, exactly as an assignment's
         // `from` does, and writes nothing (Phase 1967).
         | ActionView.Require condition ->
-            let uses = fold.Expr.Uses condition
-
-            let reads =
-                uses
-                |> List.choose (fun u ->
-                    match u with
-                    | BindingUse.State stateKey -> Some(namespaceOf stateKey, false)
-                    | BindingUse.Query _ -> None)
-
-            let calls =
-                uses
-                |> List.choose (fun u ->
-                    match u with
-                    | BindingUse.Query name -> Some { Channel = "Query"; Name = name }
-                    | BindingUse.State _ -> None)
-
+            let calls, reads = usesOf fold condition
             [], calls, reads
 
+        // A branch demands the UNION of its parts (Phase 1976): what its entry
+        // condition reads, what BOTH arms demand — an untaken arm's reach is
+        // still reach, and which arm runs is decided at dispatch against a
+        // store this projection cannot see — and what its exit assertion
+        // reads. In order: entry, true arm, false arm, exit.
+        | ActionView.Choose(entry, whenTrue, whenFalse, exit) ->
+            let entryCalls, entryReads = usesOf fold entry
+            let tE, tH, tN = demandsOfAction fold whenTrue
+            let fE, fH, fN = demandsOfAction fold whenFalse
+
+            let exitCalls, exitReads =
+                match exit with
+                | Some assertion -> usesOf fold assertion
+                | None -> [], []
+
+            tE @ fE, entryCalls @ tH @ fH @ exitCalls, entryReads @ tN @ fN @ exitReads
+
+        // A repeat demands what its bound reads — a parameter bound is an
+        // expression resolved at dispatch, a literal reads nothing — and what
+        // its body demands, ONCE: a demand is a name, and the body's names do
+        // not change with the count (the budget prices the count).
+        | ActionView.Repeat(bound, body) ->
+            let boundCalls, boundReads =
+                match bound with
+                | Bound.Parameter(count, _, _) -> usesOf fold count
+                | Bound.Literal _ -> [], []
+
+            let bE, bH, bN = demandsOfAction fold body
+            bE, boundCalls @ bH, boundReads @ bN
+
         | ActionView.Leaf declaration -> declaration.EffectKinds, declaration.HostCalls, []
+
+    /// What an expression demands, through the witness's `Expr.Uses`: a state
+    /// key is a namespace read, a query slot a `Query` host call.
+    and private usesOf
+        (fold: DispatchFold<'Action, 'Expr, 'Store, 'Effect>)
+        (expr: 'Expr)
+        : HostCallDemand list * (string * bool) list =
+        let uses = fold.Expr.Uses expr
+
+        let reads =
+            uses
+            |> List.choose (fun u ->
+                match u with
+                | BindingUse.State stateKey -> Some(namespaceOf stateKey, false)
+                | BindingUse.Query _ -> None)
+
+        let calls =
+            uses
+            |> List.choose (fun u ->
+                match u with
+                | BindingUse.Query name -> Some { Channel = "Query"; Name = name }
+                | BindingUse.State _ -> None)
+
+        calls, reads
 
     /// A node that accepts an event but carries no wire-surviving action for it
     /// — a hand-authored handler the decoder replaced with an inert

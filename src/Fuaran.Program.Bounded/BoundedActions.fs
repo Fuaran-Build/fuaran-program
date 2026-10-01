@@ -15,13 +15,17 @@ open Fuaran.Core
 //  re-decide it here.
 //
 //  Since Phase 1896 the fold is DOMAIN-GENERIC (DECISIONS.md D18): it reads an
-//  action only through a witness's VIEW of it — `ActionView`'s five shapes,
-//  `Sequence` / `Assign` / `Call` / `Require` / `Leaf` — and asks the witness
-//  what a leaf does. It is written to meet `proofs/BoundedFold.fst`'s `fold`,
-//  which was restated over the view and re-proved before this code (D14,
-//  Phase 1898), and restated again over the fifth shape — the halting guard
-//  the second witness found missing (Phase 1967, F1) — before the port that
-//  added it.
+//  action only through a witness's VIEW of it — `ActionView`'s seven shapes,
+//  `Sequence` / `Assign` / `Call` / `Require` / `Choose` / `Repeat` / `Leaf`
+//  — and asks the witness what a leaf does. It is written to meet
+//  `proofs/BoundedFold.fst`'s `fold`, which was restated over the view and
+//  re-proved before this code (D14, Phase 1898), restated again over the
+//  fifth shape — the halting guard the second witness found missing (Phase
+//  1967, F1) — before the port that added it, and restated a third time over
+//  the selection and the bounded iteration D1 and D2 charter (Phase 1976: the
+//  second witness's re-run found the core had sequence and abort but neither)
+//  before the port that added those, with the reversible fragment of the view
+//  named and proved to undo itself in the same restatement.
 //
 //  The case this module serves is an **emitted, wire-decoded** tree, where
 //  there is **no hand-authored `update` and no message type**. The "model" is
@@ -47,7 +51,15 @@ open Fuaran.Core
 //  half, enforced by the driver's per-interaction budget; bounded code + bounded
 //  cost = safe to run untrusted on shared infra.)
 //
-//  ── The five shapes ─────────────────────────────────────────────────────────
+//  ── The seven shapes ────────────────────────────────────────────────────────
+//    - `Choose(entry, whenTrue, whenFalse, exit)` → SELECTION (Phase 1976):
+//      resolve the entry condition as a guard's; the boolean true takes the
+//      true arm, anything else the false arm, unresolved or errored halts;
+//      then the exit assertion, when carried, must hold after the true arm and
+//      fail after the false arm, or the branch halts after its arm.
+//    - `Repeat(bound, body)` → BOUNDED ITERATION (Phase 1976): the body that
+//      many times, composed as a sequence; a parameter bound is resolved once
+//      and range-checked first, and an over-bound one halts before the body.
 //    - `Assign(key, value, from)` → write the state channel at `key` (the only
 //      mutation), refusing a reserved key and an expression that does not
 //      resolve to a value.
@@ -207,6 +219,34 @@ module BoundedActions =
           Diagnostics = [ BoundedDiagnostic.Refused(nodeId, description, reason) ]
           Halted = true }
 
+    /// A halt that follows an ARM that ran (Phase 1976): the arm's store,
+    /// effects and diagnostics kept, the halt's diagnostic appended, and the
+    /// flag. A violated exit assertion is this — the arm's writes stand as of
+    /// the halt (the fold never rolls back; the handler does, D8), and the
+    /// outcome says which assertion failed. The model's `halted_after`.
+    let private haltedAfter
+        (outcome: BoundedOutcome<'Store, 'Effect>)
+        (nodeId: string)
+        (description: string)
+        (reason: string)
+        : BoundedOutcome<'Store, 'Effect> =
+        { Store = outcome.Store
+          Effects = outcome.Effects
+          Diagnostics = outcome.Diagnostics @ [ BoundedDiagnostic.Refused(nodeId, description, reason) ]
+          Halted = true }
+
+    /// Compose two outcomes as a sequence composes its members: the second's
+    /// store and halt, the lists concatenated in order. The model's
+    /// `composed`.
+    let private composed
+        (first: BoundedOutcome<'Store, 'Effect>)
+        (second: BoundedOutcome<'Store, 'Effect>)
+        : BoundedOutcome<'Store, 'Effect> =
+        { Store = second.Store
+          Effects = first.Effects @ second.Effects
+          Diagnostics = first.Diagnostics @ second.Diagnostics
+          Halted = second.Halted }
+
     /// Interpret one bounded action against the store, through a domain's
     /// witness, with a placement-supplied **handler-effect arm** for the call
     /// shape and the placement's own accumulation threaded alongside
@@ -216,8 +256,16 @@ module BoundedActions =
     /// leaf lowers to). **Never invokes a closure carried by the action** — see
     /// the safety property at the top of this file.
     ///
+    /// `tracing` (Phase 1976) is whether this is a REVERSIBLE run: true records
+    /// the Bennett trace the inverse is built from — the value each assignment
+    /// overwrote, read through `Store.Read` — and false records nothing and
+    /// reads nothing, so the forward `run` costs a program that never reverses
+    /// nothing. ONE fold, not two: the model has `fold` and `fold_traced` and
+    /// proves them equal in outcome (`traced_agrees`); the code keeps D1's one
+    /// evaluating `match` and makes the trace a flag of it.
+    ///
     /// THIS IS THE ONLY PLACE ANYTHING IN THIS DOMAIN INTERPRETS AN ACTION. One
-    /// evaluating `match`, over the five view shapes, in one file, reachable
+    /// evaluating `match`, over the seven view shapes, in one file, reachable
     /// from every placement — which is D1's "no second evaluator" as a property
     /// a reader can check by grep rather than a claim they have to trust. (Two
     /// other walks read the same view without interpreting it: the resource
@@ -227,11 +275,12 @@ module BoundedActions =
     let rec private runFold
         (fold: DispatchFold<'Action, 'Expr, 'Store, 'Effect>)
         (arm: HandlerArm<'Store, 'Effect, 'Placement>)
+        (tracing: bool)
         (nodeId: string)
         (action: 'Action)
         (s: 'Store)
         (placement: 'Placement)
-        : BoundedOutcome<'Store, 'Effect> * 'Placement =
+        : BoundedOutcome<'Store, 'Effect> * 'Placement * Trace =
         match fold.Action.View action with
         // The one store mutation: write the state channel. The reserved key
         // namespace is closed on the bounded path too. This loop's whole
@@ -243,41 +292,56 @@ module BoundedActions =
         // document whose action does nothing, not a decode failure, and per
         // §10.5 it leaves the step's event-level refusal unset. Which keys are
         // reserved is the witness's (K5); that the fold refuses them is not.
+        //
+        // A reversible run records, with the write, the value it overwrote
+        // (`Trace.Wrote`); a refused write records nothing to undo.
         | ActionView.Assign(key, value, from) ->
-            (if fold.Store.IsReserved key then
-                 refused
-                     nodeId
-                     (fold.Action.Describe action)
-                     (sprintf "State key '%s' is under the host-reserved '%s' namespace" key fold.Store.ReservedPrefix)
-                     s
-             else
-                 // `from` (value XOR from, decode-enforced) evaluates AT DISPATCH
-                 // TIME against the store itself. An unresolved / errored source
-                 // performs NO write and is diagnosed, never silent.
-                 let payload: Result<JVal option, string> =
-                     match from with
-                     | Some expr ->
-                         (match fold.Expr.Resolve s expr with
-                          | ExprResolution.Resolved jv -> Ok(Some jv)
-                          | ExprResolution.NotResolved -> Ok None
-                          | ExprResolution.Errored m -> Error m)
-                     | None -> Ok value
+            if fold.Store.IsReserved key then
+                refused
+                    nodeId
+                    (fold.Action.Describe action)
+                    (sprintf "State key '%s' is under the host-reserved '%s' namespace" key fold.Store.ReservedPrefix)
+                    s,
+                placement,
+                Trace.Nothing
+            else
+                // `from` (value XOR from, decode-enforced) evaluates AT DISPATCH
+                // TIME against the store itself. An unresolved / errored source
+                // performs NO write and is diagnosed, never silent.
+                let payload: Result<JVal option, string> =
+                    match from with
+                    | Some expr ->
+                        (match fold.Expr.Resolve s expr with
+                         | ExprResolution.Resolved jv -> Ok(Some jv)
+                         | ExprResolution.NotResolved -> Ok None
+                         | ExprResolution.Errored m -> Error m)
+                    | None -> Ok value
 
-                 match payload with
-                 | Ok(Some jv) -> store (fold.Store.Assign key jv s)
-                 | Ok None ->
-                     refused
-                         nodeId
-                         (fold.Action.Describe action)
-                         "valueFrom did not resolve to a value — no write performed"
-                         s
-                 | Error m ->
-                     refused
-                         nodeId
-                         (fold.Action.Describe action)
-                         (sprintf "valueFrom errored: %s — no write performed" m)
-                         s),
-            placement
+                match payload with
+                | Ok(Some jv) ->
+                    let trace =
+                        if tracing then
+                            Trace.Wrote(fold.Store.Read key s)
+                        else
+                            Trace.Nothing
+
+                    store (fold.Store.Assign key jv s), placement, trace
+                | Ok None ->
+                    refused
+                        nodeId
+                        (fold.Action.Describe action)
+                        "valueFrom did not resolve to a value — no write performed"
+                        s,
+                    placement,
+                    Trace.Nothing
+                | Error m ->
+                    refused
+                        nodeId
+                        (fold.Action.Describe action)
+                        (sprintf "valueFrom errored: %s — no write performed" m)
+                        s,
+                    placement,
+                    Trace.Nothing
 
         // A call that ALSO declares where its answer should land is REFUSED
         // rather than honoured or quietly ignored (DECISIONS.md D9). Result-target
@@ -302,10 +366,11 @@ module BoundedActions =
                     (fold.Action.Describe action)
                     "the call declares a result target; a handler declares where its own results land"
                     s,
-                placement
+                placement,
+                Trace.Nothing
             else
                 match arm.Answer nodeId endpoint s placement with
-                | None -> noOp nodeId (fold.Action.Describe action) s, placement
+                | None -> noOp nodeId (fold.Action.Describe action) s, placement, Trace.Nothing
                 | Some answer ->
                     // An answered call never halts: a handler is its own
                     // atomicity unit (D8), so one that failed rolled ITSELF
@@ -315,7 +380,8 @@ module BoundedActions =
                       Effects = answer.Effects
                       Diagnostics = answer.Diagnostics
                       Halted = false },
-                    answer.Placement
+                    answer.Placement,
+                    Trace.Nothing
 
         // The halting guard (Phase 1967). The condition resolves against the
         // store at dispatch — the SAME arrow an `Assign`'s `from` resolves
@@ -324,7 +390,8 @@ module BoundedActions =
         // halt, the last carrying the domain's own text as the reason, which
         // is how a typed refusal reaches the diagnostic. A guard writes nothing
         // and emits nothing, whichever way it goes. The model's `VRequire` arm;
-        // `fold_total` proves it is the ONLY shape whose step can halt.
+        // `fold_total` proves it is the only non-composition shape whose step
+        // can halt.
         | ActionView.Require condition ->
             (match fold.Expr.Resolve s condition with
              | ExprResolution.Resolved(JBool true) -> store s
@@ -332,7 +399,137 @@ module BoundedActions =
              | ExprResolution.NotResolved ->
                  halted nodeId (fold.Action.Describe action) "the guard did not resolve to a value" s
              | ExprResolution.Errored m -> halted nodeId (fold.Action.Describe action) m s),
-            placement
+            placement,
+            Trace.Nothing
+
+        // SELECTION (Phase 1976). The entry condition resolves exactly as a
+        // guard's does and picks the arm: the boolean true takes `whenTrue`,
+        // any other value `whenFalse`; unresolved or errored halts, as a guard
+        // would, before either arm runs. The arm runs as a member of a sequence
+        // would (its halt is the branch's halt). Then the EXIT assertion, when
+        // carried, resolves against the store the arm left: it must hold after
+        // the true arm and fail after the false arm — the assertion the inverse
+        // branch picks its arm by (`reverse`) — and violated, unresolved or
+        // errored it halts AFTER the arm, keeping what the arm did, with the
+        // failure named. The model's `VChoose` arm.
+        | ActionView.Choose(entry, whenTrue, whenFalse, exit) ->
+            match fold.Expr.Resolve s entry with
+            | ExprResolution.Resolved jv ->
+                let tookTrue = (jv = JBool true)
+
+                let armOutcome, armPlacement, armTrace =
+                    runFold fold arm tracing nodeId (if tookTrue then whenTrue else whenFalse) s placement
+
+                let trace =
+                    if tracing then
+                        Trace.Choose(tookTrue, armTrace)
+                    else
+                        Trace.Nothing
+
+                if armOutcome.Halted then
+                    armOutcome, armPlacement, trace
+                else
+                    match exit with
+                    | None -> armOutcome, armPlacement, trace
+                    | Some assertion ->
+                        match fold.Expr.Resolve armOutcome.Store assertion with
+                        | ExprResolution.Resolved jv' ->
+                            if (jv' = JBool true) = tookTrue then
+                                armOutcome, armPlacement, trace
+                            else
+                                haltedAfter
+                                    armOutcome
+                                    nodeId
+                                    (fold.Action.Describe action)
+                                    (if tookTrue then
+                                         "the exit assertion did not hold after the true arm"
+                                     else
+                                         "the exit assertion held after the false arm"),
+                                armPlacement,
+                                trace
+                        | ExprResolution.NotResolved ->
+                            haltedAfter
+                                armOutcome
+                                nodeId
+                                (fold.Action.Describe action)
+                                "the exit assertion did not resolve to a value",
+                            armPlacement,
+                            trace
+                        | ExprResolution.Errored m ->
+                            haltedAfter
+                                armOutcome
+                                nodeId
+                                (fold.Action.Describe action)
+                                (sprintf "the exit assertion errored: %s" m),
+                            armPlacement,
+                            trace
+            | ExprResolution.NotResolved ->
+                halted nodeId (fold.Action.Describe action) "the branch condition did not resolve to a value" s,
+                placement,
+                Trace.Nothing
+            | ExprResolution.Errored m -> halted nodeId (fold.Action.Describe action) m s, placement, Trace.Nothing
+
+        // BOUNDED ITERATION (Phase 1976). A literal bound runs the body that
+        // many times; a parameter bound is resolved against the store ONCE, at
+        // entry, read as a count, and checked against its declared range — an
+        // over-bound repeat halts here, before the first iteration, which is
+        // what lets the budget price it at the range's top without the store.
+        // The body sees no index. Each iteration composes as a sequence member
+        // does, stopping at the first halt: the model's `fold_repeat`, which
+        // `repeat_is_unrolling` proves is the sequence of `count` bodies. A
+        // negative count is the one refusal the model (whose count is a `nat`)
+        // cannot express: refused here, with its own reason.
+        | ActionView.Repeat(bound, body) ->
+            let times (count: int) : BoundedOutcome<'Store, 'Effect> * 'Placement * Trace =
+                let rec go
+                    (remaining: int)
+                    (acc: BoundedOutcome<'Store, 'Effect>)
+                    (p: 'Placement)
+                    (traces: Trace list)
+                    =
+                    if remaining <= 0 then
+                        acc, p, traces
+                    else
+                        let next, p', t = runFold fold arm tracing nodeId body acc.Store p
+                        let traces' = if tracing then t :: traces else traces
+                        let acc' = composed acc next
+
+                        if next.Halted then
+                            acc', p', traces'
+                        else
+                            go (remaining - 1) acc' p' traces'
+
+                let outcome, p, traces = go count (store s) placement []
+
+                outcome,
+                p,
+                (if tracing then
+                     Trace.Repeat(List.rev traces)
+                 else
+                     Trace.Nothing)
+
+            match bound with
+            | Bound.Literal count when count < 0 ->
+                halted nodeId (fold.Action.Describe action) "the repeat's bound is negative" s, placement, Trace.Nothing
+            | Bound.Literal count -> times count
+            | Bound.Parameter(expr, lo, hi) ->
+                match fold.Expr.Resolve s expr with
+                | ExprResolution.Resolved(JInt count) when count >= 0 ->
+                    if lo <= count && count <= hi then
+                        times count
+                    else
+                        halted nodeId (fold.Action.Describe action) "the repeat's bound is outside its declared range" s,
+                        placement,
+                        Trace.Nothing
+                | ExprResolution.Resolved _ ->
+                    halted nodeId (fold.Action.Describe action) "the repeat's bound did not resolve to a count" s,
+                    placement,
+                    Trace.Nothing
+                | ExprResolution.NotResolved ->
+                    halted nodeId (fold.Action.Describe action) "the repeat's bound did not resolve to a value" s,
+                    placement,
+                    Trace.Nothing
+                | ExprResolution.Errored m -> halted nodeId (fold.Action.Describe action) m s, placement, Trace.Nothing
 
         // A leaf is the domain's: lowered to at most one effect, refused with a
         // reason, or declined — each with a readable diagnostic, so "this action
@@ -348,7 +545,8 @@ module BoundedActions =
                    Halted = false }
              | LeafOutcome.Refuse reason -> refused nodeId (fold.Action.Describe action) reason s
              | LeafOutcome.Decline -> noOp nodeId (fold.Action.Describe action) s),
-            placement
+            placement,
+            Trace.Nothing
 
         // Compose: fold in order, threading the store AND the placement's
         // accumulation, concatenating effects + diagnostics — and stopping at
@@ -358,28 +556,33 @@ module BoundedActions =
         // right and iterative, which is the model's `fold_many` by its own
         // `sequence_homomorphism`: the store each member sees is the one its
         // predecessors left, the lists concatenate in order, and a member that
-        // halted is the whole answer.
+        // halted is the whole answer. A reversible run records the members
+        // that ran, in order.
         | ActionView.Sequence actions ->
-            actions
-            |> List.fold
-                (fun (acc: BoundedOutcome<'Store, 'Effect>, p) a ->
-                    if acc.Halted then
-                        acc, p
-                    else
-                        let next, p' = runFold fold arm nodeId a acc.Store p
+            let outcome, p, traces =
+                actions
+                |> List.fold
+                    (fun (acc: BoundedOutcome<'Store, 'Effect>, p, traces) a ->
+                        if acc.Halted then
+                            acc, p, traces
+                        else
+                            let next, p', t = runFold fold arm tracing nodeId a acc.Store p
+                            composed acc next, p', (if tracing then t :: traces else traces))
+                    (store s, placement, [])
 
-                        { Store = next.Store
-                          Effects = acc.Effects @ next.Effects
-                          Diagnostics = acc.Diagnostics @ next.Diagnostics
-                          Halted = next.Halted },
-                        p')
-                (store s, placement)
+            outcome,
+            p,
+            (if tracing then
+                 Trace.Seq(List.rev traces)
+             else
+                 Trace.Nothing)
 
     /// `runFold` over a composition's dispatch position — the fold every
     /// placement runs (Phase 1974: the fold reads the DISPATCH axis and only
     /// it). Generic over the position, so a path that runs under every
     /// composition (the server handler) can call it; it is only ever handed
     /// an action, and only a composition that fills the dispatch axis has one.
+    /// Records nothing: the model's `run_action`.
     let run
         (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (arm: HandlerArm<'Store, 'Effect, 'Placement>)
@@ -388,7 +591,10 @@ module BoundedActions =
         (s: 'Store)
         (placement: 'Placement)
         : BoundedOutcome<'Store, 'Effect> * 'Placement =
-        runFold (DispatchPosition.fold witness.Dispatch) arm nodeId action s placement
+        let outcome, p, _ =
+            runFold (DispatchPosition.fold witness.Dispatch) arm false nodeId action s placement
+
+        outcome, p
 
     /// Interpret one bounded action against the store at a placement that runs
     /// NO handlers — the browser client and the server driver, neither of which
@@ -404,3 +610,186 @@ module BoundedActions =
         (s: 'Store)
         : BoundedOutcome<'Store, 'Effect> =
         run witness HandlerArm.inert nodeId action s () |> fst
+
+    // ─── The reversible fragment (Phase 1976) ───────────────────────────────
+    //
+    // Selection and iteration are where a reversible language needs structure
+    // a forward-only one does not, so the two shapes were designed for reversal
+    // from the start (the Janus model): a branch carries an exit assertion that
+    // picks the arm to undo, and a repeat's bound is a function of the tree
+    // alone. `Assign` is not reversible by construction — it destroys the old
+    // value — so it joins the fragment BY TRACE: a reversible run records, at
+    // each write, the value it overwrote, and the inverse restores it with an
+    // ordinary assignment (the Bennett embedding). What is recorded lives in
+    // the `Trace` the traced run returns beside its outcome — the plan phase
+    // holds it exactly as it holds the pre-state — and the forward `run`
+    // records nothing. `proofs/BoundedFold.fst` section 6: `reversible`,
+    // `fold_traced`, `traced_agrees`, `reverse`, `reverse_run`.
+
+    /// The same fold, RECORDING its trace (Phase 1976): the outcome and the
+    /// placement `run` would answer — the model's `traced_agrees` — and the
+    /// Bennett trace the inverse is built from. The one path that calls
+    /// `Store.Read`. The model's `run_action_traced`.
+    let runTraced
+        (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
+        (arm: HandlerArm<'Store, 'Effect, 'Placement>)
+        (nodeId: string)
+        (action: 'Action)
+        (s: 'Store)
+        (placement: 'Placement)
+        : BoundedOutcome<'Store, 'Effect> * 'Placement * Trace =
+        runFold (DispatchPosition.fold witness.Dispatch) arm true nodeId action s placement
+
+    /// Whether an action is in the REVERSIBLE FRAGMENT, decided from the tree
+    /// alone: sequence, assign, the guard, a branch WITH an exit assertion, a
+    /// repeat with a LITERAL bound — never a call or a leaf (effects: a
+    /// property of the op, declared on the state witness, not the flow
+    /// algebra's). A branch without an exit assertion has nothing to say
+    /// which arm to undo; a parameter bound is read from the store the body
+    /// may have overwritten. The model's `reversible`.
+    let reversible
+        (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
+        (action: 'Action)
+        : bool =
+        let view = (DispatchPosition.fold witness.Dispatch).Action.View
+
+        let rec go (a: 'Action) : bool =
+            match view a with
+            | ActionView.Sequence members -> members |> List.forall go
+            | ActionView.Assign _
+            | ActionView.Require _ -> true
+            | ActionView.Choose(_, whenTrue, whenFalse, exit) -> Option.isSome exit && go whenTrue && go whenFalse
+            | ActionView.Repeat(Bound.Literal _, body) -> go body
+            | ActionView.Repeat(Bound.Parameter _, _)
+            | ActionView.Call _
+            | ActionView.Leaf _ -> false
+
+        go action
+
+    /// The inverse of a RUN (Phase 1976) — a program in the fragment, built from
+    /// the program and its trace, that the core itself folds (`runReversed`):
+    /// the inverse is not a domain action, because the core cannot construct
+    /// one, so it is a tree the core views as it views any action, carrying
+    /// the forward actions' descriptions for its diagnostics. The model's
+    /// `reverse`, shape for shape:
+    ///
+    ///   - a sequence inverts to its members' inverses in REVERSE order;
+    ///   - an assignment that wrote inverts to the assignment of the value it
+    ///     overwrote (`Restore`); one that was refused inverts to nothing;
+    ///   - a guard is its own inverse — it held at that store, and holds again;
+    ///   - a branch inverts to the branch whose ENTRY is the exit assertion and
+    ///     whose EXIT is the entry condition, with the arm that ran inverted
+    ///     and the other arm EMPTY — nothing was recorded for the arm that did
+    ///     not run, and the exit assertion is what guarantees the inverse never
+    ///     takes it;
+    ///   - a literal repeat inverts to the SEQUENCE of its iterations'
+    ///     inverses in reverse order — not a repeat, because each iteration
+    ///     overwrote different values and so has its own inverse body.
+    [<RequireQualifiedAccess>]
+    type Reversed<'Expr> =
+        | Sequence of describe: string * members: Reversed<'Expr> list
+        | Restore of describe: string * key: string * old: JVal
+        | Require of describe: string * condition: 'Expr
+        | Choose of
+            describe: string *
+            entry: 'Expr *
+            whenTrue: Reversed<'Expr> *
+            whenFalse: Reversed<'Expr> *
+            exit: 'Expr
+
+    module Reversed =
+        /// The forward action's description, carried for the diagnostics.
+        let describe (reversed: Reversed<'Expr>) : string =
+            match reversed with
+            | Reversed.Sequence(d, _)
+            | Reversed.Restore(d, _, _)
+            | Reversed.Require(d, _)
+            | Reversed.Choose(d, _, _, _, _) -> d
+
+        /// The inverse's view — the one the core folds it through.
+        let view (reversed: Reversed<'Expr>) : ActionView<Reversed<'Expr>, 'Expr> =
+            match reversed with
+            | Reversed.Sequence(_, members) -> ActionView.Sequence members
+            | Reversed.Restore(_, key, old) -> ActionView.Assign(key, Some old, None)
+            | Reversed.Require(_, condition) -> ActionView.Require condition
+            | Reversed.Choose(_, entry, whenTrue, whenFalse, exit) ->
+                ActionView.Choose(entry, whenTrue, whenFalse, Some exit)
+
+        /// A log-safe rendering of the inverse's SHAPE: which keys it restores
+        /// and in what order, never the values (the trace holds those, and a
+        /// value is payload a log must not carry).
+        let rec encode (reversed: Reversed<'Expr>) : JVal =
+            match reversed with
+            | Reversed.Sequence(d, members) ->
+                Canon.typed "Sequence" [ "of", JStr d; "members", JArr(members |> List.map encode) ]
+            | Reversed.Restore(d, key, _) -> Canon.typed "Restore" [ "key", JStr key; "of", JStr d ]
+            | Reversed.Require(d, _) -> Canon.typed "Require" [ "of", JStr d ]
+            | Reversed.Choose(d, _, whenTrue, whenFalse, _) ->
+                Canon.typed "Choose" [ "of", JStr d; "whenFalse", encode whenFalse; "whenTrue", encode whenTrue ]
+
+    /// Build the inverse of a run from the action and the trace `runTraced`
+    /// recorded for it. Total: a program and a trace that do not match (a
+    /// call, a leaf, a trace from a different run) invert to the empty
+    /// sequence, and `reverse_run` says nothing of them — its hypotheses
+    /// (`reversible`, a run that did not halt, `Trace.restorable`) exclude
+    /// them. The model's `reverse`.
+    let reverse
+        (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
+        (action: 'Action)
+        (trace: Trace)
+        : Reversed<'Expr> =
+        let fold = DispatchPosition.fold witness.Dispatch
+
+        let rec go (a: 'Action) (t: Trace) : Reversed<'Expr> =
+            let d = fold.Action.Describe a
+
+            match fold.Action.View a, t with
+            | ActionView.Sequence members, Trace.Seq steps -> Reversed.Sequence(d, many members steps)
+            | ActionView.Assign(key, _, _), Trace.Wrote(Some old) -> Reversed.Restore(d, key, old)
+            | ActionView.Require condition, _ -> Reversed.Require(d, condition)
+            | ActionView.Choose(entry, whenTrue, _, Some exit), Trace.Choose(true, arm) ->
+                Reversed.Choose(d, exit, go whenTrue arm, Reversed.Sequence(d, []), entry)
+            | ActionView.Choose(entry, _, whenFalse, Some exit), Trace.Choose(false, arm) ->
+                Reversed.Choose(d, exit, Reversed.Sequence(d, []), go whenFalse arm, entry)
+            | ActionView.Repeat(Bound.Literal count, body), Trace.Repeat iterations ->
+                Reversed.Sequence(d, many (List.replicate (max count 0) body) iterations)
+            | _ -> Reversed.Sequence(d, [])
+
+        // The members' inverses in REVERSE order: the last member that ran is
+        // undone first. The model's `reverse_many`.
+        and many (members: 'Action list) (steps: Trace list) : Reversed<'Expr> list =
+            match members, steps with
+            | a :: rest, t :: ts -> many rest ts @ [ go a t ]
+            | _ -> []
+
+        go action trace
+
+    /// Fold an inverse program: `run` over the inverse's own view, with the
+    /// dispatch axis's expressions and store — so the inverse is interpreted
+    /// by the ONE evaluator, exactly as the forward program was, and
+    /// `reverse_run`'s statement is about this call. The inverse has no leaf
+    /// and no call, so the lowering is never asked and the arm never answers.
+    let runReversed
+        (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
+        (nodeId: string)
+        (reversed: Reversed<'Expr>)
+        (s: 'Store)
+        : BoundedOutcome<'Store, 'Effect> =
+        let fold = DispatchPosition.fold witness.Dispatch
+
+        let inverseFold: DispatchFold<Reversed<'Expr>, 'Expr, 'Store, 'Effect> =
+            { Action =
+                { View = Reversed.view
+                  Lower = fun _ _ _ -> LeafOutcome.Decline
+                  Describe = Reversed.describe
+                  Encode = Reversed.encode
+                  Decode =
+                    fun _ ->
+                        Error
+                            { Class = "malformed-referenced-value"
+                              Detail = "an inverse program is built from a run, never decoded" } }
+              Expr = fold.Expr
+              Store = fold.Store }
+
+        let outcome, _, _ = runFold inverseFold HandlerArm.inert false nodeId reversed s ()
+        outcome

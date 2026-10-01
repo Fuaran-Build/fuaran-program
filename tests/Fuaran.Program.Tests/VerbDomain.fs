@@ -61,19 +61,24 @@ type FileCheck =
     | Refused of VerbRefusal
 
 /// The verb's ops. A read, a write, a delete and a publish — the four shapes
-/// a store-mutating verb has — and a check, its guard.
+/// a store-mutating verb has — a check, its guard, and since Phase 1976 a
+/// branch over two arms of ops and a bounded repeat, which the state witness
+/// views as the core's `Choose` and `Repeat`: the two-arm construct the
+/// second witness's re-run had to carry beside the core, now in it.
 type FileOp =
     | Read of path: string
     | Write of path: string * content: string
     | Delete of path: string
     | Publish of target: string
     | Check of FileCheck
+    | Branch of entry: FileCheck * whenTrue: FileOp list * whenFalse: FileOp list * exit: FileCheck option
+    | Times of count: int * body: FileOp list
 
 // ─── the state witness ──────────────────────────────────────────────────────
 
 /// The op codec: canonical, and the content a write carries is IN it, so a
 /// ceiling on the arm measures what the handler document would carry.
-let encodeOp (op: FileOp) : string =
+let rec encodeOp (op: FileOp) : string =
     match op with
     | Read path -> Canon.render (Canon.typed "Read" [ "path", JStr path ])
     | Write(path, content) -> Canon.render (Canon.typed "Write" [ "content", JStr content; "path", JStr path ])
@@ -82,6 +87,25 @@ let encodeOp (op: FileOp) : string =
     | Check(Exists path) -> Canon.render (Canon.typed "Exists" [ "path", JStr path ])
     | Check(Missing path) -> Canon.render (Canon.typed "Missing" [ "path", JStr path ])
     | Check(Refused refusal) -> Canon.render (Canon.typed "Refused" [ "refusal", JStr(VerbRefusal.render refusal) ])
+    | Branch(entry, whenTrue, whenFalse, exit) ->
+        let arm (ops: FileOp list) =
+            JArr(ops |> List.map (encodeOp >> JStr))
+
+        let encodedExit =
+            match exit with
+            | Some e -> JStr(encodeOp (Check e))
+            | None -> JBool false
+
+        Canon.render (
+            Canon.typed
+                "Branch"
+                [ "entry", JStr(encodeOp (Check entry))
+                  "exit", encodedExit
+                  "whenFalse", arm whenFalse
+                  "whenTrue", arm whenTrue ]
+        )
+    | Times(count, body) ->
+        Canon.render (Canon.typed "Times" [ "body", JArr(body |> List.map (encodeOp >> JStr)); "count", JInt count ])
 
 /// Apply one op to the PLAN. A read reads the plan; a delete of a file the
 /// plan does not hold is an apply refusal, which halts the handler as every
@@ -121,6 +145,10 @@ let apply (op: FileOp) (tree: FileMap) : Result<FileMap, string> =
         else
             Ok tree
     | Check(Refused refusal) -> Error(VerbRefusal.render refusal)
+    // A flow op is planned through its VIEW — its conditions and its arms are
+    // what the handler applies — and is never applied itself.
+    | Branch _
+    | Times _ -> Error "a flow op is planned through its view and never applied"
 
 /// What an op REACHES (W3, W4): a path under `path`, local; a publish target
 /// under `target`, and REMOTE — the class a policy can bound without knowing
@@ -141,6 +169,14 @@ let reach (op: FileOp) : OpReach =
         { Arguments = [ "path", path ]
           Destination = EffectDestination.Absent }
     | Check(Refused _) -> OpReach.nothing
+    // A branch reaches nothing of its own: its conditions and arms reach, and
+    // the policy reads them beneath it. A repeat names its COUNT as an
+    // argument, which is how a deployer's allow-list bounds how many times a
+    // body may run — the over-bound refusal, before anything performs.
+    | Branch _ -> OpReach.nothing
+    | Times(count, _) ->
+        { Arguments = [ "count", string count ]
+          Destination = EffectDestination.Absent }
 
 let private canonical (tree: FileMap) : string =
     Canon.render (
@@ -166,13 +202,18 @@ let witness: ProgramWitness<FileMap, FileOp, Unfilled, Unfilled> =
                 | Check(Exists path)
                 | Check(Missing path) -> Some path
                 | Publish target -> Some target
-                | Check(Refused _) -> None
+                | Check(Refused _)
+                | Branch _
+                | Times _ -> None
           Canonical = canonical
           Diff = fun _ _ -> []
           View =
             fun op ->
                 match op with
                 | Check _ -> OpView.Require
+                | Branch(entry, whenTrue, whenFalse, exit) ->
+                    OpView.Choose(Check entry, whenTrue, whenFalse, exit |> Option.map Check)
+                | Times(count, body) -> OpView.Repeat(count, body)
                 | Read _
                 | Write _
                 | Delete _
@@ -228,3 +269,5 @@ type World() =
                     published.Add target
                     Ok()
                 | Check _ -> Error "a guard reached the performer"
+                | Branch _
+                | Times _ -> Error "a flow op reached the performer"
