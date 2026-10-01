@@ -455,6 +455,32 @@ APPLIED, and the state handed with the last edit performed is the state the plan
 rather than folding the ops a second time from the entry state in the trusted base. `Performed` and
 the `PerformFailed` prefix report are unchanged in shape.
 
+**The undo posture (Phase 1977, D22).** `Undo: 'Op -> UndoClass<'Node, 'Op>` is the seventh member,
+with `UndoClass = Inverse of ('Node -> 'Op list) | Compensate of ('Node -> 'Op list) | OneWay of
+reason`. The CLASS is a function of the op alone, because the posture is read before anything runs,
+from the declared form, where no pre-state exists; the INVERSE is a function of the pre-state, which
+the plan phase holds with every edit and nowhere else — an inverse of a write needs the old bytes.
+Only an op the witness views as an EDIT is asked. `Undo.posture` reads a handler `reversible`
+(every edit an exact inverse, every compute stage in D21's reversible fragment, nothing reaching the
+world), `compensable` (every edit an inverse or a declared compensation — a saga), `one-way` (a step
+with neither: a one-way op, a host call, a notification — with the first such stage named, after
+which nothing can be undone) or `unknown` (an emitted patch, a compute stage outside the fragment),
+with reasons in stage order from a closed vocabulary (`compensated-op`, `one-way-op`,
+`opaque-host-call`, `outbound-notification`, `emitted-patch`, `compute-outside-fragment`); the
+demanded document carries it per handler at version 6, beside the replay posture (§6). The line that
+matters is the LAW: an `Inverse` obeys K9 (§3.7) and a compensation obeys none, so a reversible plan
+is CHECKED against the recorded entry state before anything performs and a compensable one reaches
+whatever its compensations reach. `Handler.runPlanned` answers beside the outcome the plan a run
+leaves — every edit with the state it was applied to, every compute stage with its trace, every step
+that reached or emitted — and `Undo.run` performs the inverses in reverse plan order as ONE `ApplyOps`
+effect through the same gate, argument policy and registered performers, then reverses the compute
+stages' binding writes by D21's inverse; the first step it cannot perform is refused and named before
+anything is undone, and a failed undo step reports how far it got in the `PerformFailed` vocabulary,
+because the undo is a handler run. A landed read is not undone and contributes no reason: a read
+reaches nothing, and the query slot is the host's cache. Proved: `undo_run_restores`,
+`undo_run_reaches_compensated`, `one_way_position_exact`, `refused_before_anything`,
+`undo_residual_is_prefix`, `run_planned_chain` (`proofs/Undo.fst`).
+
 ### 3.6 Effects and claims — dispatch axis
 
 ```fsharp
@@ -489,6 +515,7 @@ with the evidence that would show it to be wrong.
 | K6 | **Referenced vocabularies have one canonical encoder, and the core splices its output verbatim.** | Rule 1 of the wire specification's §3. It is the whole basis for the invariance claim in §6. | A witness whose encoder is not canonical. The composite documents stop being byte-stable, and the codec corpus goes red. |
 | K7 | **`Fuaran.Core`'s `Hash.sha256Hex` is byte-identical to `Fuaran.UI.Hashing.sha256Hex`.** | Both are SHA-256 over the UTF-8 bytes, rendered as lowercase hex. Taking Core's version removes a UI reference from `SignedEnvelope`. | An envelope signed before the cut that fails to verify after it. Phase 1896 pins one such envelope as a test before the swap. |
 | K8 | **An event is dispatched by the transport, not by the algebra.** | `Validation.validate` (its gate, its reject reasons, `LiveEvent`) is UI transport. The algebra begins at the point where an action has already been chosen. | None. This is where the line between the core and the adapter is drawn. |
+| K9 | **An op's declared EXACT inverse restores the state it was applied to.** _(Phase 1977, D22.)_ `StateWitness.Undo` answers `Inverse f` for an edit; applied to the state the op produced, `f pre` — computed from the state `pre` the op was applied to — restores `pre`, byte for byte through `Canonical`. | The undo run is a theorem about a witness that keeps it (`undo_run_restores`, `proofs/Undo.fst`) and nothing else; a compensation obeys no law and is the honest word for an inverse that cannot be checked. | A witness whose inverse does not fold back: the undo run folds a plan of exact inverses against the recorded entry state before anything performs and refuses it (`undo-inverse-drift`), so the falsifier is caught at the one place it can be. |
 
 **Read against three witnesses (Phase 1974).** The table above was written with one witness; the
 verb and the document pipeline have read it since. What each assumption is now a fact about:
@@ -503,6 +530,7 @@ verb and the document pipeline have read it since. What each assumption is now a
 | K6 | **Holds, state fact.** Both non-UI witnesses' op bytes splice into the envelopes verbatim. |
 | K7 | **Not reached** by either. |
 | K8 | **Holds trivially**, and is the dispatch axis's boundary: a domain without events has no transport to dispatch them. |
+| K9 | **A state fact, kept by all four witnesses** (Phase 1977): the UI tier's inverse is its structural diff, the toy's a relabel back, the verb's the write of the bytes a write overwrote, the document's the write of the text an edit replaced — and the verb's tests pin that a witness which breaks it is refused, not performed. |
 
 **Deliberately not kept:** the fourteen-case `Action` DU, `NodeKind`, `BindingSources` as a type,
 `TreeOp`, `ClientEffect`, `LiveEvent`, `DomPatch`, the UI's four-case `Resolution`, `WireTree`, and
@@ -673,10 +701,10 @@ crossing as canonical JSON, no events and no handlers, a pack-style guard, and a
 tail. It fills the state and walk axes. Its two guard tests are the third instantiation's,
 inverted — the op-channel guard refuses the planned banned edit — and its performer's re-fold is gone:
 the sink holds no copy of the document and its rendering is of the document it was handed
-(`DocWitnessTests.fs`). The verb (`VerbDomain.fs`) now fills the state axis only: six members, where
+(`DocWitnessTests.fs`). The verb (`VerbDomain.fs`) now fills the state axis only: six members (seven since Phase 1977, with `Undo`), where
 0.7.0 asked it for thirty-two.
 
-**What a fourth domain reads first.** Fill `StateWitness` — six members, every one meaningful for any
+**What a fourth domain reads first.** Fill `StateWitness` — seven members since Phase 1977, every one meaningful for any
 domain with ops. Fill `WalkWitness` if the state is a tree you want priced, walked or projected
 client-side. Fill `DispatchWitness` only if nodes carry handlers that events dispatch; if they do not,
 your guards are ops (`OpView.Require`), your reads are ops, and your tail is a performer handed the
@@ -858,3 +886,16 @@ refusal is the `Failed` an apply refusal always was; the performer's state is an
 code, not to any wire; and the one new halt reason (`no-binding-channel`) is reachable only under a
 composition with no dispatch axis, which no UI host is. The UI adapter's codec families, its
 driver scenarios, the parity suite and the Fable leg pass byte for byte.
+
+**Phase 1977 moved the demanded document a second time, deliberately, and not the specification.**
+The document is at version 6: its server tier carries `undo` — each reachable handler's undo
+posture, read through the state witness's `Undo` member — present and empty where no handler
+contributed, on the argument versions 3 and 5 each made. The UI documents whose bytes moved are
+exactly those with a server tier (they gain `"undo":[…]`); a client-only document changes its
+version number alone. Because a signed envelope is verified by recomputing the document, every
+envelope signed under version 5 reports `Unreadable` drift naming the version; the repository's K7
+pin was re-signed over the same tree, its tree-hash half still the pre-cut value. Nothing in the
+program wire specification moved: the member is a reading of the domain's own ops through its own
+witness, the plan a run leaves is an argument to host code, and the undo is an `ApplyOps` effect the
+specification already names. The codec families, the driver scenarios, the parity suite and the
+Fable leg pass byte for byte.

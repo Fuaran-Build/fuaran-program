@@ -31,12 +31,16 @@ with the leg that checks them and the seam that ties each model back to the code
 - **[The effect gate](#the-effect-gate-theorem)** — `EffectGate.fst`, three theorems (Phase 1759),
   proved over the staging model. A CONSTRAINED boundary: policy before the effect, contract on
   return, against an arbitrary performer.
+- **[The undo posture](#the-undo-theorem)** — `Undo.fst`, five theorems (Phase 1977), proved over
+  the staging model and the trail its plan phase records. REVERSIBLE RESIDUE: a handler read
+  reversible from its declared form is undone to its entry state by the undo run, a compensable one
+  to the compensated state, and the first step an undo cannot perform is named before anything runs.
 
 **"Formally verified" appears in this repository in exactly one place — the ladders below — and
-it is spent on the laws in the four ladders and nothing else** — the fold's four, each stated over
+it is spent on the laws in the five ladders and nothing else** — the fold's four, each stated over
 the generic view and again at the UI witness, the budget's five, the staging theorem's four with
-the op-channel guard's two and the performer's one beside them (Phase 1974), and the effect gate's
-three. What is proved is narrow and
+the op-channel guard's two and the performer's one beside them (Phase 1974), the effect gate's
+three, and the undo's five. What is proved is narrow and
 stated precisely;
 what is not is stated just as precisely, because an unstated exclusion reads, to whoever finds
 it later, as a claim that failed. `proofs.json` at the repository root is the same ladders as
@@ -988,6 +992,172 @@ against an arbitrary performer; this phase is the mechanism reference. Native co
 extension hook are unchanged by it. It is still not a proof of the performer, and the ladder
 above says so.
 
+## The undo theorem
+
+Phase 1976 gave the flow algebra an inverse: `reverse_run` says the reversible fragment undoes
+itself, by trace. That stops at the effects. Whether a handler's RUN can be undone depends on what
+its ops DO — a write can be undone if the old bytes were kept, a publish compensated by a
+retraction, a push not at all — and `Replay.fs` already answers a question of exactly this shape
+for re-running. `Undo.fst` answers it for undoing: a posture read off the declared form and the
+state witness's `Undo` member BEFORE the handler runs, carried in the demanded document (version
+6), and an undo RUN after a committed one that performs the inverses through the same handler,
+gate, policy and performers. The module `open`s `Staging` and proves over its `run`, its
+`plan_ops` and the TRAIL the plan phase now records (`ac_trail`, `run_planned`, `trail_views`),
+exactly as `EffectGate.fst` proves over its gate. Five headline theorems, two run-time definitions
+beyond the member (`Handler.runPlanned`'s plan and `Undo.run`), and a classifier.
+
+**The member the model argued for.** The phase's shape to argue against was `Undo: 'Op -> 'Node
+-> UndoClass<'Op>`, the class computed against the pre-state. The model argues for the CLASS as a
+function of the op alone and the INVERSE as a function of the pre-state — `Undo: 'Op ->
+UndoClass<'Node, 'Op>` with `Inverse of ('Node -> 'Op list)`, `Compensate of ('Node -> 'Op list)`,
+`OneWay of reason` — for one reason `undo_run_restores` makes exact: the posture is read from the
+declared form, where no pre-state exists, and the theorem ties that static reading to the dynamic
+trail only because the class the posture read of an op is the class the undo meets for the same op
+whatever state it was applied to. A member whose case could depend on the state would need a
+coherence assumption the type now carries for free. The inverse is a list because the UI witness's
+inverse is a diff.
+
+**The trail.** The plan phase records, in plan order, every EDIT with the state it was applied TO
+(the pre-state: an inverse of a write needs the old bytes, and the plan phase is the one place that
+holds them), every compute stage with what undoes its binding writes (`w_undo_compute`, opaque — the
+fold's own `reverse_run`), and every step that REACHED the world (a host call, a notification) or
+EMITTED a patch for the host. Production threads it through its one fold (`Handler.planOps`
+answers the tree, the staged list and the trail together); the model walks a second time over the
+same views from the same state (`trail_views`), and `trail_agrees` is what says the two walks reach
+one tree and refuse alike. The undo differential is what says the second-walk model and the
+one-fold production coincide.
+
+### 1. `undo_run_restores` — a handler read REVERSIBLE is undone to its entry state
+
+For every witness, registry, handler and entry store: when the posture read off the declared form
+is `Reversible` (no reason at all), the run committed, and every compute stage's trace was
+restorable, the undo run — the inverses computed from the recorded pre-states, performed in reverse
+plan order as one `ApplyOps` effect through `run` — commits, and the state it commits is the ENTRY
+state. Conditional on four things, each a parameter of the model and named here: the witness's
+inverse law (K9 — an op's declared inverse, computed from the state the op was applied to, applies
+to the state the op produced and answers the state it was applied to), the inverses being ops the
+witness views as edits, the gate and the argument policy admitting the inverse effect, and the
+undo's performers answering every staged call. The proof chains four lemmas: `plan_clear` (a
+reversible posture reaches the trail — every recorded step is an edit with an exact inverse or a
+compute stage with a restorer), `run_planned_chain` (a committed run's trail, reversed, chains the
+entry state to the committed state: every edit was applied to the pre-state recorded with it),
+`inverse_plan_restores` (over such a chain, under the law, the inverse plan folds the committed
+state back to the entry state — the last edit's inverse answers its pre-state, which is what the
+rest of the chain reached) and `undo_handler_commits` (the one-stage handler commits to what the
+pure fold answers — `commit_is_total_prefix`, read for the undo).
+
+### 2. `undo_run_reaches_compensated` — a plan the undo does not refuse reaches the COMPENSATED state
+
+For a committed run whose trail holds no one-way op, nothing that reached, nothing emitted and a
+restorer for every compute stage — a reversible or a compensable plan — the undo run commits
+exactly the state the declared compensations and inverses, in reverse plan order, fold the committed
+state to. No inverse law: a compensation obeys none, and this is what "undone in effect but not in
+history" means. The two postures differ by the LAW and by what can be checked before anything
+performs: for a plan of exact inverses the undo run folds the inverses against the recorded entry
+state first and refuses a witness whose inverse breaks its law (`undo-inverse-drift`); for one with a
+compensation there is nothing to check it against.
+
+### 3. `one_way_position_exact` / `refused_before_anything` — the first step the undo cannot perform is named, and nothing runs
+
+`first_refused` answers the FIRST step of the plan the undo cannot perform — a one-way op, a step
+that reached, an emitted patch, a compute stage with no restorer — with its ordinal, and when it
+answers one the undo run is EQUAL to that refusal under every registry at once: no handler, no gate,
+no performer. When it answers none, every step can be performed. So "one-way after step k" is exact,
+and everything before k is undoable.
+
+### 4. `undo_residual_is_prefix` — a failed undo step reports how far it got
+
+When the undo's performer refuses at position `k` of the undo's own staged list, the undo run
+reports exactly the first `k` inverses performed, in order, uncommitted, and leaves the store the
+committed run left: `residual_is_prefix`, read for the undo — because the undo IS a handler run,
+and the perform-failure vocabulary is its own.
+
+### 5. `run_planned_chain` / `trail_agrees` — the record an undo reads is a record of the run it undoes
+
+The trail a committed run answers chains its entry state to its committed state, and the trail the
+plan phase records is the trail of the plan it made: the same arms taken, the same ops applied to
+the same states, the same refusals. What makes the other four theorems about the shipped handler
+rather than about a second interpretation of it.
+
+### What the undo model does NOT own
+
+Everything the staging model keeps opaque stays so, and two more arrows join them:
+
+- **the class arrow** — `StateWitness.Undo`, a parameter (`cls`), with the inverse law its
+  obligation and nothing else: the model never reads what an inverse IS, only that it applies;
+- **the compute restorer** — `w_undo_compute`, what undoes a compute stage's binding writes. In
+  production it is Phase 1976's `BoundedActions.reverse` over the trace `runTraced` recorded, folded
+  by `runReversed`; its correctness is `reverse_run`'s, proved in `BoundedFold.fst` and applied
+  here. The model asks it as a second arrow beside `w_compute` where production's one traced run
+  answers both; the differential is where they are seen to coincide.
+
+### The undo claims ladder
+
+#### Proved
+
+1. **A handler read REVERSIBLE from its declared form is undone to its entry state by the undo
+   run** — `undo_run_restores`, with `plan_clear`, `run_planned_chain`, `inverse_plan_restores` and
+   `undo_handler_commits` beneath it.
+2. **A plan the undo does not refuse is undone to the compensated state, through the same gate and
+   performers** — `undo_run_reaches_compensated`.
+3. **The first step the undo cannot perform is named exactly, and the undo runs nothing** —
+   `one_way_position_exact`, `refused_before_anything`.
+4. **A failed undo step reports exactly the prefix that ran** — `undo_residual_is_prefix`.
+5. **The trail the plan records is the trail of the plan it made, and chains entry to outcome** —
+   `trail_agrees`, `run_planned_chain`.
+
+Every earlier theorem of `Staging.fst` keeps its statement over the accumulator widened with the
+trail and the witness widened with the restorer arrow; `run` is unchanged and `run_is_run_planned`
+ties it to `run_planned`. No `admit`, no `assume`; `--report_assumes error` is on for this module
+exactly as for the other four. "Formally verified" is spent on these five and nothing else in this
+section.
+
+#### Differentially tested
+
+The extracted model agrees with production over the staging corpus — every `HandlerLoopTests`,
+`DurableInterpreterTests`, op-performer and op-guard case, undone — and over ten undo cases: two
+edits performed and in memory (reversible, restored to the byte); a compute stage in the fragment
+with a restorable trace beside an edit (the binding restored by the fold's reversal) and one whose
+trace is not restorable (refused, the stage named); a host call among the edits, a notification, an
+emitted patch (each refused at its step); a compensable edit and a one-way edit at a composition of
+the UI witness that classes the removal of one node a declared compensation and a style update
+one-way; and a guard among the edits, which is not a step. Four things are compared per run: the
+posture and its reasons, the recorded plan step by step (the kind, and for an edit the canonical
+pre-state and the op), the undo's answer — a refusal rendering the same code, step and reason, or an
+outcome projecting equal — and the undo performer's log; and the undo's performer refuses at every
+position of the undo's own staged list. The theorems as instances against production: a reversible
+run restored tree and bindings through the performers in reverse plan order; the one-way refusal at
+the host call's step, before any performer was asked. The verb witness's tests
+(`tests/Fuaran.Program.Tests/VerbWitnessTests.fs`) cover the three postures end to end — writes
+restored byte for byte, a staging publish retracted, an origin push refused naming the step, a failed
+undo step's prefix, a lying inverse refused for drift, a rolled-back plan refused — and the document
+pipeline's witness classes its render compensable and its commit one-way.
+
+#### Assumed, and stated
+
+- **The inverse law (K9).** An op's declared exact inverse, computed from the state the op was
+  applied to, applies to the state the op produced and restores it. The witness's obligation; the
+  undo run checks the whole plan against the recorded entry state before anything performs, which
+  catches a witness that breaks it at the one place it can be caught.
+- **The compute restorer is `reverse_run`.** What undoes a compute stage's binding writes is Phase
+  1976's theorem, applied; nothing here re-proves it.
+- **The witness and the registry**, on the staging theorem's terms.
+- **The toolchain**, on the same terms as the fold theorem's.
+
+#### Not claimed
+
+- **A landed read.** A server read lands a table in a query slot of the binding store; the undo
+  leaves it as the run left it, and a read contributes no reason to the posture. It is a read: it
+  reaches nothing, and the slot is the host's cache, which a restored tree's re-resolution still
+  reads. `reversible` is read of the state axis, the world and the fold's writes.
+- **A patch the host applied.** An emitted patch is the host's to apply after the handler returns
+  and the host's to undo; the posture reads it `unknown` and the undo refuses it as undecidable.
+- **The perform-phase residual of a run that rolled back.** The undo refuses an uncommitted plan;
+  what a perform-phase failure left run is `residual_is_prefix`'s to report, and undoing that prefix
+  is not offered.
+- **The performer's own effect**, as the staging ladder says: the undo performs an inverse through
+  the same performer, and what the performer does with it is the host's.
+
 ## Running it
 
 ```powershell
@@ -999,8 +1169,8 @@ pwsh ./proofs/check.ps1 -SkipHost    # the proof half only; no solution build ne
 Six steps, each refusing rather than warning: resolve the pinned prover, CHECK, EXTRACT,
 BYTE-DIFF against the committed `oracle/*.fs`, BUILD the oracle project, RUN the differential
 host. A module names the test project that hosts its differential: the fold's and the
-budget's live in `Fuaran.Program.Parity.Tests`, the staging theorem's and the effect gate's in
-`Fuaran.Program.Server.Tests` beside the handler suites they re-declare — which means step 6 for
+budget's live in `Fuaran.Program.Parity.Tests`, the staging theorem's, the effect gate's and the
+undo's in `Fuaran.Program.Server.Tests` beside the handler suites they re-declare — which means step 6 for
 that module needs the conformance corpus the server suite loads at start-up
 (`FUARAN_PROGRAM_SPEC`, or the sibling clone), exactly as `run.ps1` does.
 
@@ -1017,7 +1187,8 @@ absorbs. When a model changes legitimately, its two files move in the same commi
 script prints the copy command. `Budget.fs` needed no addition to the `Prims` shim below: it
 uses `string_of_int`, which was already there, and native operators on `Prims.int`. `Staging.fs`
 needed none either: `strcat` and the `Prims` type aliases are all it references. `EffectGate.fs`
-needed none: it references `Prims.strcat` and `Staging`'s own types.
+needed none: it references `Prims.strcat` and `Staging`'s own types. `Undo.fs` needed none:
+`strcat`, `string_of_int`, `op_Equals` and `parse_int` were all there.
 
 ### Why the pin, and why three runs
 

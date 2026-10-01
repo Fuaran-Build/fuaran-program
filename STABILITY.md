@@ -221,6 +221,47 @@ a view without the new shapes and generalised as `fold_no_halting_shape_no_halt`
 
 **What a consumer does about it:** `docs/migrations/phase-1976.md` — one page, a diff per file.
 
+### Rides the draft: the undo posture (Phase 1977)
+
+**Class: breaking**, for every consumer that constructs a `StateWitness` as a full literal, and
+for every consumer that reads the demanded document or verifies a signed envelope — the class this
+slot already carries, so it rides rather than advancing. `v0.6.0` is the newest tag and nothing
+public pins `0.7.0`. `DECISIONS.md` D22 records what was decided; this entry records what a consumer
+pays.
+
+- **`StateWitness` gains `Undo: 'Op -> UndoClass<'Node, 'Op>`**, with `UndoClass = Inverse of
+  ('Node -> 'Op list) | Compensate of ('Node -> 'Op list) | OneWay of reason: string`. A
+  full-literal construction gains one line (`FS0764` names it). What to answer: an exact inverse
+  computed from the pre-state for an edit that has one, a declared compensation for one that can
+  be undone in effect only, and `OneWay` with the domain's reason for a push. The UI adapter
+  answers every tree op an exact inverse through `TreeOpDiff.diff`; the obligation an `Inverse`
+  carries is K9 (`docs/generic-tier.md` §3.7), and the undo run refuses a witness that breaks it.
+- **The demanded document moves to version 6:** the server tier carries `undo`, one posture per
+  reachable handler (`{"handler":…,"undo":"reversible"|"compensable"|"one-way"|"unknown",
+  "reasons":[{"stage":n,"defect":…}]}`), present and empty where no handler contributed.
+  `Demanded.decodableVersions` is `[6]`: a version-5 document is refused naming the version, never
+  read through this lens. Every envelope signed under version 5 reports `Unreadable` drift naming
+  the version; a re-sign is the remedy, and this repository's K7 pin was re-signed over the same
+  tree.
+- **`ServerDemand` gains `Undo: UndoPosture list`**, so a full-literal construction of a server
+  tier gains one line; `UndoPosture` and `UndoReasonDemand` are new in `Demanded.fs`.
+- **New API on the server placement:** `Handler.runPlanned` (the outcome beside the `UndoPlan` a
+  run leaves — `UndoStep.Edit | Compute | Reached | Emitted`), `Undo.posture` / `reasons` /
+  `postureOf` / `withPostures` / `ofTreeAndHandlers`, and `Undo.run` with its `UndoRefusal`
+  (`undo-one-way-step`, `undo-undecidable-step`, `undo-inverse-drift`, `undo-uncommitted-plan`).
+  `Harvest.ofProgram` and `ofRegistration` join the undo posture beside the replay posture.
+- **`Handler.runWith` and `run` are unchanged in signature**; the compute stage now runs the fold
+  traced, which `traced_agrees` and the parity suite say answers the same outcome.
+- **The oracle project gains `Undo.fs`** (generated from `proofs/Undo.fst`) and the proof leg a
+  fifth module; `Staging.fs` is re-extracted for the trail.
+
+**What did NOT change:** no wire member of the program wire specification, no fixture byte, and
+the UI tier's behaviour, byte for byte through the parity suite and the Fable leg. A demanded
+document for a program with no server tier changes only its version number; one with a server tier
+gains `"undo":[]` where no handler contributed. Every earlier proof statement keeps its form.
+
+**What a consumer does about it:** `docs/migrations/phase-1977.md` — one page, a diff per file.
+
 ## 0.6.0 — RELEASED (tagged `v0.6.0`, 2026-09-28) — the core becomes domain-generic (Phase 1896)
 
 **Class: breaking**, for `Fuaran.Program.Bounded`, `Fuaran.Program.Runtime` and

@@ -1148,6 +1148,172 @@
         "runner": "proofs/check.ps1, step 6",
         "note": "the differential compares store, effects, diagnostics, halt and placement after every case; the verb witness's tests (tests/Fuaran.Program.Tests/VerbWitnessTests.fs) cover the op axis end to end under Handler.runWith"
       }
+    },
+    {
+      "id": "undo-run-restores",
+      "level": "proved",
+      "phase": "Phase 1977",
+      "claim": "A handler whose undo posture, read off its declared form and the state witness's Undo member before it runs, is Reversible — no reason at all — and whose run committed with every compute stage's trace restorable, is undone to its ENTRY state by the undo run: the inverses computed from the recorded pre-states, performed in reverse plan order as one ApplyOps effect through the same run, gate, argument policy and registered performers, commit the entry tree back. Conditional on the witness's inverse law (K9), on the inverses being edits, on the gate and policy admitting the inverse effect, and on the undo's performers answering every staged call — each a parameter of the model.",
+      "evidence": {
+        "theorem": "undo_run_restores",
+        "model": "proofs/Undo.fst",
+        "prover": "proofs/fstar-pin.json",
+        "supporting": [
+          "plan_clear",
+          "run_planned_chain",
+          "inverse_plan_restores",
+          "undo_handler_commits",
+          "clear_not_refused",
+          "defects_clear_views"
+        ],
+        "definitions": [
+          "inverse_law",
+          "posture",
+          "rchain",
+          "inverse_plan",
+          "undo_run"
+        ]
+      }
+    },
+    {
+      "id": "undo-run-reaches-compensated",
+      "level": "proved",
+      "phase": "Phase 1977",
+      "claim": "A committed run whose trail the undo does not refuse — no one-way op, nothing that reached the world, nothing emitted, a restorer for every compute stage: a reversible or a compensable plan — is undone to the COMPENSATED state: the undo run commits exactly the state the declared compensations and inverses, in reverse plan order, fold the committed state to. No inverse law: a compensation obeys none, which is what undone-in-effect-not-in-history means.",
+      "evidence": {
+        "theorem": "undo_run_reaches_compensated",
+        "model": "proofs/Undo.fst",
+        "prover": "proofs/fstar-pin.json",
+        "supporting": [
+          "undo_handler_commits",
+          "plan_edits_fold"
+        ],
+        "definitions": [
+          "compensated"
+        ]
+      }
+    },
+    {
+      "id": "undo-one-way-position-exact",
+      "level": "proved",
+      "phase": "Phase 1977",
+      "claim": "The step the undo refuses on is the FIRST step of the plan it cannot perform — a one-way op, a step that reached the world, an emitted patch, a compute stage with no restorer — named by its ordinal, with every step before it one the undo could have performed; and when the plan holds one, the undo run is EQUAL to that refusal under every registry at once: no handler, no gate, no performer runs.",
+      "evidence": {
+        "theorem": "one_way_position_exact",
+        "model": "proofs/Undo.fst",
+        "prover": "proofs/fstar-pin.json",
+        "supporting": [
+          "refused_before_anything",
+          "first_refused_step"
+        ],
+        "definitions": [
+          "first_refused",
+          "refusable",
+          "passable_before"
+        ]
+      }
+    },
+    {
+      "id": "undo-residual-is-prefix",
+      "level": "proved",
+      "phase": "Phase 1977",
+      "claim": "When the undo's performer refuses at position k of the undo's own staged list, the undo run reports exactly the first k inverses performed, in order, uncommitted, and leaves the store the committed run left — residual_is_prefix read for the undo, because the undo IS a handler run.",
+      "evidence": {
+        "theorem": "undo_residual_is_prefix",
+        "model": "proofs/Undo.fst",
+        "prover": "proofs/fstar-pin.json",
+        "supporting": [
+          "residual_is_prefix"
+        ]
+      }
+    },
+    {
+      "id": "undo-trail-is-the-plan",
+      "level": "proved",
+      "phase": "Phase 1977",
+      "claim": "The trail a committed run answers, reversed, chains its entry state to its committed state — every edit was applied to the pre-state recorded with it, which the edits before it produced — and the trail the plan phase records over an op sequence is the trail OF the plan it made: the same arms, the same applies, the same refusals. The record an undo reads is a record of the run it undoes.",
+      "evidence": {
+        "theorem": "run_planned_chain",
+        "model": "proofs/Undo.fst",
+        "prover": "proofs/fstar-pin.json",
+        "supporting": [
+          "trail_agrees",
+          "trail_ops_chain",
+          "plan_rchain",
+          "perform_keeps",
+          "run_is_run_planned"
+        ],
+        "definitions": [
+          "trail_views",
+          "chain",
+          "run_planned"
+        ]
+      }
+    },
+    {
+      "id": "undo-model-agrees-with-shipped-code",
+      "level": "tested",
+      "phase": "Phase 1977",
+      "claim": "Undo.posture, Handler.runPlanned's plan and Undo.run agree with the extracted model — the posture and its reasons, the recorded plan step by step, the undo's answer (a refusal naming the same code, step and reason, or an outcome projecting equal) and the undo performer's log — over the staging corpus undone and ten undo cases, with the undo's performer refusing at every position of its own staged list.",
+      "evidence": {
+        "family": "the staging corpus and the undo cases",
+        "host": "tests/Fuaran.Program.Server.Tests/ProofOracleTests.fs",
+        "cases": "the HandlerLoopTests, DurableInterpreterTests, op-performer and op-guard cases undone, plus ten undo cases at the UI witness and a composition classing one removal compensable and a style update one-way",
+        "runner": "proofs/check.ps1, step 6",
+        "note": "the host is where the model's second walk over the views (trail_views) and production's one fold are seen to coincide, and where the model's two compute arrows (w_compute, w_undo_compute) are seen to coincide with production's one traced run"
+      }
+    },
+    {
+      "id": "inverse-law-assumed",
+      "level": "assumed",
+      "phase": "Phase 1977",
+      "claim": "An op's declared exact inverse, computed from the state the op was applied to, applies to the state the op produced and answers the state it was applied to (K9). The witness's obligation; undo_run_restores takes it as a hypothesis and nothing proves it of any witness.",
+      "class": "witness-obligation",
+      "evidence": {
+        "assumption": "inverse_law in proofs/Undo.fst, a parameter of undo_run_restores; filled by StateWitness.Undo at every witness"
+      },
+      "mitigation": "the undo run folds a plan of exact inverses against the recorded entry state before anything performs and refuses a witness whose inverse breaks the law (undo-inverse-drift); the verb witness's tests pin the refusal with a lying inverse, and the UI, toy, verb and document witnesses are each exercised against the law at least once"
+    },
+    {
+      "id": "compute-restorer-is-reverse-run",
+      "level": "assumed",
+      "phase": "Phase 1977",
+      "claim": "What undoes a compute stage's binding writes is Phase 1976's reversal — BoundedActions.reverse over the trace runTraced recorded, folded by runReversed — whose correctness is reverse_run in proofs/BoundedFold.fst. The undo model takes it as an opaque restorer (w_undo_compute) and re-proves nothing of it.",
+      "class": "model-bridge",
+      "evidence": {
+        "assumption": "the differential host fills w_undo_compute from production's own reverse and runReversed over a traced run"
+      },
+      "mitigation": "the undo host compares the restored bindings through the outcome projection on both sides, and pins one reversible run whose compute stage is restored to the value it held and one whose trace is unrestorable and is refused"
+    },
+    {
+      "id": "landed-read-not-undone",
+      "level": "policy",
+      "phase": "Phase 1977",
+      "claim": "A server read's landed table is NOT undone and contributes no reason to the posture.",
+      "evidence": {
+        "document": "proofs/README.md"
+      },
+      "reason": "a read reaches nothing and the query slot is the host's cache, which a restored tree's re-resolution still reads; reversible is read of the state axis, the world and the fold's writes. Stated so that a deployer reading reversible of a handler with a read knows what the word covers."
+    },
+    {
+      "id": "host-applied-patch-undecidable",
+      "level": "policy",
+      "phase": "Phase 1977",
+      "claim": "A patch the handler emitted is the host's to apply after return and the host's to undo: the posture reads it unknown and the undo refuses it as undecidable.",
+      "evidence": {
+        "document": "proofs/README.md"
+      },
+      "reason": "the handler never applied it, so no pre-state was recorded and no performer of this placement can reverse it; a classification that claimed otherwise would be deciding for the host."
+    },
+    {
+      "id": "rolled-back-residual-not-undone",
+      "level": "policy",
+      "phase": "Phase 1977",
+      "claim": "The perform-phase residual of a run that rolled back is NOT offered for undo: the undo refuses an uncommitted plan.",
+      "evidence": {
+        "document": "proofs/README.md"
+      },
+      "reason": "what a perform-phase failure left run is residual_is_prefix's to report in the forward outcome; undoing that prefix is a separate act over a separate record and is not claimed here."
     }
   ]
 }

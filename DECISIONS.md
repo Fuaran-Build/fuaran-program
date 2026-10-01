@@ -1066,3 +1066,138 @@ algebra its inverse and nothing else. An op-axis parameter bound would be a valu
 state axis — a D20-class change, not a view case. The UI adapter adopts neither shape; a UI handler
 that would genuinely benefit lands as a finding against `ui_view_no_flow`'s test, never as an
 adoption here.
+
+
+## D22 — The undo posture: a handler is classed reversible, compensable or one-way from its declared form before it runs, every edit's inverse is computed from the pre-state the plan holds, and the undo is a handler run through the same gate and performers (2026-10-01)
+
+**2026-10-01. Phase 1977. Follows D21: 1976 gave the flow algebra its inverse and left whether an
+OP can be undone "a property of the op, declared on the state witness by the phase that owns the
+undo posture". This is that phase. Adds the seventh member of `StateWitness`, the trail a run
+leaves for its undo, the classifier and the undo run; moves the demanded document to version 6;
+adds K9 to `docs/generic-tier.md` §3.7.**
+
+Program already answers one question of this shape before a handler runs: `Replay.fs` classes
+each handler `safe | unsafe | unknown` from its declared form, and the demanded document carries
+it, so a host decides whether a session may be RESUMED without running anything. The other
+question a deployer asks of a verb that writes files and pushes a branch is "if it runs, can it be
+undone — and up to where?", and nothing answered it: an undo was a rollback someone wrote by hand
+against each domain's store, or nothing. This entry answers it on the replay posture's terms —
+read before the run, carried in the document, enforced at the placement — and records what the
+model (`proofs/Undo.fst`, D14 applied a fifth time: restated and proved before a `.fs` moved)
+argued for.
+
+**1. The member, and the shape the model argued for.** The phase's shape to argue against was
+`Undo: 'Op -> 'Node -> UndoClass<'Op>` with `Inverse of 'Op | Compensate of 'Op | OneWay of
+reason`, the class computed against the pre-state. The model argues for the CLASS as a function
+of the op alone and the INVERSE as a function of the pre-state: `Undo: 'Op -> UndoClass<'Node,
+'Op>` with `Inverse of ('Node -> 'Op list)`, `Compensate of ('Node -> 'Op list)`, `OneWay of
+reason`. The reason is what `undo_run_restores` makes exact: the posture is read BEFORE the run,
+from the declared form, where no pre-state exists — a document computed from a registration has
+no state to compute a class against — and the theorem ties that static reading to the dynamic
+trail only because the class the posture read of an op is the class the undo meets for the same
+op whatever state it was applied to. A member whose case could depend on the state would need a
+coherence assumption ("the class answered at the entry state is the class answered at every
+intermediate state") that the type now carries for free. The inverse is a LIST because the UI
+witness's inverse is a diff (`TreeOpDiff.diff` from the post-state back to the pre-state), and a
+diff is a list; a domain whose inverse is one op answers a singleton. Only an op the witness
+views as an EDIT is asked.
+
+**2. Reversible versus compensable is the line that matters, and the reason is a LAW.** Both can
+be undone. An exact inverse obeys K9 — applied to the state the op produced, the ops the member
+answers for the state the op was applied to restore that state, byte for byte through
+`Canonical` — and a compensation obeys nothing: a retraction after a publish undoes it in effect
+and not in history. Two consequences, both mechanised. A reversible plan can be CHECKED before
+anything performs: the undo run folds the inverses against the recorded entry state through
+`Stream.Apply` alone and refuses a witness whose inverse breaks the law (`undo-inverse-drift`)
+rather than performing it — the one place a broken law can be caught, and the verb's tests pin it
+with a lying inverse. A compensable plan reaches whatever its compensations reach
+(`undo_run_reaches_compensated`), and the posture says so by its name. So a deployer who reads
+`reversible` is being told the undo is verifiable, and one who reads `compensable` that it is
+declared. The verdict lattice is `one-way > unknown > compensable > reversible`: a proof that a
+step cannot be undone outranks a place the walk could not decide, and either outranks a declared
+compensation — the replay classification's rule that only a proof is a finding, applied to a
+four-valued answer.
+
+**3. The vocabulary.** Six defects, each a derived fact and never a string a document supplied:
+`compensated-op`, `one-way-op` (the member's answer for an edit, both arms of a branch counted
+because which arm runs is not decided from the form, a repeat's body once); `opaque-host-call` and
+`outbound-notification` (the step reached the world and no inverse vocabulary exists for it);
+`emitted-patch` (the host applies it after return, and the host's to undo); and
+`compute-outside-fragment` (D21's reversible fragment, read through `BoundedActions.reversible` —
+this is where 1976's check composes in, on the dispatch axis, whose inverse is a PROGRAM built
+from the form and so needs the exit assertion). A read contributes nothing: it lands a table in
+the binding store's query slot, which is the host's cache and which a restored tree's
+re-resolution still reads; the undo leaves it, and the ladder says so.
+
+**4. The trail, and where the pre-state lives.** The plan phase records, in plan order, every
+EDIT with the state it was applied TO, every compute stage with the trace the fold recorded,
+every host call and notification as a step that REACHED, every patch as a step EMITTED. The
+pre-state is recorded because an inverse of a write needs the old bytes and the plan phase is the
+one place that holds them — the same reason D20 handed the performer the planned state.
+`Handler.runPlanned` answers the plan beside the outcome; `runWith` is it without the plan, so no
+caller changes. The compute stage now runs the fold TRACED (`runTraced` with the inert arm):
+`traced_agrees` says the outcome is the one `runInert` answered, and the UI tier's behaviour is
+byte-identical through the parity suite and the Fable leg. In the model the trail is a second walk
+over the same views (`trail_views`) and `trail_agrees` says the two walks reach one tree and refuse
+alike; production threads it through its one fold, and the undo differential is where the two are
+seen to coincide. `run` is unchanged; `run_is_run_planned` ties it to `run_planned`.
+
+**5. The undo run is a handler run, and that is a theorem.** The inverse plan — every edit's
+inverse or compensation computed from its recorded pre-state, in reverse plan order — runs as ONE
+`ApplyOps` effect through `Handler.runWith` against the store the run left, under the same
+registry, performance and resolver: the gate decides `ApplyOps`, the argument policy bounds every
+inverse's reach (a deployer's allow-list binds the undo as it bound the run), the registered
+performers perform them, and two-phase staging holds. `undo_residual_is_prefix` is
+`residual_is_prefix` read for the undo, which is why a failed undo step reports how far it got in
+the `PerformFailed` vocabulary rather than in a vocabulary of its own. Then the compute stages'
+binding writes are reversed by D21's inverse (`reverse` over each stage's trace, `runReversed`) in
+reverse stage order — the tree and the bindings are independent stores, so the two halves compose
+exactly. Before any of it: a plan that rolled back is refused (nothing to undo); the FIRST step the
+undo cannot perform is refused and NAMED by its ordinal, before anything is undone
+(`one_way_position_exact`, `refused_before_anything`) — a one-way op with the domain's reason, a
+reached step with its capability, an emitted patch, a compute stage outside the fragment or whose
+trace is not restorable (D21's `Trace.restorable`, a run-time fact the static posture cannot see,
+so a `reversible` posture is a claim about the form and `undo_run_restores` adds the restorer as
+its one run-time hypothesis).
+
+**6. What the shard premised, checked.** The shard composed "1976's reversible-fragment check for
+the flow structure" into the classifier "so an unasserted branch is `unknown`, not `reversible`".
+Checked against the model: the op-channel branch needs no exit assertion to be undone, because the
+undo of this phase is by TRAIL — the plan records the edits the taken arm applied, and the inverse
+plan inverts those; D21's exit assertion is what lets an inverse PROGRAM pick the arm to undo
+without a trace, which the dispatch axis's reversal does and the op undo does not. So an
+op-channel branch without an exit assertion is classed by its arms (both, as reach and replay
+count both), `undo_run_restores` carries no hypothesis about exits, and the premise holds exactly
+where it was true all along: the DISPATCH axis, where a compute stage outside the fragment —
+which includes an unasserted branch — reads `compute-outside-fragment`.
+
+**7. The document.** Version 6 adds `undo`, per handler, beside `replay`, on the argument version
+3 made and for the same member shape: present on every server tier, empty where no handler
+contributed, so "this producer predates the posture" and "nothing here needs undoing" never share
+a spelling. Every envelope signed under version 5 reports `Unreadable` drift naming the version;
+the K7 pin was re-signed over the same tree with a fresh key, its tree-hash half still the pre-cut
+value. `Harvest.ofProgram` and `ofRegistration` carry both postures from one reachability.
+
+**8. D14 applied a fifth time, and one finding for the next restatement.** A quantified hypothesis
+with four bound variables and an antecedent on a projection (`forall op pre post f. apply op pre
+== ROk post /\ cls op == Inverse f ==> …`) is not reliably instantiated by the solver inside a
+recursive lemma; the law was restated as a LEMMA-TYPED parameter (`inverse_law w cls` is an arrow
+to `Lemma`, and `undo_run_restores` takes `law: inverse_law w cls`) and called explicitly at the
+one step that needs it. This is the shape to reach for first when a theorem is conditional on a
+witness obligation: the hypothesis is named in the signature, no pattern is guessed, and the
+ladder's "conditional on" is literally the argument list. The module checks in ten seconds under
+the pinned flags, alone and in context, with `--quake 3`.
+
+**Version.** Rides the `0.7.0` draft: the slot is untagged, publicly unpinned and already breaking
+of this class — `StateWitness` gains a member, every full-literal witness construction gains a
+line; `Demanded.Version` is 6. `STABILITY.md` has the consumer's account and
+`docs/migrations/phase-1977.md` the diff.
+
+**What this forecloses, and what it leaves.** The undo of a run that ROLLED BACK after a
+perform-phase failure — undoing the prefix `residual_is_prefix` reports — is not offered; the
+record exists (the plan carries `Committed`) and a later phase that wants it has the trail. A
+landed read is not undone, by decision (item 3), until the store has a member that forgets a
+slot, which no witness has asked for. The class of an op is a function of the op; a domain whose
+undoability genuinely depends on the state answers `Compensate` with a compensation that reads
+the state, and reads `compensable` — the honest word for an inverse that cannot be checked
+against a law.
