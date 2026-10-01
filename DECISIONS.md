@@ -1160,7 +1160,7 @@ trace is not restorable (D21's `Trace.restorable`, a run-time fact the static po
 so a `reversible` posture is a claim about the form and `undo_run_restores` adds the restorer as
 its one run-time hypothesis).
 
-**6. What the shard premised, checked.** The shard composed "1976's reversible-fragment check for
+**6. What the phase premised, checked.** The phase as filed composed "1976's reversible-fragment check for
 the flow structure" into the classifier "so an unasserted branch is `unknown`, not `reversible`".
 Checked against the model: the op-channel branch needs no exit assertion to be undone, because the
 undo of this phase is by TRAIL — the plan records the edits the taken arm applied, and the inverse
