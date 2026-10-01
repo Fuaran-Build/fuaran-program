@@ -175,6 +175,7 @@ let harvestTests =
                             Channels = []
                             Reach = []
                             Replay = []
+                            Undo = []
                             Constraints = [] } }
 
               let a =

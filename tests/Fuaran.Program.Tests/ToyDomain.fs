@@ -149,6 +149,21 @@ let private resolveNode (store: ToyStore) (node: ToyNode) : ToyNode =
     | ExprResolution.Resolved value -> { node with Label = Const value }
     | _ -> node
 
+/// The literal label a node holds, if it is a node of this tree with a literal
+/// label — what a relabel's inverse restores. A label bound to the store has no
+/// literal to restore, so the inverse answers nothing there, and the undo run's
+/// drift check refuses the plan rather than restoring it wrong (Phase 1977).
+let private labelOf (id: string) (root: ToyNode) : string option =
+    let rec go (n: ToyNode) =
+        if n.Id = id then
+            match n.Label with
+            | Const(JStr label) -> Some label
+            | _ -> None
+        else
+            n.Children |> List.tryPick go
+
+    go root
+
 let private relabel (id: string) (label: string) (root: ToyNode) : Result<ToyNode, string> =
     let rec go (n: ToyNode) =
         if n.Id = id then
@@ -185,7 +200,17 @@ let witness: FullWitness<ToyNode, ToyAction, ToyExpr, ToyStore, ToyOp, ToyEffect
                     { Arguments = [ "target", id ]
                       Destination = EffectDestination.Absent }
           Canonical = canonical
-          View = OpView.edits }
+          View = OpView.edits
+          // A relabel's exact inverse (Phase 1977): relabel back to the label
+          // the pre-state held, read off the node the op addresses.
+          Undo =
+            fun op ->
+                match op with
+                | Relabel(id, _) ->
+                    UndoClass.Inverse(fun pre ->
+                        match labelOf id pre with
+                        | Some label -> [ Relabel(id, label) ]
+                        | None -> []) }
       Walk =
         { Nodes =
             { Id = fun n -> n.Id

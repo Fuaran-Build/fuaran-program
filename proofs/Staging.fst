@@ -323,6 +323,17 @@ noeq type witness (t: Type0) (b: Type0) (v: Type0) (o: Type0) (q: Type0) (a: Typ
   /// every slot is refused, because there is no binding channel to land
   /// in (Phase 1974).
   w_slot_refused: string -> opt string;
+  /// What undoes a compute stage's binding writes (Phase 1977), answered
+  /// at plan time against the bindings the stage is about to read: `OSome
+  /// restore` is the fold's own reversal — production's
+  /// `BoundedActions.reverse` over the trace `runTraced` recorded, folded
+  /// by `runReversed` (Phase 1976, `reverse_run` in BoundedFold.fst) —
+  /// and `ONone` says the stage cannot be undone: its action is outside
+  /// the reversible fragment, or its trace is not restorable. Opaque here
+  /// for the reason `w_compute` is: the fold is Phase 1715's subject. In
+  /// production the ONE traced run answers both arrows; the model asks
+  /// two, and the undo differential is what says they agree.
+  w_undo_compute: string -> a -> b -> opt (b -> b);
 }
 
 /// F#: `ServerEffectRegistry`, with `HostFunctions` split into the LOOKUP
@@ -369,8 +380,25 @@ type staged_call (v: Type0) (p: Type0) = {
   sc_into: opt string;
 }
 
+/// F#: `UndoStep<'Node, 'Store, 'Op>` (Phase 1977) — one step of the
+/// PLAN an undo reads, recorded while planning, in plan order. An EDIT
+/// carries the state it was applied to (the pre-state: an inverse of a
+/// write needs the old bytes, which the plan phase holds here and
+/// nowhere else) and the op. A COMPUTE stage carries what undoes its
+/// binding writes, or `ONone` when nothing can (`w_undo_compute`). A
+/// host call and a notification REACHED the world and have no inverse
+/// vocabulary; a patch was EMITTED for the host to apply after the
+/// handler returned, so whether it can be undone is not this handler's
+/// to decide. `Undo.fst` reads the trail; the handler only writes it.
+noeq type step (t: Type0) (b: Type0) (o: Type0) =
+  | TEdit : pre: t -> op: o -> step t b o
+  | TCompute : undo: opt (b -> b) -> step t b o
+  | TReached : capability: string -> step t b o
+  | TEmitted : capability: string -> step t b o
+
 /// F#: `Handler.Accumulator`. Lists accumulate reversed, as there.
-type accumulator (t: Type0) (b: Type0) (v: Type0) (o: Type0) (eff: Type0) (d: Type0) (p: Type0) = {
+/// `noeq` since Phase 1977: the trail holds a compute stage's restorer.
+noeq type accumulator (t: Type0) (b: Type0) (v: Type0) (o: Type0) (eff: Type0) (d: Type0) (p: Type0) = {
   ac_store: store t b;
   ac_halted: bool;
   ac_performed: list string;
@@ -380,6 +408,8 @@ type accumulator (t: Type0) (b: Type0) (v: Type0) (o: Type0) (eff: Type0) (d: Ty
   ac_notifications: list (string & v);
   ac_client_effects: list eff;
   ac_diagnostics: list (diagnostic d);
+  /// The undo trail (Phase 1977), reversed like every other list here.
+  ac_trail: list (step t b o);
 }
 
 /// F#: `HandlerOutcome`.
@@ -424,6 +454,90 @@ let rec views (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: T
   match ops with
   | [] -> []
   | op :: rest -> w.w_op_view op :: views w rest
+
+/// The undo TRAIL of an op sequence (Phase 1977): the edits the plan
+/// applies, each with the state it was applied to, in plan order — a
+/// walk over the same views, through the same apply, taking the same
+/// arm of a branch and refusing where the plan refuses, that records a
+/// `(pre, op)` pair at every edit and stages nothing. Production threads
+/// the trail through its ONE fold (`Handler.planOps` answers the tree,
+/// the staged list and the trail together); the model walks a second
+/// time over the same views from the same state, and `trail_agrees` is
+/// what says the two walks reach one tree and refuse alike. Appended
+/// with `app` rather than accumulated reversed, so a lemma over the
+/// trail reads it in plan order.
+let rec trail_views (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
+                    (w: witness t b v o q a eff d) (vs: list (op_view o)) (tree: t)
+  : Tot (res (t & list (t & o))) (decreases %[vs; 1; 0]) =
+  match vs with
+  | [] -> ROk (tree, [])
+  | x :: rest ->
+    (match trail_view w x tree with
+     | RErr code -> RErr code
+     | ROk (tree', first) ->
+       (match trail_views w rest tree' with
+        | RErr code -> RErr code
+        | ROk (tree'', more) -> ROk (tree'', app first more)))
+
+and trail_view (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
+               (w: witness t b v o q a eff d) (x: op_view o) (tree: t)
+  : Tot (res (t & list (t & o))) (decreases %[x; 0; 0]) =
+  match x with
+  | ORequire op ->
+    (match w.w_apply op tree with
+     | RErr code -> RErr code
+     | ROk _ -> ROk (tree, []))
+  | OEdit op ->
+    (match w.w_apply op tree with
+     | RErr code -> RErr code
+     | ROk tree' -> ROk (tree', [(tree, op)]))
+  | OChoose entry when_true when_false exit ->
+    let took_true = ROk? (w.w_apply entry tree) in
+    let armed =
+      if took_true then trail_views w when_true tree
+      else trail_views w when_false tree
+    in
+    (match armed with
+     | RErr code -> RErr code
+     | ROk (tree', recorded) ->
+       (match exit with
+        | ONone -> ROk (tree', recorded)
+        | OSome assertion ->
+          (match w.w_apply assertion tree' with
+           | ROk _ ->
+             if took_true then ROk (tree', recorded)
+             else RErr "the exit assertion held after the false arm"
+           | RErr reason ->
+             if took_true then RErr (strcat "the exit assertion did not hold after the true arm: " reason)
+             else ROk (tree', recorded))))
+  | ORepeat count body -> trail_repeat w body count tree
+
+and trail_repeat (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
+                 (w: witness t b v o q a eff d) (body: list (op_view o)) (n: nat) (tree: t)
+  : Tot (res (t & list (t & o))) (decreases %[body; 2; n]) =
+  if n = 0 then ROk (tree, [])
+  else
+    (match trail_views w body tree with
+     | RErr code -> RErr code
+     | ROk (tree', first) ->
+       (match trail_repeat w body (n - 1) tree' with
+        | RErr code -> RErr code
+        | ROk (tree'', more) -> ROk (tree'', app first more)))
+
+/// The trail of an `ApplyOps` effect's ops, as steps, or nothing where
+/// the plan refused them — the refusal is the plan's to report.
+let trail_ops (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
+              (w: witness t b v o q a eff d) (ops: list o) (tree: t)
+  : list (t & o) =
+  match trail_views w (views w ops) tree with
+  | RErr _ -> []
+  | ROk (_, recorded) -> recorded
+
+/// `(pre, op)` pairs as trail steps.
+let rec edits (#t: Type0) (#b: Type0) (#o: Type0) (xs: list (t & o)) : Tot (list (step t b o)) (decreases xs) =
+  match xs with
+  | [] -> []
+  | (pre, op) :: rest -> TEdit pre op :: edits rest
 
 /// The plan over VIEWS (Phase 1976) — one `match` over the four op
 /// shapes, which is what `Handler.planOps` runs one level at a time.
@@ -562,12 +676,19 @@ let plan_effect (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a:
          (match plan_ops w cap reg.r_op_perform ops performed.ac_store.st_tree acc.ac_staged with
           | RErr code -> halt cap code acc
           | ROk (tree, staged) ->
+            // The edits the plan applied, each with its pre-state, onto
+            // the trail (Phase 1977) — in memory and performed alike,
+            // because an undo in memory applies the inverses in memory.
+            let trail = app (rev (edits (trail_ops w ops performed.ac_store.st_tree))) acc.ac_trail in
             (match reg.r_op_perform with
              // In memory: the apply IS the effect, and it is performed
              // here, in the plan phase — the shape every placement had
              // before Phase 1967, and the UI tier's still. `plan_ops`
              // staged nothing (`plan_ops_unstaged`).
-             | ONone -> { performed with ac_store = { performed.ac_store with st_tree = tree } }
+             | ONone ->
+               { performed with
+                 ac_store = { performed.ac_store with st_tree = tree };
+                 ac_trail = trail }
              // Performed: the apply is a PLAN. The tree moves — a later
              // stage reads the planned tree — but the capability is not
              // recorded as performed; the staged calls are, one per
@@ -575,7 +696,8 @@ let plan_effect (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a:
              | OSome _ ->
                { acc with
                  ac_store = { acc.ac_store with st_tree = tree };
-                 ac_staged = staged }))
+                 ac_staged = staged;
+                 ac_trail = trail }))
        | HostCall fn args into ->
          (match reg.r_lookup fn with
           | ONone -> deny (Unregistered cap) acc
@@ -586,11 +708,16 @@ let plan_effect (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a:
               { acc with
                 ac_staged =
                   { sc_capability = cap; sc_performer = performer; sc_args = args; sc_into = into }
-                  :: acc.ac_staged }))
+                  :: acc.ac_staged;
+                ac_trail = TReached cap :: acc.ac_trail }))
        | EmitPatch ops ->
-         { performed with ac_patches = app (rev ops) performed.ac_patches }
+         { performed with
+           ac_patches = app (rev ops) performed.ac_patches;
+           ac_trail = TEmitted cap :: performed.ac_trail }
        | Notify channel payload ->
-         { performed with ac_notifications = (channel, payload) :: performed.ac_notifications })
+         { performed with
+           ac_notifications = (channel, payload) :: performed.ac_notifications;
+           ac_trail = TReached cap :: performed.ac_trail })
 
 /// F#: `Handler.runStage`. The `Compute` arm is the shared fold with the
 /// inert arm — opaque here, Phase 1715's subject.
@@ -604,7 +731,8 @@ let plan_stage (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: 
     { acc with
       ac_store = { acc.ac_store with st_bindings = out.bo_store };
       ac_client_effects = app (rev out.bo_effects) acc.ac_client_effects;
-      ac_diagnostics = app (map_bounded (rev out.bo_diagnostics)) acc.ac_diagnostics }
+      ac_diagnostics = app (map_bounded (rev out.bo_diagnostics)) acc.ac_diagnostics;
+      ac_trail = TCompute (w.w_undo_compute node_id action acc.ac_store.st_bindings) :: acc.ac_trail }
   | SEffect e -> plan_effect w reg e acc
 
 /// F#: the `List.fold` in `Handler.run` — every stage in order, each
@@ -668,7 +796,41 @@ let start (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#eff: Type0) (#d: Typ
     ac_patches = [];
     ac_notifications = [];
     ac_client_effects = [];
-    ac_diagnostics = [] }
+    ac_diagnostics = [];
+    ac_trail = [] }
+
+/// F#: `Handler.runPlanned` (Phase 1977) — `run`, answering beside the
+/// outcome the TRAIL the plan phase recorded, in plan order, which is
+/// what an undo reads (`Undo.fst`). The phase boundary is the one `if`:
+/// nothing external has run above it, and nothing below it can be
+/// undone. A halt rolls back to the entry store, keeps the diagnostics,
+/// and reports `ac_externally` — NOT emptied, because a perform-phase
+/// failure leaves its predecessors run and reporting `[]` there would be
+/// the one lie this design exists to avoid.
+let run_planned (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                (w: witness t b v o q a eff d) (reg: registry t v o q p) (node_id: string)
+                (stages: list (stage a v o q)) (s: store t b)
+  : (outcome t b v o eff d & list (step t b o)) =
+  let planned = plan w reg node_id stages (start s) in
+  let final = if planned.ac_halted then planned else perform w reg (rev planned.ac_staged) planned in
+  if final.ac_halted then
+    ({ oc_store = s;
+       oc_committed = false;
+       oc_performed = rev final.ac_externally;
+       oc_patches = [];
+       oc_notifications = [];
+       oc_client_effects = [];
+       oc_diagnostics = rev final.ac_diagnostics },
+     rev final.ac_trail)
+  else
+    ({ oc_store = final.ac_store;
+       oc_committed = true;
+       oc_performed = app (rev final.ac_performed) (rev final.ac_externally);
+       oc_patches = rev final.ac_patches;
+       oc_notifications = rev final.ac_notifications;
+       oc_client_effects = rev final.ac_client_effects;
+       oc_diagnostics = rev final.ac_diagnostics },
+     rev final.ac_trail)
 
 /// F#: `Handler.run`. The phase boundary is the one `if`: nothing
 /// external has run above it, and nothing below it can be undone. A halt

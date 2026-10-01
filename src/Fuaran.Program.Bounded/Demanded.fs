@@ -134,6 +134,39 @@ type ReplayPosture =
         Reasons: ReplayReasonDemand list
     }
 
+/// One reason a handler is not provably reversible, as the document carries it
+/// (Phase 1977): a stage ORDINAL and a token from the undo classification's
+/// closed defect vocabulary — `compensated-op`, `one-way-op`,
+/// `opaque-host-call`, `outbound-notification`, `emitted-patch`,
+/// `compute-outside-fragment`. Derived facts both, so a posture is log-safe on
+/// the terms the replay posture is.
+type UndoReasonDemand =
+    {
+        /// The stage's position in the declared list, zero-based.
+        Stage: int
+        /// The defect's wire token.
+        Defect: string
+    }
+
+/// One handler's UNDO posture, derived from its declared form and the state
+/// witness's `Undo` member (Phase 1977, DECISIONS.md D22): whether, before it
+/// runs, a deployer can read that its run will be undoable to the byte, in
+/// effect only, or not at all — and from which stage.
+///
+/// Carried per handler, as the replay posture is, because that is the
+/// granularity the decision is made at. `Reasons` is empty exactly when `Undo`
+/// is `reversible`; a `one-way` posture's FIRST reason graded one-way names
+/// the stage after which nothing can be undone.
+type UndoPosture =
+    {
+        /// The handler's registration key.
+        Handler: string
+        /// `reversible` | `compensable` | `one-way` | `unknown`.
+        Undo: string
+        /// Why, in stage order. Empty for `reversible`.
+        Reasons: UndoReasonDemand list
+    }
+
 /// One clause of a capability's declared argument policy — the vocabulary a
 /// host writes a bound in, and the one this document carries it in.
 ///
@@ -261,6 +294,13 @@ type ServerDemand =
         /// fact it enforces against, published so a capability manifest can
         /// state the posture without re-deriving it.
         Replay: ReplayPosture list
+        /// The undo posture of each handler that contributed to this tier
+        /// (Phase 1977), on exactly the terms `Replay` is carried: DESCRIPTIVE,
+        /// no coverage finding computed from it, the fact a deployer reads
+        /// before a program runs — "can this be undone, and up to where?" —
+        /// beside what it can reach. The enforcement is the undo run's own
+        /// refusal at the placement, which reads the same plan.
+        Undo: UndoPosture list
         /// The argument policy the HOST declared for the capabilities this tier
         /// demands — one clause per constrained capability.
         ///
@@ -732,6 +772,9 @@ module Demanded =
                   // handler, not a set, and sorting them would destroy the one
                   // thing that makes a stage ordinal useful.
                   Replay = s.Replay |> List.distinct |> List.sortBy _.Handler
+                  // The undo postures, on the replay postures' terms: by name,
+                  // the reasons within one left in stage order.
+                  Undo = s.Undo |> List.distinct |> List.sortBy _.Handler
                   // Sorted by CAPABILITY, and the permitted values within a
                   // clause sorted too: a permitted set is a set, unlike a
                   // posture's reasons, so leaving it in declaration order would
@@ -830,6 +873,9 @@ module Demanded =
                       Replay =
                         projections
                         |> List.collect (fun p -> p.Server |> Option.map _.Replay |> Option.defaultValue [])
+                      Undo =
+                        projections
+                        |> List.collect (fun p -> p.Server |> Option.map _.Undo |> Option.defaultValue [])
                       Constraints =
                         projections
                         |> List.collect (fun p -> p.Server |> Option.map _.Constraints |> Option.defaultValue []) }
@@ -929,7 +975,7 @@ module Demanded =
     /// The version this encoder emits, and — see `decodableVersions` — the only
     /// one this reader reads.
     [<Literal>]
-    let Version = 5
+    let Version = 6
 
     // The policy clause's discriminator, written once and read once. A literal
     // spelled at the encoder and again at the reader is the drift this document
@@ -1041,6 +1087,19 @@ module Demanded =
     /// draft slot that no released reader reads. A move here would buy no
     /// reader a truer answer and would cost every envelope signed under the
     /// draft a re-sign.
+    ///
+    /// **Version 6 adds the undo posture** (Phase 1977), the fifth time on the
+    /// argument version 3 made for the replay posture, and for the same
+    /// member shape. The `undo` key is present on EVERY server tier from here
+    /// on — `[]` where the walk contributed no posture — so an ABSENT `undo`
+    /// says "this producer predates the posture" and an EMPTY one says "this
+    /// registration was walked and no handler contributed". A deployer
+    /// deciding whether a run can be rolled back is the last reader that should
+    /// take the first for the second: "I could not see whether this can be
+    /// undone" and "nothing here needs undoing" are the two answers that must
+    /// never share a spelling. The cost is the one version 5 paid: every
+    /// envelope signed under version 5 reports `Unreadable` drift naming the
+    /// version, and a re-sign is the remedy (STABILITY.md, 0.7.0).
     let encode (projection: DemandedProjection) : string =
         let effects = projection.Effects |> List.map q |> arr
 
@@ -1093,6 +1152,17 @@ module Demanded =
                         $"""{{"handler":{q p.Handler},"safety":{q p.Safety},"reasons":{reasons}}}""")
                     |> arr
 
+                let undo =
+                    s.Undo
+                    |> List.map (fun p ->
+                        let reasons =
+                            p.Reasons
+                            |> List.map (fun r -> $"""{{"stage":{r.Stage},"defect":{q r.Defect}}}""")
+                            |> arr
+
+                        $"""{{"handler":{q p.Handler},"undo":{q p.Undo},"reasons":{reasons}}}""")
+                    |> arr
+
                 let constraints =
                     s.Constraints
                     |> List.map (fun c ->
@@ -1117,7 +1187,7 @@ module Demanded =
                         $"""{{"capability":{q c.Capability},"clauses":{clauses}}}""")
                     |> arr
 
-                $"""{{"effects":{se},"capabilities":{sc},"functions":{fns},"channels":{channels},"reach":{reach},"replay":{replay},"constraints":{constraints}}}"""
+                $"""{{"effects":{se},"capabilities":{sc},"functions":{fns},"channels":{channels},"reach":{reach},"replay":{replay},"undo":{undo},"constraints":{constraints}}}"""
 
         $"""{{"kind":{q Kind},"version":{Version},"effects":{effects},"hostCalls":{hostCalls},"stateNamespaces":{namespaces},"opaqueHandlers":{opaque},"server":{server}}}"""
 
@@ -1515,6 +1585,29 @@ module Demanded =
                       Safety = safety
                       Reasons = reasons })))
 
+    let private decodeUndoReason version path value : Result<UndoReasonDemand, DemandedDecodeFailure> =
+        declaredOnly version path [ "stage"; "defect" ] value
+        |> Result.bind (fun () -> requireInt version (child path "stage") "stage" value)
+        |> Result.bind (fun stage ->
+            requireString version (child path "defect") "defect" value
+            |> Result.map (fun defect ->
+                { UndoReasonDemand.Stage = stage
+                  Defect = defect }))
+
+    let private decodeUndoPosture version path value : Result<UndoPosture, DemandedDecodeFailure> =
+        declaredOnly version path [ "handler"; "undo"; "reasons" ] value
+        |> Result.bind (fun () -> requireString version (child path "handler") "handler" value)
+        |> Result.bind (fun handler ->
+            // Carried, not judged — the replay posture's reading of its own
+            // discriminator, for the same reason.
+            requireString version (child path "undo") "undo" value
+            |> Result.bind (fun undo ->
+                requireObjects version (child path "reasons") "reasons" value decodeUndoReason
+                |> Result.map (fun reasons ->
+                    { UndoPosture.Handler = handler
+                      Undo = undo
+                      Reasons = reasons })))
+
     /// One policy clause.
     ///
     /// The discriminator is read FIRST and decides which members this object
@@ -1576,6 +1669,7 @@ module Demanded =
               "channels"
               "reach"
               "replay"
+              "undo"
               "constraints" ]
             value
         |> Result.bind (fun () -> requireStrings version (child path "effects") "effects" value)
@@ -1590,20 +1684,23 @@ module Demanded =
                         |> Result.bind (fun reach ->
                             requireObjects version (child path "replay") "replay" value decodePosture
                             |> Result.bind (fun replay ->
-                                requireObjects
-                                    version
-                                    (child path "constraints")
-                                    "constraints"
-                                    value
-                                    decodeConstraint
-                                |> Result.map (fun constraints ->
-                                    { Effects = effects
-                                      Capabilities = capabilities
-                                      Functions = functions
-                                      Channels = channels
-                                      Reach = reach
-                                      Replay = replay
-                                      Constraints = constraints })))))))
+                                requireObjects version (child path "undo") "undo" value decodeUndoPosture
+                                |> Result.bind (fun undo ->
+                                    requireObjects
+                                        version
+                                        (child path "constraints")
+                                        "constraints"
+                                        value
+                                        decodeConstraint
+                                    |> Result.map (fun constraints ->
+                                        { Effects = effects
+                                          Capabilities = capabilities
+                                          Functions = functions
+                                          Channels = channels
+                                          Reach = reach
+                                          Replay = replay
+                                          Undo = undo
+                                          Constraints = constraints }))))))))
 
     /// The four members every version of this document has carried.
     let private decodeClientTier version root : Result<DemandedProjection, DemandedDecodeFailure> =

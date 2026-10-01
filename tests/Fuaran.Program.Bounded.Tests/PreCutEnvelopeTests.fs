@@ -19,6 +19,12 @@
 /// for: if the hash, the canonical encoding, the projection's bytes or the
 /// preimage ever drift again, the recomputed preimage stops matching and this
 /// goes red — until the next deliberate version move re-pins it, stated here.
+///
+/// Phase 1977 was that next move: the document went to version 6 (the undo
+/// posture), every envelope signed under version 5 — the 1967 pin included —
+/// began reporting `Unreadable` drift naming the version, and the envelope
+/// below was signed afresh by the 0.7.0 code over the SAME tree with a new
+/// key, exactly as before. The tree hash is still the pre-cut value.
 module Fuaran.Program.Bounded.Tests.PreCutEnvelopeTests
 
 open System
@@ -48,22 +54,22 @@ let private tree: Node<obj> =
 let private PreCutTreeHash =
     "sha256:2d221262c858f3488cb0a61e17e3e5472fc17399fb057c2332c0f42a9a16a542"
 
-/// The signer's PUBLIC key (SubjectPublicKeyInfo, P-256), as the Phase-1967
+/// The signer's PUBLIC key (SubjectPublicKeyInfo, P-256), as the Phase-1977
 /// re-pin exported it. The private half was never kept.
 [<Literal>]
 let private PublicKey =
-    "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAENPjonVgsL6lqAZIb6E/ZSGL+BCzKpDhFurQfkXQqViNxHaPkNMDkIKl4QfvfF0cB3VyH3IxClJekAhClYzHzBA=="
+    "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEVBqyXiLoSJNuMo15vINvVTz5+hn5Xbx/dQKe2KKUE7XkO8rq8st57kQR6tJnAIduFB1+WmmxdHIs6o+oMbRpVA=="
 
-/// The signed envelope, byte for byte: the pre-cut tree hash, the version-5
-/// demanded document, and the Phase-1967 signature over the two.
+/// The signed envelope, byte for byte: the pre-cut tree hash, the version-6
+/// demanded document, and the Phase-1977 signature over the two.
 [<Literal>]
 let private PreCutEnvelope =
-    """{"kind":"signed-demanded","version":1,"treeHash":"sha256:2d221262c858f3488cb0a61e17e3e5472fc17399fb057c2332c0f42a9a16a542","envelope":"{\"kind\":\"demanded\",\"version\":5,\"effects\":[\"Navigate\"],\"hostCalls\":[],\"stateNamespaces\":[],\"opaqueHandlers\":[],\"server\":null}","keyId":"k7-1967","signature":"tjDun2+/ZT7sKbTMKXhucK3WT1Noy4tYBAJNQRl1hJr1yAGXJnBhPU7qDzbSpaP+nmYG1jsw6fc+h7pPKHFFMQ=="}"""
+    """{"kind":"signed-demanded","version":1,"treeHash":"sha256:2d221262c858f3488cb0a61e17e3e5472fc17399fb057c2332c0f42a9a16a542","envelope":"{\"kind\":\"demanded\",\"version\":6,\"effects\":[\"Navigate\"],\"hostCalls\":[],\"stateNamespaces\":[],\"opaqueHandlers\":[],\"server\":null}","keyId":"k7-1977","signature":"IvR7ELXOczB+GPZfIh/NtGI9/LFscLiLdHagh/Jxde/RPyKclBgs0w902ZGnAlcHlG1hsVC8+Z1cz6XNV2PAKw=="}"""
 
 let private publicEntry () : KeyDirectoryEntry =
     let key = ECDsa.Create()
     key.ImportSubjectPublicKeyInfo(Convert.FromBase64String PublicKey) |> ignore
-    EcdsaP256.keyEntry "k7-1967" key
+    EcdsaP256.keyEntry "k7-1977" key
 
 [<Tests>]
 let tests =

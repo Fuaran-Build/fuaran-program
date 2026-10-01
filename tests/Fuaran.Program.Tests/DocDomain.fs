@@ -112,10 +112,15 @@ type DocStep =
     | SetText of BlockId * text: string
     /// Bind a field in the document's own context: the READ's result.
     | Bind of field: string * value: string
+    /// Unbind a field — the inverse of a bind that first bound it (Phase 1977).
+    | Unbind of field: string
     /// The named pack must pass over the document as it stands: the GUARD.
     | RequirePack of pack: string
     /// Render the document as it stands, in the named format.
     | Render of format: string
+    /// Withdraw a rendering — a render's declared COMPENSATION (Phase 1977): the
+    /// host saw the rendering, and a discard undoes it in effect, not in history.
+    | Discard of format: string
     /// Commit the pipeline's edits to the named stream.
     | Commit of stream: string
 
@@ -176,8 +181,13 @@ let applyTyped (step: DocStep) (doc: Document) : Result<Document, DocRejection> 
         Ok
             { doc with
                 Context = Map.add field value doc.Context }
+    | DocStep.Unbind field ->
+        Ok
+            { doc with
+                Context = Map.remove field doc.Context }
     | DocStep.RequirePack pack -> packVerdict pack doc |> Result.map (fun () -> doc)
     | DocStep.Render _
+    | DocStep.Discard _
     | DocStep.Commit _ -> Ok doc
 
 /// The op channel's apply: typed inside, a string outside (W5).
@@ -190,8 +200,10 @@ let encodeStep (step: DocStep) : string =
     | DocStep.SetText(id, text) ->
         Canon.render (Canon.typed "SetText" [ "block", JStr(BlockId.value id); "text", JStr text ])
     | DocStep.Bind(field, value) -> Canon.render (Canon.typed "Bind" [ "field", JStr field; "value", JStr value ])
+    | DocStep.Unbind field -> Canon.render (Canon.typed "Unbind" [ "field", JStr field ])
     | DocStep.RequirePack pack -> Canon.render (Canon.typed "RequirePack" [ "pack", JStr pack ])
     | DocStep.Render format -> Canon.render (Canon.typed "Render" [ "format", JStr format ])
+    | DocStep.Discard format -> Canon.render (Canon.typed "Discard" [ "format", JStr format ])
     | DocStep.Commit stream -> Canon.render (Canon.typed "Commit" [ "stream", JStr stream ])
 
 /// What a step reaches: an edit the block it addresses; a bind the field; a
@@ -201,13 +213,15 @@ let reach (step: DocStep) : OpReach =
     | DocStep.SetText(id, _) ->
         { Arguments = [ "target", BlockId.value id ]
           Destination = EffectDestination.Absent }
-    | DocStep.Bind(field, _) ->
+    | DocStep.Bind(field, _)
+    | DocStep.Unbind field ->
         { Arguments = [ "field", field ]
           Destination = EffectDestination.Absent }
     | DocStep.RequirePack pack ->
         { Arguments = [ "pack", pack ]
           Destination = EffectDestination.Absent }
-    | DocStep.Render format ->
+    | DocStep.Render format
+    | DocStep.Discard format ->
         { Arguments = [ "format", format ]
           Destination = EffectDestination.Local }
     | DocStep.Commit stream ->
@@ -290,7 +304,36 @@ let witness: ProgramWitness<Document, DocStep, WalkWitness<Document>, Unfilled> 
             fun step ->
                 match step with
                 | DocStep.RequirePack _ -> OpView.Require
-                | _ -> OpView.Edit }
+                | _ -> OpView.Edit
+          // What undoes each step (Phase 1977): an edit the write of the text
+          // the pre-state held; a bind the bind of the value it overwrote, or
+          // the unbind of a field it first bound; a render its DISCARD,
+          // declared — the host saw the rendering, so this is a compensation;
+          // a commit to a stream NOTHING, with the reason. The pipeline's
+          // posture reads `compensable` up to the commit and `one-way` at it.
+          Undo =
+            fun step ->
+                match step with
+                | DocStep.SetText(id, _) ->
+                    UndoClass.Inverse(fun pre ->
+                        blocks pre.Root
+                        |> List.tryFind (fun b -> b.Id = id)
+                        |> Option.map (fun b -> [ DocStep.SetText(id, b.Text) ])
+                        |> Option.defaultValue [])
+                | DocStep.Bind(field, _) ->
+                    UndoClass.Inverse(fun pre ->
+                        match Map.tryFind field pre.Context with
+                        | Some old -> [ DocStep.Bind(field, old) ]
+                        | None -> [ DocStep.Unbind field ])
+                | DocStep.Unbind field ->
+                    UndoClass.Inverse(fun pre ->
+                        match Map.tryFind field pre.Context with
+                        | Some old -> [ DocStep.Bind(field, old) ]
+                        | None -> [])
+                | DocStep.Render format -> UndoClass.Compensate(fun _ -> [ DocStep.Discard format ])
+                | DocStep.Discard format -> UndoClass.Compensate(fun _ -> [ DocStep.Render format ])
+                | DocStep.Commit stream -> UndoClass.OneWay(sprintf "a commit to %s is published" stream)
+                | DocStep.RequirePack _ -> UndoClass.OneWay "a guard is not an edit" }
       Walk = walk
       Dispatch = Unfilled }
 
@@ -326,11 +369,15 @@ type Sink(failAt: int option) =
         | _ ->
             match step with
             | DocStep.SetText _
-            | DocStep.Bind _ ->
+            | DocStep.Bind _
+            | DocStep.Unbind _ ->
                 edits.Add(encodeStep step)
                 Ok()
             | DocStep.Render format ->
                 rendered.[format] <- render format state
+                Ok()
+            | DocStep.Discard format ->
+                rendered.Remove format |> ignore
                 Ok()
             | DocStep.Commit stream ->
                 committed <- Some(stream, List.ofSeq edits)

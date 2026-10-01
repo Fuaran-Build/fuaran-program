@@ -70,6 +70,11 @@ type FileOp =
     | Write of path: string * content: string
     | Delete of path: string
     | Publish of target: string
+    /// Withdraw a publish — the declared COMPENSATION of a publish to a target
+    /// the domain can retract (Phase 1977). A compensation and not an
+    /// inverse: the world saw the publish, and a retraction undoes it in
+    /// effect, never in history.
+    | Retract of target: string
     | Check of FileCheck
     | Branch of entry: FileCheck * whenTrue: FileOp list * whenFalse: FileOp list * exit: FileCheck option
     | Times of count: int * body: FileOp list
@@ -84,6 +89,7 @@ let rec encodeOp (op: FileOp) : string =
     | Write(path, content) -> Canon.render (Canon.typed "Write" [ "content", JStr content; "path", JStr path ])
     | Delete path -> Canon.render (Canon.typed "Delete" [ "path", JStr path ])
     | Publish target -> Canon.render (Canon.typed "Publish" [ "target", JStr target ])
+    | Retract target -> Canon.render (Canon.typed "Retract" [ "target", JStr target ])
     | Check(Exists path) -> Canon.render (Canon.typed "Exists" [ "path", JStr path ])
     | Check(Missing path) -> Canon.render (Canon.typed "Missing" [ "path", JStr path ])
     | Check(Refused refusal) -> Canon.render (Canon.typed "Refused" [ "refusal", JStr(VerbRefusal.render refusal) ])
@@ -134,6 +140,10 @@ let apply (op: FileOp) (tree: FileMap) : Result<FileMap, string> =
         Ok
             { tree with
                 Published = tree.Published @ [ target ] }
+    | Retract target ->
+        Ok
+            { tree with
+                Published = tree.Published |> List.filter (fun t -> t <> target) }
     | Check(Exists path) ->
         if Map.containsKey path tree.Files then
             Ok tree
@@ -161,7 +171,8 @@ let reach (op: FileOp) : OpReach =
     | Delete path ->
         { Arguments = [ "path", path ]
           Destination = EffectDestination.Local }
-    | Publish target ->
+    | Publish target
+    | Retract target ->
         { Arguments = [ "target", target ]
           Destination = EffectDestination.Remote target }
     | Check(Exists path)
@@ -178,12 +189,46 @@ let reach (op: FileOp) : OpReach =
         { Arguments = [ "count", string count ]
           Destination = EffectDestination.Absent }
 
-let private canonical (tree: FileMap) : string =
+let canonical (tree: FileMap) : string =
     Canon.render (
         JObj
             [ "files", JObj(tree.Files |> Map.toList |> List.map (fun (path, content) -> path, JStr content))
               "published", JArr(tree.Published |> List.map JStr) ]
     )
+
+/// The targets a publish can be withdrawn from — the domain's declaration of
+/// which publishes carry a compensation (Phase 1977). A publish to `origin`
+/// is public and carries none: it is the one-way case a verb that ends in a
+/// push is the expected instance of.
+let retractable: Set<string> = Set.ofList [ "staging" ]
+
+/// What undoes each op (Phase 1977): a read nothing; a write the write of the
+/// bytes the pre-state held, or the delete of a file it did not; a delete the
+/// write of the bytes it removed; a publish to a retractable target its
+/// retraction, declared, and to any other target NOTHING, with the reason; a
+/// retraction the publish back. The CLASS reads the op alone; only the
+/// inverse reads the pre-state, which is what makes the posture readable
+/// before the verb runs.
+let undo (op: FileOp) : UndoClass<FileMap, FileOp> =
+    match op with
+    | Read _ -> UndoClass.Inverse(fun _ -> [])
+    | Write(path, _) ->
+        UndoClass.Inverse(fun pre ->
+            match Map.tryFind path pre.Files with
+            | Some old -> [ Write(path, old) ]
+            | None -> [ Delete path ])
+    | Delete path ->
+        UndoClass.Inverse(fun pre ->
+            match Map.tryFind path pre.Files with
+            | Some old -> [ Write(path, old) ]
+            | None -> [])
+    | Publish target when Set.contains target retractable -> UndoClass.Compensate(fun _ -> [ Retract target ])
+    | Publish target -> UndoClass.OneWay(sprintf "a publish to %s is public" target)
+    | Retract target -> UndoClass.Compensate(fun _ -> [ Publish target ])
+    // Never an edit, so never asked; refused if ever it were.
+    | Check _
+    | Branch _
+    | Times _ -> UndoClass.OneWay "a guard or a flow op is not an edit"
 
 /// The verb witness: the state axis, and nothing else.
 let witness: ProgramWitness<FileMap, FileOp, Unfilled, Unfilled> =
@@ -201,7 +246,8 @@ let witness: ProgramWitness<FileMap, FileOp, Unfilled, Unfilled> =
                 | Delete path
                 | Check(Exists path)
                 | Check(Missing path) -> Some path
-                | Publish target -> Some target
+                | Publish target
+                | Retract target -> Some target
                 | Check(Refused _)
                 | Branch _
                 | Times _ -> None
@@ -217,7 +263,9 @@ let witness: ProgramWitness<FileMap, FileOp, Unfilled, Unfilled> =
                 | Read _
                 | Write _
                 | Delete _
-                | Publish _ -> OpView.Edit }
+                | Publish _
+                | Retract _ -> OpView.Edit
+          Undo = undo }
       Walk = Unfilled
       Dispatch = Unfilled }
 
@@ -267,6 +315,9 @@ type World() =
                     Ok()
                 | Publish target ->
                     published.Add target
+                    Ok()
+                | Retract target ->
+                    published.Remove target |> ignore
                     Ok()
                 | Check _ -> Error "a guard reached the performer"
                 | Branch _

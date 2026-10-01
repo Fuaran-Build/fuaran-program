@@ -145,6 +145,23 @@ let private modelWitness
             { bo_store = outcome.Store
               bo_effects = outcome.Effects
               bo_diagnostics = outcome.Diagnostics }
+      // What undoes a compute stage's binding writes (Phase 1977): the fold's
+      // own reversal over the trace the traced run records — production's
+      // `Undo.restoreBindings` step, built from the same `reverse` and
+      // `runReversed` — or nothing when the action is outside the reversible
+      // fragment or the trace is not restorable. Production's one traced run
+      // answers the outcome and the trace together; the model asks two
+      // arrows, and this host's agreement is what says they coincide.
+      w_undo_compute =
+        fun nodeId action bindings ->
+            let _, (), trace =
+                BoundedActions.runTraced witness HandlerArm.inert nodeId action bindings ()
+
+            if BoundedActions.reversible witness action && Trace.restorable trace then
+                Staging.OSome(fun (b: BindingSources) ->
+                    (BoundedActions.runReversed witness nodeId (BoundedActions.reverse witness action trace) b).Store)
+            else
+                Staging.ONone
       w_query =
         fun name (source, pipeline) bindings ->
             Fuaran.Core.DataFrame.evalSource resolve source
@@ -1106,6 +1123,491 @@ let stagingTests =
               | None ->
                   failtest
                       "the comparison harness did not report a performer that lied — a harness that cannot lose is not evidence"
+          } ]
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Phase 1977 — the proved undo as oracle.
+//
+//  `proofs/Undo.fst` proves, OVER the staging model above and the TRAIL it
+//  now records, that a handler the posture reads as reversible is undone to
+//  its entry state by the undo run (`undo_run_restores`), that a compensable
+//  one reaches the compensated state (`undo_run_reaches_compensated`), that
+//  the first step an undo cannot perform is named exactly and refused before
+//  anything runs (`one_way_position_exact`, `refused_before_anything`), and
+//  that a failed undo step reports the prefix that ran
+//  (`undo_residual_is_prefix`). This host runs the EXTRACTION of that module
+//  beside production — `Undo.posture` and `Undo.run` over
+//  `Handler.runPlanned`'s plan — over the staging corpus and the undo cases
+//  below, with the scripted performer refusing at every position of the
+//  undo's own staged list, and requires four things to agree: the posture
+//  and its reasons, the recorded plan step by step, the undo's answer (a
+//  refusal naming the same step, or an outcome projecting equal) and the
+//  undo performer's log.
+//
+//  The one place the model's shape departs from production's, stated: the
+//  model walks an op sequence's trail a SECOND time over the same views
+//  (`trail_views`, `trail_agrees`) where production threads it through its
+//  one fold, and the model's compute stage asks `w_undo_compute` beside
+//  `w_compute` where production's one traced run answers both. This host is
+//  what says those coincide.
+// ═══════════════════════════════════════════════════════════════════════════
+
+type private ModelStep = Staging.step<Node<obj>, BindingSources, TreeOp<obj>>
+
+/// Production's `Undo` member in the model's shape.
+let private modelUndoClass
+    (witness: UiWitness.UiProgramWitness)
+    (op: TreeOp<obj>)
+    : global.Undo.undo_class<Node<obj>, TreeOp<obj>> =
+    match witness.State.Undo op with
+    | UndoClass.Inverse inverse -> global.Undo.Inverse inverse
+    | UndoClass.Compensate compensation -> global.Undo.Compensate compensation
+    | UndoClass.OneWay reason -> global.Undo.OneWay reason
+
+/// The UI witness with two ops CLASSED for the undo (Phase 1977): the removal
+/// of `readout` carries its exact inverse but is DECLARED a compensation, and
+/// a style update is one-way. The UI tier itself classes every op an exact
+/// inverse; this composition exists so the differential reaches the
+/// compensable and one-way clauses of the posture and the run.
+let private classedWitness: UiWitness.UiProgramWitness =
+    { witness with
+        State =
+            { witness.State with
+                Undo =
+                    fun op ->
+                        match op with
+                        | TreeOp.RemoveNode(NodeId "readout") ->
+                            match witness.State.Undo op with
+                            | UndoClass.Inverse inverse -> UndoClass.Compensate inverse
+                            | other -> other
+                        | TreeOp.UpdateStyle _ -> UndoClass.OneWay "a style is one-way here"
+                        | _ -> witness.State.Undo op } }
+
+/// A step, projected for comparison: the kind, and for an edit the canonical
+/// pre-state and the op.
+let private projectStep (step: UndoStep<Node<obj>, TreeOp<obj>, Action<obj>>) : string =
+    match step with
+    | UndoStep.Edit(pre, op) ->
+        "edit "
+        + Fuaran.UI.OpStream.Abstractions.CanonicalJson.encodeOp op
+        + " before "
+        + Fuaran.UI.OpStream.Abstractions.CanonicalJson.encodeNode pre
+    | UndoStep.Compute(action, trace) ->
+        "compute "
+        + sprintf "%A" (BoundedActions.reverse witness action trace |> BoundedActions.Reversed.encode)
+    | UndoStep.Reached capability -> "reached " + capability
+    | UndoStep.Emitted capability -> "emitted " + capability
+
+let private projectModelStep (step: ModelStep) : string =
+    match step with
+    | Staging.TEdit(pre, op) ->
+        "edit "
+        + Fuaran.UI.OpStream.Abstractions.CanonicalJson.encodeOp op
+        + " before "
+        + Fuaran.UI.OpStream.Abstractions.CanonicalJson.encodeNode pre
+    // The model's compute step carries its restorer, opaque; the kind is what
+    // is compared, and the restored bindings are compared through the
+    // outcome.
+    | Staging.TCompute _ -> "compute"
+    | Staging.TReached capability -> "reached " + capability
+    | Staging.TEmitted capability -> "emitted " + capability
+
+/// The two compute projections agree on the KIND; production's carries the
+/// inverse's shape beside it for the report.
+let private sameKind (production: string) (model: string) =
+    production = model
+    || (production.StartsWith("compute ", StringComparison.Ordinal) && model = "compute")
+
+/// One undo case: a staging case, and whether it runs under the classed
+/// witness. The forward run never fails; the failure position is the UNDO
+/// performer's.
+type private UndoCase = { Case: StagingCase; Classed: bool }
+
+let private undoWitnessOf (u: UndoCase) : UiWitness.UiProgramWitness =
+    if u.Classed then classedWitness
+    elif u.Case.Guarded then guardedWitness
+    else witness
+
+/// A store whose bindings already hold `status`, so a compute stage that
+/// writes it leaves a RESTORABLE trace (Phase 1976: a key absent before the
+/// run cannot be restored by an assignment).
+let private statusStore: ServerStore =
+    { Tree = durableTree
+      Bindings = witness.Dispatch.Store.Assign "status" (jstr "idle") empty }
+
+let private undoCases: UndoCase list =
+    let plain (c: StagingCase) = { Case = c; Classed = false }
+    let classed (c: StagingCase) = { Case = c; Classed = true }
+
+    [ case
+          "undo"
+          "two edits performed, reversible"
+          []
+          durableStore
+          [ Effect(ServerEffect.ApplyOps [ TreeOp.RemoveNode(NodeId "refresh") ])
+            Effect(ServerEffect.ApplyOps [ TreeOp.RemoveNode(NodeId "readout") ]) ]
+      |> performingOps
+      |> plain
+      case
+          "undo"
+          "two edits in memory, reversible"
+          []
+          durableStore
+          [ Effect(ServerEffect.ApplyOps [ TreeOp.RemoveNode(NodeId "refresh"); TreeOp.RemoveNode(NodeId "readout") ]) ]
+      |> plain
+      case
+          "undo"
+          "a compute stage in the fragment with a restorable trace, beside an edit"
+          []
+          statusStore
+          [ Compute(Action.SetState("status", Some(jstr "written"), None))
+            Effect(ServerEffect.ApplyOps [ TreeOp.RemoveNode(NodeId "refresh") ]) ]
+      |> performingOps
+      |> plain
+      case
+          "undo"
+          "a compute stage whose trace is not restorable: the key was absent"
+          []
+          durableStore
+          [ Compute(Action.SetState("status", Some(jstr "written"), None))
+            Effect(ServerEffect.ApplyOps [ TreeOp.RemoveNode(NodeId "refresh") ]) ]
+      |> performingOps
+      |> plain
+      case
+          "undo"
+          "a host call among the edits is one-way at its step"
+          [ "audit" ]
+          durableStore
+          [ Effect(ServerEffect.ApplyOps [ TreeOp.RemoveNode(NodeId "refresh") ])
+            Effect(ServerEffect.HostCall("audit", jstr "note", None))
+            Effect(ServerEffect.ApplyOps [ TreeOp.RemoveNode(NodeId "readout") ]) ]
+      |> performingOps
+      |> plain
+      case
+          "undo"
+          "a notification is one-way"
+          []
+          durableStore
+          [ Effect(ServerEffect.ApplyOps [ TreeOp.RemoveNode(NodeId "refresh") ])
+            Effect(ServerEffect.Notify("channel", jstr "note")) ]
+      |> performingOps
+      |> plain
+      case
+          "undo"
+          "an emitted patch is undecidable"
+          []
+          durableStore
+          [ Effect(ServerEffect.EmitPatch [ TreeOp.RemoveNode(NodeId "readout") ])
+            Effect(ServerEffect.ApplyOps [ TreeOp.RemoveNode(NodeId "refresh") ]) ]
+      |> performingOps
+      |> plain
+      case
+          "undo"
+          "a compensable edit: declared, undone in effect"
+          []
+          durableStore
+          [ Effect(ServerEffect.ApplyOps [ TreeOp.RemoveNode(NodeId "refresh"); TreeOp.RemoveNode(NodeId "readout") ]) ]
+      |> performingOps
+      |> classed
+      case
+          "undo"
+          "a one-way edit, after a reversible one"
+          []
+          durableStore
+          [ Effect(ServerEffect.ApplyOps [ TreeOp.RemoveNode(NodeId "refresh") ])
+            Effect(ServerEffect.ApplyOps [ TreeOp.UpdateStyle(NodeId "readout", guardStyle) ]) ]
+      |> performingOps
+      |> classed
+      case
+          "undo"
+          "a guard among the edits is not a step"
+          []
+          durableStore
+          [ Effect(
+                ServerEffect.ApplyOps
+                    [ TreeOp.RemoveNode(NodeId "refresh")
+                      TreeOp.UpdateStyle(NodeId "readout", guardStyle) ]
+            ) ]
+      |> performingOps
+      |> guarded
+      |> plain ]
+
+/// One undo run of one case, on both sides, at one failure position of the
+/// undo's performer.
+type private UndoRun =
+    { Posture: UndoVerdict * UndoReason list
+      ModelPosture: global.Undo.verdict * (bigint * global.Undo.defect) list
+      Plan: string list
+      ModelPlan: string list
+      Production: Result<HandlerOutcome, UndoRefusal>
+      ProductionLog: string list
+      Model: Result<HandlerOutcome, string>
+      ModelLog: string list }
+
+let private runUndoCase (u: UndoCase) (failAt: int option) : UndoRun =
+    let w = undoWitnessOf u
+    let c = u.Case
+    let mw = modelWitness w c.Resolve
+    let cls = modelUndoClass w
+
+    // The forward run, on both sides, never failing.
+    let forwardLog = Log()
+    let forwardScript = scripted forwardLog None
+
+    let outcome, plan =
+        Fuaran.Program.Server.Handler.runPlanned
+            w
+            (registryFor c forwardScript.Host)
+            (performanceOf c forwardScript)
+            c.Resolve
+            "call"
+            c.Handler
+            c.Store
+
+    let modelForwardLog = Log()
+    let modelForwardScript = scripted modelForwardLog None
+
+    let modelOutcome, modelSteps =
+        Staging.run_planned
+            mw
+            (modelRegistry (performanceOf c modelForwardScript) (registryFor c modelForwardScript.Host))
+            "call"
+            (c.Handler.Stages |> List.map modelStage)
+            { st_tree = c.Store.Tree
+              st_bindings = c.Store.Bindings }
+
+    // The undo, on both sides, under a fresh performer that fails at the
+    // position.
+    let undoLog = Log()
+    let undoScript = scripted undoLog failAt
+
+    let production =
+        Fuaran.Program.Server.Undo.run
+            w
+            (registryFor c undoScript.Host)
+            (performanceOf c undoScript)
+            c.Resolve
+            "call"
+            plan
+            outcome.Store
+
+    let modelUndoLog = Log()
+    let modelUndoScript = scripted modelUndoLog failAt
+
+    let model =
+        match
+            global.Undo.undo_run
+                mw
+                (modelRegistry (performanceOf c modelUndoScript) (registryFor c modelUndoScript.Host))
+                "call"
+                cls
+                Fuaran.UI.OpStream.Abstractions.CanonicalJson.encodeNode
+                c.Store.Tree
+                modelOutcome.oc_committed
+                modelSteps
+                modelOutcome.oc_store
+        with
+        | Staging.ROk out -> Ok(productionShaped out)
+        | Staging.RErr reason -> Error reason
+
+    { Posture = Fuaran.Program.Server.Undo.posture w c.Handler, Fuaran.Program.Server.Undo.reasons w c.Handler
+      ModelPosture =
+        global.Undo.posture mw cls (BoundedActions.reversible w) (c.Handler.Stages |> List.map modelStage),
+        global.Undo.reasons mw cls (BoundedActions.reversible w) (c.Handler.Stages |> List.map modelStage)
+      Plan = plan.Steps |> List.map projectStep
+      ModelPlan = modelSteps |> List.map projectModelStep
+      Production = production
+      ProductionLog = List.ofSeq undoLog
+      Model = model
+      ModelLog = List.ofSeq modelUndoLog }
+
+let private verdictText (v: UndoVerdict) = Fuaran.Program.Server.Undo.verdictTag v
+
+let private modelVerdictText (v: global.Undo.verdict) =
+    match v with
+    | global.Undo.Reversible -> "reversible"
+    | global.Undo.Compensable -> "compensable"
+    | global.Undo.OneWayVerdict -> "one-way"
+    | global.Undo.Unknown -> "unknown"
+
+let private defectText (d: UndoDefect) = Fuaran.Program.Server.Undo.defectTag d
+
+let private modelDefectText (d: global.Undo.defect) =
+    match d with
+    | global.Undo.CompensatedOp -> "compensated-op"
+    | global.Undo.OneWayOp -> "one-way-op"
+    | global.Undo.OpaqueHostCall -> "opaque-host-call"
+    | global.Undo.OutboundNotification -> "outbound-notification"
+    | global.Undo.EmittedPatch -> "emitted-patch"
+    | global.Undo.ComputeOutsideFragment -> "compute-outside-fragment"
+
+/// The whole comparison, as a reported divergence or nothing.
+let private undoDivergence (u: UndoCase) (failAt: int option) (run: UndoRun) : string option =
+    let where =
+        sprintf
+            "%s (%s), undo failure at %s"
+            u.Case.Name
+            u.Case.Origin
+            (failAt |> Option.map string |> Option.defaultValue "none")
+
+    let posture =
+        let v, rs = run.Posture
+        verdictText v, rs |> List.map (fun r -> r.Stage, defectText r.Defect)
+
+    let modelPosture =
+        let v, rs = run.ModelPosture
+        modelVerdictText v, rs |> List.map (fun (k, d) -> int k, modelDefectText d)
+
+    let answer =
+        match run.Production with
+        | Ok outcome -> Choice1Of2(projectionOf outcome)
+        | Error refusal -> Choice2Of2(Fuaran.Program.Server.Undo.describe refusal)
+
+    let modelAnswer =
+        match run.Model with
+        | Ok outcome -> Choice1Of2(projectionOf outcome)
+        | Error reason -> Choice2Of2 reason
+
+    if posture <> modelPosture then
+        Some(sprintf "%s: the postures differ\n  production: %A\n  model:      %A" where posture modelPosture)
+    elif
+        List.length run.Plan <> List.length run.ModelPlan
+        || not (List.forall2 sameKind run.Plan run.ModelPlan)
+    then
+        Some(sprintf "%s: the plans differ\n  production: %A\n  model:      %A" where run.Plan run.ModelPlan)
+    elif answer <> modelAnswer then
+        Some(sprintf "%s: the undo answers differ\n  production: %A\n  model:      %A" where answer modelAnswer)
+    elif run.ProductionLog <> run.ModelLog then
+        Some(
+            sprintf
+                "%s: the undo performers were asked different things\n  production: %A\n  model:      %A"
+                where
+                run.ProductionLog
+                run.ModelLog
+        )
+    else
+        None
+
+/// The failure positions an undo is run at: every position of its own staged
+/// list — read off the all-succeed undo's `Performed` — and none.
+let private undoPositions (u: UndoCase) : int option list =
+    let staged =
+        match (runUndoCase u None).Production with
+        | Ok outcome when u.Case.PerformOps -> outcome.Performed |> List.filter (fun c -> c = "ApplyOps") |> List.length
+        | _ -> 0
+
+    None :: [ for k in 0 .. staged - 1 -> Some k ]
+
+let private undoDivergences (cases: UndoCase list) : string list =
+    [ for u in cases do
+          for failAt in undoPositions u do
+              match undoDivergence u failAt (runUndoCase u failAt) with
+              | Some report -> report
+              | None -> () ]
+
+let private corpusAsUndo: UndoCase list =
+    loopCases @ durableCases @ opCases @ guardCases
+    |> List.map (fun c -> { Case = c; Classed = false })
+
+[<Tests>]
+let undoOracleTests =
+    testList
+        "Phase 1977 - the proved undo as oracle"
+        [ test
+              "the corpus reaches every answer: a restored run, a compensated one, a refusal of each kind, a failed undo step" {
+              let answers =
+                  [ for u in undoCases do
+                        for failAt in undoPositions u do
+                            let run = runUndoCase u failAt
+
+                            yield
+                                match run.Production with
+                                | Ok outcome when outcome.Committed -> "committed:" + verdictText (fst run.Posture)
+                                | Ok _ -> "rolled-back"
+                                | Error refusal -> refusal.Code ]
+
+              Expect.contains answers ("committed:" + "reversible") "no reversible run was undone"
+              Expect.contains answers ("committed:" + "compensable") "no compensable run was undone"
+              Expect.contains answers UndoCode.OneWayStep "no one-way step was refused"
+              Expect.contains answers UndoCode.UndecidableStep "no undecidable step was refused"
+              Expect.contains answers "rolled-back" "no undo failed inside its perform phase"
+          }
+
+          test "the oracle agrees with production on the undo cases at every failure position of the undo" {
+              Expect.isEmpty (undoDivergences undoCases) "the extracted model and production diverged"
+          }
+
+          test "the oracle agrees with production on the staging corpus, undone" {
+              Expect.isEmpty (undoDivergences corpusAsUndo) "the extracted model and production diverged"
+          }
+
+          test "a REVERSIBLE run is undone to the entry state, bindings included, through the performers" {
+              // `undo_run_restores`, against production directly: the tree by
+              // canonical encoding, the bindings restored by the fold's own
+              // reversal, and every inverse performed through the scripted
+              // performer in reverse plan order.
+              let u =
+                  undoCases
+                  |> List.find (fun u -> u.Case.Name.StartsWith "a compute stage in the fragment")
+
+              let run = runUndoCase u None
+              Expect.equal (fst run.Posture) UndoVerdict.Reversible "read reversible"
+
+              match run.Production with
+              | Error refusal -> failtestf "refused: %s" (Fuaran.Program.Server.Undo.describe refusal)
+              | Ok undone ->
+                  Expect.isTrue undone.Committed "the undo commits"
+
+                  Expect.equal
+                      (Fuaran.UI.OpStream.Abstractions.CanonicalJson.encodeNode undone.Store.Tree)
+                      (Fuaran.UI.OpStream.Abstractions.CanonicalJson.encodeNode u.Case.Store.Tree)
+                      "the tree is the entry tree"
+
+                  Expect.equal
+                      (undone.Store.Bindings.State |> Map.map (fun _ v -> sprintf "%A" v))
+                      (u.Case.Store.Bindings.State |> Map.map (fun _ v -> sprintf "%A" v))
+                      "the binding the compute stage wrote is restored to what it held"
+
+                  // The inverse of a removal through the tier's diff may be more
+                  // than one op; what is pinned is that every call the undo's
+                  // performer was asked was an inverse, and at least one was.
+                  Expect.isNonEmpty run.ProductionLog "the inverses were performed"
+                  Expect.all run.ProductionLog ((=) "ApplyOps") "through the op performer, and nothing else"
+
+              // And without the key present before the run, the compute stage's
+              // trace is not restorable and the undo refuses, naming the step.
+              let absent =
+                  undoCases
+                  |> List.find (fun u -> u.Case.Name.StartsWith "a compute stage whose trace")
+
+              match (runUndoCase absent None).Production with
+              | Error refusal ->
+                  Expect.equal refusal.Code UndoCode.UndecidableStep "undecidable"
+                  Expect.equal refusal.Step 0 "the compute stage is step 0"
+              | Ok _ -> failtest "an unrestorable compute stage was undone"
+          }
+
+          test "a one-way step is refused before anything is undone, at the FIRST such step" {
+              let hostCall =
+                  undoCases |> List.find (fun u -> u.Case.Name.StartsWith "a host call among")
+
+              let run = runUndoCase hostCall None
+              Expect.equal (fst run.Posture) UndoVerdict.OneWay "read one-way"
+
+              Expect.equal
+                  (snd run.Posture)
+                  [ { UndoReason.Stage = 1
+                      Defect = UndoDefect.OpaqueHostCall } ]
+                  "the host call's stage is named"
+
+              match run.Production with
+              | Error refusal ->
+                  Expect.equal refusal.Code UndoCode.OneWayStep "one-way"
+                  Expect.equal refusal.Step 1 "the edit is step 0, the host call step 1"
+                  Expect.equal refusal.Reason "host:audit" "named by its capability"
+              | Ok _ -> failtest "a plan with a host call was undone"
+
+              Expect.isEmpty run.ProductionLog "no performer was asked"
           } ]
 
 // ═══════════════════════════════════════════════════════════════════════════

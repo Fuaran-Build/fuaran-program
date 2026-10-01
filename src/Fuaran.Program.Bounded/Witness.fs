@@ -278,8 +278,44 @@ module OpView =
             (entry :: arms) @ Option.toList exit @ (arms |> List.collect (beneath view))
         | OpView.Repeat(_, body) -> body @ (body |> List.collect (beneath view))
 
+/// What one op IS to an UNDO (Phase 1977, DECISIONS.md D22): its exact
+/// inverse, a declared compensation, or neither. The CLASS is a function of
+/// the op alone — the undo posture is read before anything runs, from the
+/// declared form, where no pre-state exists — and the INVERSE is a function
+/// of the PRE-STATE, which the plan phase holds with every edit and nowhere
+/// else: an inverse of a write needs the old bytes. The two live in one
+/// member because the type then says which is which, and `undo_run_restores`
+/// (`proofs/Undo.fst`) ties the static reading to the run only because the
+/// class the posture read of an op is the class the undo meets for it,
+/// whatever state it was applied to.
+///
+/// The inverse is a LIST because the UI witness's inverse is a diff, and a
+/// diff is a list. Only an op the witness views as an EDIT is ever asked;
+/// a guard, a branch and a repeat are never edits, and what the member
+/// answers for them is never read.
+[<RequireQualifiedAccess>]
+type UndoClass<'Node, 'Op> =
+    /// An EXACT inverse. The witness's obligation (K9, docs/generic-tier.md
+    /// §3.5): applied to the state the op produced, the ops this answers for
+    /// the state the op was applied to restore that state — byte for byte
+    /// through `Canonical`. A reversible undo rests on it and on nothing else
+    /// (`inverse_law` in `proofs/Undo.fst`); the undo run checks the whole
+    /// plan folds back before anything performs, and refuses a witness whose
+    /// inverse breaks the law rather than performing it.
+    | Inverse of inverse: ('Node -> 'Op list)
+    /// A declared COMPENSATION: ops that undo the op IN EFFECT and not in
+    /// history — a revert after a commit, a retraction after a publish. No
+    /// law: the compensated state is whatever the compensations reach, and
+    /// the posture says `compensable`, never `reversible`, for a plan that
+    /// carries one.
+    | Compensate of compensation: ('Node -> 'Op list)
+    /// Neither. The reason is the domain's — a push publishes — and travels
+    /// into the undo run's refusal, so it is held to a reach's discipline:
+    /// a name, never a payload.
+    | OneWay of reason: string
+
 /// The STATE axis: the state the ops apply to, and everything Program reads
-/// of an op. Required — every domain fills it. Six members; `Stream` is
+/// of an op. Required — every domain fills it. Seven members; `Stream` is
 /// Core's own stream witness, reused.
 type StateWitness<'Node, 'Op> =
     {
@@ -304,6 +340,11 @@ type StateWitness<'Node, 'Op> =
         /// Which ops are guards (Phase 1974), branches or repeats (Phase
         /// 1976). `OpView.edits` for a domain with none.
         View: 'Op -> OpView<'Op>
+        /// What undoes an EDIT (Phase 1977): its exact inverse computed from
+        /// the pre-state, a declared compensation, or neither with the reason.
+        /// Read by the undo posture before a handler runs and by the undo run
+        /// after one committed; never by the forward run.
+        Undo: 'Op -> UndoClass<'Node, 'Op>
     }
 
 // ═══ THE WALK AXIS — optional (§3.2) ════════════════════════════════════════

@@ -105,6 +105,7 @@ let private emptyTier: ServerDemand =
       Channels = []
       Reach = []
       Replay = []
+      Undo = []
       Constraints = [] }
 
 /// A server-placement walk over a tree naming no handler: the client tier plus

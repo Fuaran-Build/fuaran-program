@@ -3,7 +3,8 @@
 .SYNOPSIS
     The whole proof leg for every model under proofs/ — Phase 1715's
     bounded-fold theorem, Phase 1716's budget theorem, Phase 1717's
-    staging theorem and Phase 1759's effect-gate theorem.
+    staging theorem, Phase 1759's effect-gate theorem and Phase 1977's
+    undo theorem.
 
 .DESCRIPTION
     Self-contained and runnable from the repository root:
@@ -144,6 +145,15 @@ $modules = @(
         HostList     = "Phase 1759 - the proved effect gate as oracle"
         HostMinCases = 7
         HostSubject  = "the ServerEffectTests registry shapes and the generated (capability, gate, performer) triples, comparing the denial stream, the performed set and the post-state against Handler.run with ReturnContract-wrapped performers; the go-red lookup-before-gate mutant"
+    }
+    @{
+        Name         = "Undo"
+        Source       = "Undo.fst"
+        Oracle       = "oracle/Undo.fs"
+        HostProject  = "Fuaran.Program.Server.Tests"
+        HostList     = "Phase 1977 - the proved undo as oracle"
+        HostMinCases = 5
+        HostSubject  = "the staging corpus and the undo cases, undone through Undo.run over the plan Handler.runPlanned records, at the UI witness and at a composition classing two ops compensable and one-way, comparing the posture, the recorded plan, the undo's answer and the undo performer's log, with the undo's performer refusing at every position of its staged list"
     }
 )
 

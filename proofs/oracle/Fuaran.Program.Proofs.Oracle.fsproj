@@ -67,5 +67,10 @@
              wrapper, proved OVER Staging's handler model (it opens Staging, so
              it must follow it). -->
         <Compile Include="EffectGate.fs" />
+        <!-- GENERATED from ../Undo.fst — do not edit. Phase 1977, the undo
+             posture: the classifier, the inverse plan and the undo run, proved
+             OVER Staging's handler model and its trail (it opens Staging, so
+             it must follow it). -->
+        <Compile Include="Undo.fs" />
     </ItemGroup>
 </Project>

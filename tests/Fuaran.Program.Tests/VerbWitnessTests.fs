@@ -159,11 +159,12 @@ let tests =
 
               // The document's bytes, pinned: this projection is this
               // repository's own artefact (docs/generic-tier.md §6), and the
-              // reach is what version 5 added to it. A state-only verb reads
+              // reach is what version 5 added to it and the empty undo posture
+              // what version 6 added (Phase 1977). A state-only verb reads
               // no state namespace — it has no binding store (Phase 1974).
               Expect.equal
                   (Demanded.encode projection)
-                  ("{\"kind\":\"demanded\",\"version\":5,\"effects\":[],\"hostCalls\":[],"
+                  ("{\"kind\":\"demanded\",\"version\":6,\"effects\":[],\"hostCalls\":[],"
                    + "\"stateNamespaces\":[],"
                    + "\"opaqueHandlers\":[],\"server\":{\"effects\":[\"ApplyOps\"],\"capabilities\":[\"ApplyOps\"],"
                    + "\"functions\":[],\"channels\":[],"
@@ -172,7 +173,7 @@ let tests =
                    + "{\"capability\":\"ApplyOps\",\"argument\":\"path\",\"name\":\"notes/archive/x.md\"},"
                    + "{\"capability\":\"ApplyOps\",\"argument\":\"path\",\"name\":\"notes/x.md\"},"
                    + "{\"capability\":\"ApplyOps\",\"argument\":\"target\",\"name\":\"origin\"}],"
-                   + "\"replay\":[],\"constraints\":[]}}")
+                   + "\"replay\":[],\"undo\":[],\"constraints\":[]}}")
                   "the document's bytes"
 
               // And read back: the reach survives the round trip, so a reader
@@ -678,4 +679,329 @@ let tests =
                   (outcome.Diagnostics |> List.last)
                   (ServerDiagnostic.Failed("ApplyOps", "argument-not-allowed:path"))
                   "naming the argument"
+          } ]
+
+// ─── Phase 1977: the undo posture, and the undo run ─────────────────────────
+
+/// The archive policy, widened for the undo tests: the staging target a
+/// publish can be retracted from, and a path the reversible verb creates.
+let private undoRegistry: ServerEffectRegistry =
+    ServerEffectRegistry.permissive ServerEffectRegistry.denyAll
+    |> ServerEffectRegistry.constrain
+        "ApplyOps"
+        [ ServerConstraintClause.AllowList("path", [ "notes/x.md"; "notes/archive/x.md"; "notes/y.md" ])
+          ServerConstraintClause.AllowList("target", [ "origin"; "staging" ])
+          ServerConstraintClause.AllowList(ServerArgumentPolicy.DestinationArgument, [ "local"; "origin"; "staging" ]) ]
+
+/// REVERSIBLE: writes and a delete, every one with an exact inverse.
+let private rewrite: VerbHandler =
+    { Name = "rewrite"
+      Stages =
+        [ Effect(ServerEffect.ApplyOps [ Check(Exists "notes/x.md"); Write("notes/x.md", "rewritten") ])
+          Effect(ServerEffect.ApplyOps [ Write("notes/y.md", "new"); Delete "notes/archive/x.md" ]) ] }
+
+/// COMPENSABLE: a write, then a publish to the staging target, whose
+/// retraction the domain declares.
+let private stage: VerbHandler =
+    { Name = "stage"
+      Stages = [ Effect(ServerEffect.ApplyOps [ Write("notes/x.md", "staged"); Publish "staging" ]) ] }
+
+/// ONE-WAY: a write, then a publish to origin, which is public and carries
+/// no compensation — the expected case of a verb that ends in a push.
+let private push: VerbHandler =
+    { Name = "push"
+      Stages =
+        [ Effect(ServerEffect.ApplyOps [ Write("notes/x.md", "pushed") ])
+          Effect(ServerEffect.ApplyOps [ Publish "origin" ]) ] }
+
+/// Run a handler and keep its plan, under the undo registry.
+let private planned (world: World) (failAt: int option) (handler: VerbHandler) =
+    Handler.runPlanned
+        witness
+        undoRegistry
+        (OpPerformance.performedBy (world.Performer failAt))
+        DataFrame.noResolve
+        "verb"
+        handler
+        { Tree = { empty with Files = world.Files }
+          Bindings = () }
+
+/// Undo a plan against the store the run left, through the same world.
+let private undoIn (world: World) (failAt: int option) plan post =
+    Undo.run
+        witness
+        undoRegistry
+        (OpPerformance.performedBy (world.Performer failAt))
+        DataFrame.noResolve
+        "verb"
+        plan
+        post
+
+let private undoOf (handler: VerbHandler) =
+    Undo.posture witness handler, Undo.reasons witness handler
+
+let private stepText (step: UndoStep<FileMap, FileOp, Nothing>) =
+    match step with
+    | UndoStep.Edit(pre, op) -> sprintf "edit %s before %s" (encodeOp op) (canonical pre)
+    | UndoStep.Compute _ -> "compute"
+    | UndoStep.Reached capability -> "reached " + capability
+    | UndoStep.Emitted capability -> "emitted " + capability
+
+[<Tests>]
+let undoTests =
+    testList
+        "Phase 1977 — the undo posture over the verb"
+        [ test "the posture is read off the declared form: reversible, compensable, one-way, with the stage named" {
+              Expect.equal
+                  (undoOf rewrite)
+                  (UndoVerdict.Reversible, [])
+                  "writes and a delete: every edit has an exact inverse"
+
+              Expect.equal
+                  (undoOf stage)
+                  (UndoVerdict.Compensable,
+                   [ { UndoReason.Stage = 0
+                       Defect = UndoDefect.CompensatedOp } ])
+                  "a publish to staging is compensable, by the domain's declared retraction"
+
+              Expect.equal
+                  (undoOf push)
+                  (UndoVerdict.OneWay,
+                   [ { UndoReason.Stage = 1
+                       Defect = UndoDefect.OneWayOp } ])
+                  "a publish to origin is one-way, and the posture names the stage: everything before it can be undone"
+
+              Expect.equal
+                  (undoOf archive)
+                  (UndoVerdict.OneWay,
+                   [ { UndoReason.Stage = 2
+                       Defect = UndoDefect.OneWayOp } ])
+                  "the archive verb is undoable up to its push and one-way at it"
+          }
+
+          test "the demanded document carries the undo posture per handler, beside the replay posture" {
+              let handlers = [ rewrite; stage; push ]
+
+              let projection =
+                  ServerDemanded.ofHandlers witness handlers |> Undo.withPostures witness handlers
+
+              let tier =
+                  match projection.Server with
+                  | Some tier -> tier
+                  | None -> failtest "the walk ran, so the document must carry a server tier"
+
+              Expect.equal
+                  (tier.Undo
+                   |> List.map (fun p -> p.Handler, p.Undo, p.Reasons |> List.map (fun r -> r.Stage, r.Defect)))
+                  [ "push", "one-way", [ 1, "one-way-op" ]
+                    "rewrite", "reversible", []
+                    "stage", "compensable", [ 0, "compensated-op" ] ]
+                  "one posture per handler, by name, reasons in stage order with the wire tokens"
+
+              // The document's bytes carry it at version 6, and read back.
+              let json = Demanded.encode projection
+              Expect.stringContains json "\"version\":6" "the undo posture rides version 6"
+
+              Expect.stringContains
+                  json
+                  "\"undo\":[{\"handler\":\"push\",\"undo\":\"one-way\",\"reasons\":[{\"stage\":1,\"defect\":\"one-way-op\"}]}"
+                  "the posture's bytes"
+
+              match Demanded.decode json with
+              | Ok read -> Expect.equal read projection "the document reads back as the projection"
+              | Error failure -> failtestf "the document does not read back: %A" failure
+          }
+
+          test "a REVERSIBLE run is undone to the pre-state, byte for byte, through the same performers" {
+              let world = seeded ()
+              world.Seed("notes/archive/x.md", "old")
+              let entry = { empty with Files = world.Files }
+              let outcome, plan = planned world None rewrite
+              Expect.isTrue outcome.Committed "the run commits"
+              Expect.isTrue plan.Committed "and its plan says so"
+
+              Expect.equal
+                  (world.Files |> Map.toList)
+                  [ "notes/x.md", "rewritten"; "notes/y.md", "new" ]
+                  "the world was rewritten, created and deleted"
+
+              let afterFirst =
+                  { entry with
+                      Files = Map.add "notes/x.md" "rewritten" entry.Files }
+
+              let afterSecond =
+                  { afterFirst with
+                      Files = Map.add "notes/y.md" "new" afterFirst.Files }
+
+              Expect.equal
+                  (plan.Steps |> List.map stepText)
+                  [ stepText (UndoStep.Edit(entry, Write("notes/x.md", "rewritten")))
+                    stepText (UndoStep.Edit(afterFirst, Write("notes/y.md", "new")))
+                    stepText (UndoStep.Edit(afterSecond, Delete "notes/archive/x.md")) ]
+                  "the plan records every EDIT with the state it was applied to, in plan order; the guard is not a step"
+
+              match undoIn world None plan outcome.Store with
+              | Error refusal -> failtestf "the undo was refused: %s" (Undo.describe refusal)
+              | Ok undone ->
+                  Expect.isTrue undone.Committed "the undo commits"
+
+                  Expect.equal
+                      (canonical undone.Store.Tree)
+                      (canonical entry)
+                      "the state is the entry state, byte for byte"
+
+                  Expect.equal (world.Files |> Map.toList) (entry.Files |> Map.toList) "and so is the world"
+
+                  Expect.equal
+                      (world.Invocations |> List.skip 3)
+                      [ encodeOp (Write("notes/archive/x.md", "old"))
+                        encodeOp (Delete "notes/y.md")
+                        encodeOp (Write("notes/x.md", "live")) ]
+                      "the inverses performed in REVERSE plan order: the delete restored, the creation deleted, the rewrite rewritten"
+
+                  Expect.equal undone.Performed [ "ApplyOps"; "ApplyOps"; "ApplyOps" ] "one staged call per inverse"
+          }
+
+          test "a COMPENSABLE run reaches the compensated state: the publish retracted, the write restored" {
+              let world = seeded ()
+              let outcome, plan = planned world None stage
+              Expect.isTrue outcome.Committed "the run commits"
+              Expect.equal world.Published [ "staging" ] "published to staging"
+
+              match undoIn world None plan outcome.Store with
+              | Error refusal -> failtestf "the undo was refused: %s" (Undo.describe refusal)
+              | Ok undone ->
+                  Expect.isTrue undone.Committed "the undo commits"
+                  Expect.isEmpty world.Published "the publish was retracted"
+                  Expect.equal (world.Files |> Map.toList) [ "notes/x.md", "live" ] "the write was restored"
+
+                  Expect.equal
+                      (world.Invocations |> List.skip 2)
+                      [ encodeOp (Retract "staging"); encodeOp (Write("notes/x.md", "live")) ]
+                      "the retraction first, then the inverse write: reverse plan order"
+
+                  // Undone in effect, not in history: the plan's store reached
+                  // the compensated state — here the entry state too, because
+                  // a retraction removes the target.
+                  Expect.equal
+                      (canonical undone.Store.Tree)
+                      (canonical
+                          { empty with
+                              Files = Map.ofList [ "notes/x.md", "live" ] })
+                      "the compensated state"
+          }
+
+          test "a ONE-WAY step is refused before anything is undone, naming it" {
+              let world = seeded ()
+              let outcome, plan = planned world None push
+              Expect.isTrue outcome.Committed "the run commits"
+              Expect.equal world.Published [ "origin" ] "pushed"
+              let before = world.Invocations
+
+              match undoIn world None plan outcome.Store with
+              | Ok _ -> failtest "a plan with a one-way step was undone"
+              | Error refusal ->
+                  Expect.equal refusal.Code UndoCode.OneWayStep "the one-way code"
+                  Expect.equal refusal.Step 1 "the ordinal in the plan: the write is step 0, the publish step 1"
+                  Expect.equal refusal.Reason "a publish to origin is public" "the domain's own reason"
+                  Expect.equal (Undo.describe refusal) "undo-one-way-step@1: a publish to origin is public" "rendered"
+
+              Expect.equal world.Invocations before "no performer was asked"
+              Expect.equal (world.Files |> Map.toList) [ "notes/x.md", "pushed" ] "the world is as the run left it"
+              Expect.equal world.Published [ "origin" ] "and so is the publish"
+          }
+
+          test "a failed undo step reports how far it got, in the perform-failure vocabulary" {
+              let world = seeded ()
+              world.Seed("notes/archive/x.md", "old")
+              let outcome, plan = planned world None rewrite
+              Expect.isTrue outcome.Committed "the run commits"
+
+              // The undo's SECOND inverse refuses: the first ran and is not
+              // taken back; the rest never ran.
+              let undoWorld = World()
+
+              for path, content in Map.toList world.Files do
+                  undoWorld.Seed(path, content)
+
+              match undoIn undoWorld (Some 1) plan outcome.Store with
+              | Error refusal -> failtestf "the undo was refused: %s" (Undo.describe refusal)
+              | Ok undone ->
+                  Expect.isFalse undone.Committed "the undo rolled back"
+                  Expect.equal undone.Performed [ "ApplyOps" ] "exactly the prefix that ran: one inverse"
+
+                  Expect.equal
+                      (undone.Diagnostics |> List.last)
+                      (ServerDiagnostic.PerformFailed("ApplyOps", "the world refused op 1"))
+                      "the failure names the capability and the performer's reason"
+
+                  Expect.equal
+                      (undoWorld.Files |> Map.toList)
+                      [ "notes/archive/x.md", "old"; "notes/x.md", "rewritten"; "notes/y.md", "new" ]
+                      "the first inverse, the delete restored, reached the world; the second did not"
+
+                  Expect.equal
+                      (canonical undone.Store.Tree)
+                      (canonical outcome.Store.Tree)
+                      "the undo's store is the one the run left"
+          }
+
+          test "a witness whose inverse breaks its law is refused rather than performed" {
+              // The same verb, with a write's inverse that lies: it restores the
+              // wrong bytes. The plan folds to a state that is not the entry
+              // state, and the undo refuses before any performer is asked.
+              let lying =
+                  { witness with
+                      State =
+                          { witness.State with
+                              Undo =
+                                  fun op ->
+                                      match op with
+                                      | Write(path, _) -> UndoClass.Inverse(fun _ -> [ Write(path, "wrong") ])
+                                      | other -> undo other } }
+
+              let world = seeded ()
+
+              let writing: VerbHandler =
+                  { Name = "write"
+                    Stages = [ Effect(ServerEffect.ApplyOps [ Write("notes/x.md", "x") ]) ] }
+
+              let outcome, plan =
+                  Handler.runPlanned
+                      lying
+                      undoRegistry
+                      (OpPerformance.performedBy (world.Performer None))
+                      DataFrame.noResolve
+                      "verb"
+                      writing
+                      { Tree = { empty with Files = world.Files }
+                        Bindings = () }
+
+              Expect.isTrue outcome.Committed "the run commits"
+              let before = world.Invocations
+
+              match
+                  Undo.run
+                      lying
+                      undoRegistry
+                      (OpPerformance.performedBy (world.Performer None))
+                      DataFrame.noResolve
+                      "verb"
+                      plan
+                      outcome.Store
+              with
+              | Ok _ -> failtest "a lying inverse was performed"
+              | Error refusal -> Expect.equal refusal.Code UndoCode.InverseDrift "refused for drift"
+
+              Expect.equal world.Invocations before "no performer was asked"
+          }
+
+          test "a plan that rolled back has nothing to undo, and says so" {
+              let world = seeded ()
+              let outcome, plan = planned world (Some 0) rewrite
+              Expect.isFalse outcome.Committed "the run rolled back"
+
+              match undoIn world None plan outcome.Store with
+              | Ok _ -> failtest "an uncommitted plan was undone"
+              | Error refusal -> Expect.equal refusal.Code UndoCode.UncommittedPlan "named"
           } ]

@@ -220,6 +220,7 @@ module SignedEnvelope =
           Channels = except a.Channels b.Channels
           Reach = except a.Reach b.Reach
           Replay = except a.Replay b.Replay
+          Undo = except a.Undo b.Undo
           // Whole clause-set per capability, never clause by clause: a host that
           // RELAXED a bound and a host that never declared one are both "this
           // capability's policy is no longer what was signed", and the drift

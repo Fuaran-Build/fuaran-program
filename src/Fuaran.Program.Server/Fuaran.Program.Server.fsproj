@@ -26,9 +26,13 @@
          the posture is joined onto the projection here rather than produced by
          the walk in ServerDemanded, which compiles earlier. -->
     <Compile Include="Replay.fs" />
-    <!-- Harvest must FOLLOW Replay: the published document carries the replay
-         postures, so the one call that produces it consults the join rather
-         than reproducing a second walk beside it. -->
+    <!-- Undo (Phase 1977) sits beside Replay and after it: the undo posture is
+         joined onto the projection on the replay posture's terms, and the undo
+         run is a handler run, so it reads Handler and nothing above it. -->
+    <Compile Include="Undo.fs" />
+    <!-- Harvest must FOLLOW Replay and Undo: the published document carries
+         both postures, so the one call that produces it consults the joins
+         rather than reproducing a second walk beside them. -->
     <Compile Include="Harvest.fs" />
     <!-- The durable-execution tier, appended last so it can reach everything
          above it and nothing above it has to know it exists. Journal (the

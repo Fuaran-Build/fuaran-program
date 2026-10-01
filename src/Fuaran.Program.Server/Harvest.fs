@@ -110,7 +110,7 @@ module Harvest =
         (handlers: Map<string, Handler<'Action, 'Op>>)
         (root: 'Node)
         : HarvestedDemand =
-        publish (Replay.ofTreeAndHandlers witness handlers root)
+        publish (Undo.ofTreeAndHandlers witness handlers root)
 
     /// The document for a REGISTRATION alone, with no program in hand.
     ///
@@ -127,4 +127,5 @@ module Harvest =
         publish (
             ServerDemanded.ofHandlers witness handlers
             |> Replay.withPostures witness handlers
+            |> Undo.withPostures witness handlers
         )

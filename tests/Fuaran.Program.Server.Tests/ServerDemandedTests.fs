@@ -200,7 +200,8 @@ let tests =
               // capability and nothing else. At the UI witness an op's reach is
               // the nodes it addresses, under the op's own member names — and
               // the projection moved DELIBERATELY for a handler whose ops name
-              // one: the reach rides a new document member, at version 5.
+              // one: the reach rides a new document member, at version 5 (the undo
+              // posture rides version 6, Phase 1977, and moves no byte here).
               let projection =
                   ServerDemanded.ofHandler (
                       handlerOf

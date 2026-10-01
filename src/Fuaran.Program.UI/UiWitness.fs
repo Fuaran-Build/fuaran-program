@@ -537,7 +537,20 @@ let state: StateWitness<Node<obj>, TreeOp<obj>> =
                 | _ -> []
               Destination = EffectDestination.Absent }
       Canonical = Fuaran.UI.OpStream.Abstractions.CanonicalJson.encodeNode
-      View = OpView.edits }
+      View = OpView.edits
+      // Every tree op has an EXACT inverse through the tier's own diff
+      // (Phase 1977): apply the op to the pre-state and diff the result back
+      // to the pre-state, which answers the ops that restore it — the same
+      // `TreeOpDiff.diff` the driver emits its patches with. A list, which is
+      // why the member answers one. An op the apply engine refuses has no
+      // post-state to diff from and answers nothing; the plan never records
+      // such an op, because the refusal halted it.
+      Undo =
+        fun op ->
+            UndoClass.Inverse(fun pre ->
+                match Fuaran.UI.Ops.Apply.apply op pre with
+                | Ok post -> TreeOpDiff.diff post pre
+                | Error _ -> []) }
 
 // ─── the effect witness ─────────────────────────────────────────────────────
 

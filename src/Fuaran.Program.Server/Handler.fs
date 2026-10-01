@@ -208,6 +208,41 @@ type HandlerOutcome<'Node, 'Store, 'Op, 'Effect> =
         Diagnostics: ServerDiagnostic list
     }
 
+/// One step of the PLAN an undo reads (Phase 1977, DECISIONS.md D22),
+/// recorded by the plan phase in plan order. The model's `step`
+/// (`proofs/Staging.fst`).
+[<RequireQualifiedAccess>]
+type UndoStep<'Node, 'Op, 'Action> =
+    /// An op the plan applied — in memory or staged for a performer — with
+    /// the state it was applied TO. The pre-state is what an inverse is
+    /// computed from, and the plan phase is the one place that holds it.
+    | Edit of preState: 'Node * op: 'Op
+    /// A compute stage's run, with the trace the fold recorded (Phase 1976):
+    /// what undoes its binding writes is `BoundedActions.reverse` over the
+    /// two, when the action is in the reversible fragment and the trace is
+    /// restorable.
+    | Compute of action: 'Action * trace: Trace
+    /// A host call or a notification: it reached the world, under this
+    /// capability, and no inverse vocabulary exists for it.
+    | Reached of capability: string
+    /// A patch, emitted for the host to apply after the handler returned:
+    /// whether it can be undone is the host's to say, not this handler's.
+    | Emitted of capability: string
+
+/// The record a committed run leaves for its undo: the handler, whether it
+/// committed, the state it was handed, and its steps in plan order. `Undo.run`
+/// reads it; nothing else does.
+type UndoPlan<'Node, 'Op, 'Action> =
+    {
+        Handler: string
+        Committed: bool
+        /// The entry state — the pre-state of the whole run, recorded so the
+        /// undo of a plan of exact inverses can be checked against it before
+        /// anything performs.
+        Entry: 'Node
+        Steps: UndoStep<'Node, 'Op, 'Action> list
+    }
+
 /// What the handlers invoked during ONE event contributed — the value this
 /// placement threads through the shared fold as its `HandlerArm` placement
 /// state (DECISIONS.md D7).
@@ -260,7 +295,7 @@ module Handler =
     /// The state threaded through the stage fold. Lists accumulate reversed and
     /// are flipped once at the end, so a long handler does not quadratically
     /// re-append.
-    type private Accumulator<'Node, 'Store, 'Op, 'Effect> =
+    type private Accumulator<'Node, 'Store, 'Op, 'Effect, 'Action> =
         {
             Store: ServerStore<'Node, 'Store>
             Halted: bool
@@ -275,6 +310,11 @@ module Handler =
             Notifications: (string * Fuaran.Core.JVal) list
             ClientEffects: 'Effect list
             Diagnostics: ServerDiagnostic list
+            /// The undo trail (Phase 1977), reversed like every list here: the
+            /// edits with their pre-states, the compute stages with their
+            /// traces, and every step that reached or emitted. The model's
+            /// `ac_trail`.
+            Trail: UndoStep<'Node, 'Op, 'Action> list
         }
 
     /// The discriminator of a pipeline-evaluation failure. Deliberately not the
@@ -296,16 +336,16 @@ module Handler =
     let private halt
         (capability: string)
         (reason: string)
-        (acc: Accumulator<'Node, 'Store, 'Op, 'Effect>)
-        : Accumulator<'Node, 'Store, 'Op, 'Effect> =
+        (acc: Accumulator<'Node, 'Store, 'Op, 'Effect, 'Action>)
+        : Accumulator<'Node, 'Store, 'Op, 'Effect, 'Action> =
         { acc with
             Halted = true
             Diagnostics = ServerDiagnostic.Failed(capability, reason) :: acc.Diagnostics }
 
     let private deny
         (denial: ServerEffectDenial)
-        (acc: Accumulator<'Node, 'Store, 'Op, 'Effect>)
-        : Accumulator<'Node, 'Store, 'Op, 'Effect> =
+        (acc: Accumulator<'Node, 'Store, 'Op, 'Effect, 'Action>)
+        : Accumulator<'Node, 'Store, 'Op, 'Effect, 'Action> =
         { acc with
             Halted = true
             Diagnostics = ServerDiagnostic.Denied denial :: acc.Diagnostics }
@@ -366,63 +406,78 @@ module Handler =
         (ops: 'Op list)
         (tree: 'Node)
         (staged: StagedCall list)
-        : Result<'Node * StagedCall list, string> =
-        let rec go (ops: 'Op list) (tree: 'Node) (staged: StagedCall list) =
+        (trail: UndoStep<'Node, 'Op, 'Action> list)
+        : Result<'Node * StagedCall list * UndoStep<'Node, 'Op, 'Action> list, string> =
+        // The trail (Phase 1977) threads beside the staged list, reversed as
+        // it is: every EDIT the plan applies is recorded with the state it was
+        // applied to — in memory and performed alike, because an undo in
+        // memory applies the inverses in memory. The model walks it a second
+        // time over the same views (`trail_views`); `trail_agrees` is what
+        // says one fold and two walks reach one answer.
+        let rec go (ops: 'Op list) (tree: 'Node) (staged: StagedCall list) (trail: UndoStep<'Node, 'Op, 'Action> list) =
             match ops with
-            | [] -> Ok(tree, staged)
+            | [] -> Ok(tree, staged, trail)
             | op :: rest ->
-                match one op tree staged with
+                match one op tree staged trail with
                 | Error code -> Error code
-                | Ok(tree', staged') -> go rest tree' staged'
+                | Ok(tree', staged', trail') -> go rest tree' staged' trail'
 
-        and one (op: 'Op) (tree: 'Node) (staged: StagedCall list) =
+        and one (op: 'Op) (tree: 'Node) (staged: StagedCall list) (trail: UndoStep<'Node, 'Op, 'Action> list) =
             match state.View op with
             | OpView.Require ->
                 match state.Stream.Apply op tree with
                 | Error code -> Error code
-                | Ok _ -> Ok(tree, staged)
+                | Ok _ -> Ok(tree, staged, trail)
             | OpView.Edit ->
                 match state.Stream.Apply op tree with
                 | Error code -> Error code
                 | Ok tree' ->
+                    let trail' = UndoStep.Edit(tree, op) :: trail
+
                     match performance with
-                    | OpPerformance.InMemory -> Ok(tree', staged)
-                    | OpPerformance.Performed perform -> Ok(tree', stagedOp perform capability tree' op :: staged)
+                    | OpPerformance.InMemory -> Ok(tree', staged, trail')
+                    | OpPerformance.Performed perform ->
+                        Ok(tree', stagedOp perform capability tree' op :: staged, trail')
             | OpView.Choose(entry, whenTrue, whenFalse, exit) ->
                 let tookTrue = Result.isOk (state.Stream.Apply entry tree)
 
-                match go (if tookTrue then whenTrue else whenFalse) tree staged with
+                match go (if tookTrue then whenTrue else whenFalse) tree staged trail with
                 | Error code -> Error code
-                | Ok(tree', staged') ->
+                | Ok(tree', staged', trail') ->
                     match exit with
-                    | None -> Ok(tree', staged')
+                    | None -> Ok(tree', staged', trail')
                     | Some assertion ->
                         match state.Stream.Apply assertion tree' with
                         | Ok _ ->
                             if tookTrue then
-                                Ok(tree', staged')
+                                Ok(tree', staged', trail')
                             else
                                 Error "the exit assertion held after the false arm"
                         | Error reason ->
                             if tookTrue then
                                 Error(sprintf "the exit assertion did not hold after the true arm: %s" reason)
                             else
-                                Ok(tree', staged')
+                                Ok(tree', staged', trail')
             | OpView.Repeat(count, body) ->
                 if count < 0 then
                     Error "the repeat's count is negative"
                 else
-                    let rec times (remaining: int) (tree: 'Node) (staged: StagedCall list) =
+                    let rec times
+                        (remaining: int)
+                        (tree: 'Node)
+                        (staged: StagedCall list)
+                        (trail: UndoStep<'Node, 'Op, 'Action> list)
+                        =
                         if remaining = 0 then
-                            Ok(tree, staged)
+                            Ok(tree, staged, trail)
                         else
-                            match go body tree staged with
+                            match go body tree staged trail with
                             | Error code -> Error code
-                            | Ok(tree', staged') -> times (remaining - 1) tree' staged'
+                            | Ok(tree', staged', trail') -> times (remaining - 1) tree' staged' trail'
 
-                    times count tree staged
+                    times count tree staged trail
 
-        go ops tree staged
+        go ops tree staged trail
 
     /// PLAN one effect against the store. The gate is consulted FIRST — before a
     /// pipeline is evaluated, before an op reaches the apply engine, and before
@@ -451,8 +506,8 @@ module Handler =
         (performance: OpPerformance<'Node, 'Op>)
         (resolve: string -> Result<Fuaran.Core.Table, Fuaran.Core.EvalError>)
         (effect: ServerEffect<'Op>)
-        (acc: Accumulator<'Node, 'Store, 'Op, 'Effect>)
-        : Accumulator<'Node, 'Store, 'Op, 'Effect> =
+        (acc: Accumulator<'Node, 'Store, 'Op, 'Effect, 'Action>)
+        : Accumulator<'Node, 'Store, 'Op, 'Effect, 'Action> =
         let capability = ServerEffect.capability effect
 
         if not (registry.Gate capability) then
@@ -502,9 +557,9 @@ module Handler =
                     // applying its predecessors, which is what makes the atomicity
                     // claim above true of the tree and not merely of the store. A
                     // guard on the op channel halts here, on its own reason.
-                    match planOps state performance capability ops performed.Store.Tree acc.Staged with
+                    match planOps state performance capability ops performed.Store.Tree acc.Staged acc.Trail with
                     | Error code -> halt capability code acc
-                    | Ok(tree, staged) ->
+                    | Ok(tree, staged, trail) ->
                         match performance with
                         // In memory: the apply IS the effect, and it is performed
                         // here, in the plan phase — the shape every placement had
@@ -512,7 +567,8 @@ module Handler =
                         // staged nothing.
                         | OpPerformance.InMemory ->
                             { performed with
-                                Store = { performed.Store with Tree = tree } }
+                                Store = { performed.Store with Tree = tree }
+                                Trail = trail }
                         // Performed: the apply is a PLAN. The tree moves — a later
                         // stage reads the planned tree — but the capability is not
                         // recorded as performed; the staged calls are, one per edit,
@@ -523,7 +579,8 @@ module Handler =
                         | OpPerformance.Performed _ ->
                             { acc with
                                 Store = { acc.Store with Tree = tree }
-                                Staged = staged }
+                                Staged = staged
+                                Trail = trail }
 
                 | ServerEffect.HostCall(fn, args, into) ->
                     match Map.tryFind fn registry.HostFunctions with
@@ -564,28 +621,31 @@ module Handler =
                                       Performer = performer
                                       Args = args
                                       Into = into }
-                                    :: acc.Staged }
+                                    :: acc.Staged
+                                Trail = UndoStep.Reached capability :: acc.Trail }
 
                 | ServerEffect.EmitPatch ops ->
                     { performed with
-                        Patches = List.rev ops @ performed.Patches }
+                        Patches = List.rev ops @ performed.Patches
+                        Trail = UndoStep.Emitted capability :: performed.Trail }
 
                 | ServerEffect.Notify(channel, payload) ->
                     { performed with
-                        Notifications = (channel, payload) :: performed.Notifications }
+                        Notifications = (channel, payload) :: performed.Notifications
+                        Trail = UndoStep.Reached capability :: performed.Trail }
 
     /// Run one stage.
     let private runStage
         (state: StateWitness<'Node, 'Op>)
         (channel: StoreWitness<'Store> option)
-        (compute: string -> 'Action -> 'Store -> BoundedOutcome<'Store, 'Effect>)
+        (compute: string -> 'Action -> 'Store -> BoundedOutcome<'Store, 'Effect> * Trace)
         (registry: ServerEffectRegistry)
         (performance: OpPerformance<'Node, 'Op>)
         (resolve: string -> Result<Fuaran.Core.Table, Fuaran.Core.EvalError>)
         (nodeId: string)
         (stage: HandlerStage<'Action, 'Op>)
-        (acc: Accumulator<'Node, 'Store, 'Op, 'Effect>)
-        : Accumulator<'Node, 'Store, 'Op, 'Effect> =
+        (acc: Accumulator<'Node, 'Store, 'Op, 'Effect, 'Action>)
+        : Accumulator<'Node, 'Store, 'Op, 'Effect, 'Action> =
         match stage with
         | Compute action ->
             // THE shared fold, with the INERT arm — deliberately, and this is
@@ -600,7 +660,11 @@ module Handler =
             // terminate, and totality would rest on a budget rather than on the
             // shape of the thing. A call action in a handler stage is therefore
             // the documented no-op, exactly as at a placement with no registry.
-            let outcome = compute nodeId action acc.Store.Bindings
+            // The fold with its TRACE (Phase 1977): the same outcome `runInert`
+            // answers — the model's `traced_agrees` — and the Bennett trace an
+            // undo's reversal of this stage is built from, recorded on the
+            // trail with the action.
+            let outcome, trace = compute nodeId action acc.Store.Bindings
 
             // A HALTED fold halts the handler (Phase 1967): the guard's own
             // refusal diagnostic is the record of why, carried through
@@ -617,7 +681,8 @@ module Handler =
                 ClientEffects = List.rev outcome.Effects @ acc.ClientEffects
                 Diagnostics =
                     (outcome.Diagnostics |> List.rev |> List.map ServerDiagnostic.Bounded)
-                    @ acc.Diagnostics }
+                    @ acc.Diagnostics
+                Trail = UndoStep.Compute(action, trace) :: acc.Trail }
         | Effect effect -> runEffect state channel registry performance resolve effect acc
 
     /// PERFORM the staged host calls, in declaration order, stopping at the
@@ -628,8 +693,8 @@ module Handler =
     let rec private perform
         (channel: StoreWitness<'Store> option)
         (staged: StagedCall list)
-        (acc: Accumulator<'Node, 'Store, 'Op, 'Effect>)
-        : Accumulator<'Node, 'Store, 'Op, 'Effect> =
+        (acc: Accumulator<'Node, 'Store, 'Op, 'Effect, 'Action>)
+        : Accumulator<'Node, 'Store, 'Op, 'Effect, 'Action> =
         match staged with
         | [] -> acc
         | call :: rest ->
@@ -659,16 +724,20 @@ module Handler =
 
     /// Run a handler's stages in order against `store`, committing only if every
     /// stage planned and every staged call — host call or, under a registered
-    /// op performer, op — then performed. `nodeId` is the originating event's
-    /// node, threaded into the shared interpreter exactly as the other
-    /// placements thread it. `performance` says how this placement performs an
-    /// op (Phase 1967); `run` below is this at `OpPerformance.InMemory`.
+    /// op performer, op — then performed, and answer beside the outcome the
+    /// PLAN the run leaves for its undo (Phase 1977): every edit with the
+    /// state it was applied to, every compute stage with its trace, every
+    /// step that reached the world, in plan order. `runWith` below is this
+    /// without the plan. `nodeId` is the originating event's node, threaded
+    /// into the shared interpreter exactly as the other placements thread it.
+    /// `performance` says how this placement performs an op (Phase 1967).
     ///
     /// Runs under every composition (Phase 1974): it reads the witness's
     /// STATE axis for ops, and its dispatch position only for a compute stage
     /// — which a composition with no dispatch axis cannot hold — and for a
-    /// landing slot, which such a composition has no channel for.
-    let runWith
+    /// landing slot, which such a composition has no channel for. The
+    /// model's `run_planned`.
+    let runPlanned
         (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (registry: ServerEffectRegistry)
         (performance: OpPerformance<'Node, 'Op>)
@@ -676,7 +745,7 @@ module Handler =
         (nodeId: string)
         (handler: Handler<'Action, 'Op>)
         (store: ServerStore<'Node, 'Store>)
-        : HandlerOutcome<'Node, 'Store, 'Op, 'Effect> =
+        : HandlerOutcome<'Node, 'Store, 'Op, 'Effect> * UndoPlan<'Node, 'Op, 'Action> =
         let start =
             { Store = store
               Halted = false
@@ -686,14 +755,20 @@ module Handler =
               Patches = []
               Notifications = []
               ClientEffects = []
-              Diagnostics = [] }
+              Diagnostics = []
+              Trail = [] }
 
         let channel =
             (witness.Dispatch :> IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>).Fold
             |> Option.map (fun fold -> fold.Store)
 
+        // The ONE fold, traced: the outcome `runInert` answers (the model's
+        // `traced_agrees`), and the trace the undo reverses the stage by.
         let compute (nodeId: string) (action: 'Action) (bindings: 'Store) =
-            BoundedActions.runInert witness nodeId action bindings
+            let outcome, (), trace =
+                BoundedActions.runTraced witness HandlerArm.inert nodeId action bindings ()
+
+            outcome, trace
 
         let planned =
             handler.Stages
@@ -714,6 +789,12 @@ module Handler =
             else
                 perform channel (List.rev planned.Staged) planned
 
+        let plan: UndoPlan<'Node, 'Op, 'Action> =
+            { Handler = handler.Name
+              Committed = not final.Halted
+              Entry = store.Tree
+              Steps = List.rev final.Trail }
+
         if final.Halted then
             // Roll back to the entry state. The diagnostics survive: they are
             // the entire record of why nothing happened, and discarding them
@@ -729,7 +810,8 @@ module Handler =
               Patches = []
               Notifications = []
               ClientEffects = []
-              Diagnostics = List.rev final.Diagnostics }
+              Diagnostics = List.rev final.Diagnostics },
+            plan
         else
             { Store = final.Store
               Committed = true
@@ -740,7 +822,21 @@ module Handler =
               Patches = List.rev final.Patches
               Notifications = List.rev final.Notifications
               ClientEffects = List.rev final.ClientEffects
-              Diagnostics = List.rev final.Diagnostics }
+              Diagnostics = List.rev final.Diagnostics },
+            plan
+
+    /// `runPlanned` without the plan: the outcome alone. The signature every
+    /// placement called before Phase 1977, unchanged.
+    let runWith
+        (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
+        (registry: ServerEffectRegistry)
+        (performance: OpPerformance<'Node, 'Op>)
+        (resolve: string -> Result<Fuaran.Core.Table, Fuaran.Core.EvalError>)
+        (nodeId: string)
+        (handler: Handler<'Action, 'Op>)
+        (store: ServerStore<'Node, 'Store>)
+        : HandlerOutcome<'Node, 'Store, 'Op, 'Effect> =
+        fst (runPlanned witness registry performance resolve nodeId handler store)
 
     /// `runWith` at `OpPerformance.InMemory`: ops are performed by being
     /// applied, which is every placement before Phase 1967 and the UI tier

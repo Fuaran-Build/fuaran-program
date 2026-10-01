@@ -83,6 +83,9 @@ module ServerDemanded =
           // "what does this ask of a host" and leaves "may this be re-run"
           // where the enforcement is.
           Replay = []
+          // The undo posture (Phase 1977) is joined after this walk on exactly
+          // the replay posture's terms, by `Undo.withPostures`.
+          Undo = []
           // The declared argument policy is joined AFTER this walk too, and for
           // a different reason from the replay posture's: it is not a fact about
           // the handlers at all. It is what the HOST wrote down, so it enters
