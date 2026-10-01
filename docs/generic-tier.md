@@ -196,6 +196,7 @@ type ActionView<'Action, 'Expr> =
     | Sequence of 'Action list                               // the composition arm (today: Chain)
     | Assign   of key: string * value: JVal option * from: 'Expr option   // today: SetState
     | Call     of endpoint: string * declaresTarget: bool    // today: Call; a declared target is refused (D9)
+    | Require  of condition: 'Expr                           // the HALTING guard (Phase 1967, D19); no UI arm
     | Leaf     of LeafDeclaration                            // every other domain act
 
 type LeafDeclaration =                                       // static, for the demanded projection
@@ -217,6 +218,18 @@ The fold keeps its current form. It is one `match` in one file, now over `Action
 sequencing, the one store write, the reserved-namespace refusal, the D9 refusal of a declared result
 target, and the handler-effect arm (D7). **It never recurses into a `Leaf`.** A leaf is lowered to at
 most one effect, or refused, or declined, and the domain makes that choice through `Lower`.
+
+**`Require` is the fifth shape, added by Phase 1967 (D19) for the second witness's F1.** Its
+condition resolves against the store through `ExprWitness.Resolve`, exactly as an `Assign`'s `from`
+does. The boolean `true` holds and changes nothing; any other value, an unresolved condition and an
+errored one HALT: nothing after the guard in the enclosing sequence runs, the outcome's `Halted` says
+so, and an errored condition's text is the halt's reason verbatim, which is how a domain's typed
+refusal reaches the diagnostic (§3.5). A guard writes nothing and emits nothing. It is distinct from a
+leaf's `Refuse`, which is a diagnostic the sequence carries on past — every UI-tier refusal is of that
+kind, and no UI arm views as a guard, so the UI tier never halts (`ui_never_halts`, proved). The fold
+does not roll back on a halt: the store is the store as of the halt, and the placement that rolls
+back is the handler, whose atomicity unit it is (D8). A guard reads the STATE CHANNEL (K4): a domain
+whose guards need to see its model exposes what they read through the channel.
 
 The UI adapter's `View` is the total match over the closed 14-case `Action` DU. It carries the
 `#nowarn "44"` scope that `BoundedActions.fs` holds today. Exhaustiveness is still checked by the
@@ -267,14 +280,40 @@ type StoreWitness<'Store> =
 ### 3.5 Ops
 
 ```fsharp
+type OpReach =                                              // what one op REACHES (Phase 1967, D19)
+    { Arguments:   (string * string) list                   // author-declared names: a path, a remote, a node id
+      Destination: EffectDestination }                      // Local | Remote host | … ; Absent for a tree op
+
 type OpWitness<'Node, 'Op> =
     { Stream:         StreamWitness<'Op, 'Node, string>   // Core, reused: Apply / Encode / Decode
       Diff:           'Node -> 'Node -> 'Op list          // today: TreeOpDiff.diff
-      AbsoluteTarget: 'Op -> string option }              // replay: an op naming its target is re-runnable
+      AbsoluteTarget: 'Op -> string option                // replay: an op naming its target is re-runnable
+      Reach:          'Op -> OpReach }                     // the argument policy and the demanded projection read it
 ```
 
 `Stream.Encode` has to be the referenced vocabulary's own **canonical** encoder (K6). The core
 splices its output into the program envelopes and never re-encodes it.
+
+**`Reach` is what the second witness's W3 and W4 asked for.** Before it, `ServerArgumentPolicy` and
+`ServerDemanded` read the five server-effect arms and reported, for the two that carry ops, the
+discriminator and nothing else — a handler that wrote files and pushed a branch projected as the word
+`ApplyOps`, and no policy could bound which path or which remote. `Reach` answers the op's named
+arguments in exactly the `(argument, value)` shape the policy already reads off a host call, so an
+`AllowList` on `ApplyOps` or `EmitPatch` binds; and its destination class in the client effects' own
+`EffectDestination` vocabulary (the member W4 found on the wrong channel), allow-listed under the
+reserved `destination` argument, so a policy can bound WHERE an op reaches without knowing how a
+domain names it. A `Ceiling` on either arm measures the ops' canonical bytes through `Stream.Encode`.
+The demanded document carries the reach as a server-tier member, at version 5 (§6). A reach value is a
+NAME the op reaches, never its payload: the UI witness answers the nodes a tree op addresses and
+deliberately not its prop paths, binding slots or values.
+
+**The rejection stays `string` (W5, decided in D19).** `StreamWitness`'s `'Rej` is fixed at `string`
+here and stays so: a seventh type parameter would reach every public type that names the witness, the
+handler's halt vocabulary and the outcome wire — where a reason is a string by specification — to
+carry a type that crosses a process boundary as text in every one of those places anyway. A typed
+refusal renders itself canonically (`Canon.render` over its own JSON) into the string the op channel
+or a guard's `Errored` carries, and parses itself back on the far side; the in-repo second witness
+pins that crossing.
 
 ### 3.6 Effects and claims
 
@@ -303,9 +342,9 @@ with the evidence that would show it to be wrong.
 | # | Assumption kept | Why it is kept | What would falsify it |
 |---|---|---|---|
 | K1 | **Node ids are strings.** | The wire fixes it. `invocation.nodeId`, a scenario event's `nodeId`, `ClientEffect.ReadFileBody`'s node and every diagnostic carry a string. A generic `'Id` would be converted to a string at every one of those boundaries and buy nothing. | A second domain whose ids have no faithful string form. Core's `IdWitness` is then where the conversion goes. |
-| K2 | **Control structure is sequence + assign + call, and everything else is a leaf.** | This is D1: control structure belongs to the evaluator, and vocabulary lowers to it. Today's fold already treats ten of the fourteen cases as leaves. | A domain act that must thread the store through sub-actions, the way `Confirm`'s continuations would with a return leg. That is a new view case plus a model change under D14, never a leaf that recurses. |
+| K2 | **Control structure is sequence + assign + call + require, and everything else is a leaf.** _(Amended by Phase 1967: the second witness found halting missing — a verb's refusal must stop the sequence where a UI event handler's never needs to — and `Require` is the shape that halts.)_ | This is D1: control structure belongs to the evaluator, and vocabulary lowers to it. Today's fold already treats ten of the fourteen UI cases as leaves, and none of them as a guard. | A domain act that must thread the store through sub-actions, the way `Confirm`'s continuations would with a return leg, or a conditional with two non-refusal arms. That is a new view case plus a model change under D14, never a leaf that recurses. |
 | K3 | **A leaf emits at most one effect, and it never writes the store.** | `run_total` in `proofs/README.md` proves "at most one client effect and … one key" per non-composite step. A leaf that could write, or emit a list, would make the theorem false without making it fail. | A leaf that needs two effects. It has to be written as a `Sequence` of two leaves. |
-| K4 | **One mutable state channel plus one query-result channel.** | That is everything the fold and the handler write today (`SetState`; `RunQuery`'s landing; a handler's `into`). The other fields of `BindingSources` (filters, selections, i18n) are read only by UI resolution, which sits behind `ExprWitness`. | A second domain that writes somewhere other than a keyed state channel. |
+| K4 | **One mutable state channel plus one query-result channel.** | That is everything the fold and the handler write today (`SetState`; `RunQuery`'s landing; a handler's `into`). The other fields of `BindingSources` (filters, selections, i18n) are read only by UI resolution, which sits behind `ExprWitness`. Since Phase 1967 the channel is also what a GUARD reads: a verb's arguments and read results land there, and a domain that keeps its model in the tree exposes what its guards need through the channel. | A second domain that writes somewhere other than a keyed state channel. The first second witness used no state channel at all and so could not have had a guard; that is a reading of K4, not a falsification. |
 | K5 | **A reserved key namespace exists, and the fold refuses to write into it.** | The refusal is a property of the program loop: "the tree is untrusted" does not depend on the domain. Only the namespace's *spelling* (`host.`) is the UI tier's policy, so the witness supplies the predicate and the core owns the refusal. | A domain with no reserved keys. It supplies `fun _ -> false`, which is legal. |
 | K6 | **Referenced vocabularies have one canonical encoder, and the core splices its output verbatim.** | Rule 1 of the wire specification's §3. It is the whole basis for the invariance claim in §6. | A witness whose encoder is not canonical. The composite documents stop being byte-stable, and the codec corpus goes red. |
 | K7 | **`Fuaran.Core`'s `Hash.sha256Hex` is byte-identical to `Fuaran.UI.Hashing.sha256Hex`.** | Both are SHA-256 over the UTF-8 bytes, rendered as lowercase hex. Taking Core's version removes a UI reference from `SignedEnvelope`. | An envelope signed before the cut that fails to verify after it. Phase 1896 pins one such envelope as a test before the swap. |
@@ -339,6 +378,20 @@ each forced by keeping behaviour where it was rather than chosen:
   `RequireQualifiedAccess`), so neither captures the UI tier's own `Resolved` / `Sequence` spellings
   in code that opens both.
 
+And four more since 0.7.0 (Phase 1967, D19), each forced by the second witness rather than chosen:
+
+- **`ActionView` has the `Require` shape and `BoundedOutcome` a `Halted` member** (§3.2). The fold's
+  sequence stops at the first member that halts; `HandlerAnswer` carries no halt, because an answered
+  call is its own atomicity unit.
+- **`OpWitness` has `Reach`** (§3.5), and `ServerArgumentPolicy.arguments` / `payloadBytes` / `check`
+  take the op witness, because an op sequence now has arguments and a size.
+- **`Handler.runWith` takes an `OpPerformance<'Op>`** — `InMemory`, the apply is the effect, or
+  `Performed of ('Op -> Result<unit, string>)`, under which `ApplyOps` is a staged arm performed after
+  the plan commits, one staged call per op in plan order beside the host calls. `Handler.run` is
+  `runWith` in memory; `ServerServices` carries the performance for the session loop. The durable
+  interpreter runs in memory and journals no performed op — stated, not covered.
+- **The demanded document is at version 5**, with `reach` on the server tier (§6).
+
 ### 3.8 How D14 applies to this cut
 
 D14 says that when the generic tier is cut, its model comes first. The fold's model already exists:
@@ -352,6 +405,48 @@ closures, and only the UI adapter's `View` / `Lower` can reach one: `Call`'s `on
 `ReadFileBody`'s `onRead`. The differential oracle in `proofs/oracle/` therefore runs through the UI
 adapter, which is where the fourteen arms now live. The claims ladder's file citations move with the
 code in the same commit.
+
+D14 applied a second time at Phase 1967: the halting guard changes the view, so `BoundedFold.fst` was
+restated over five shapes and re-proved — `run_total`, `run_no_closure` and the `Chain` homomorphism
+keep their names and statements; the generic sequence homomorphism gains a halting clause that
+`fold_no_require_no_halt` makes vacuous for every view without a guard, which is how the UI corollary
+stays unconditional — BEFORE the port that added the shape. `Staging.fst` was extended the same way
+for the op performer, before the handler was.
+
+### 3.10 The second witness (Phase 1967)
+
+D4 said the generic tier would wait for a second domain because one witness carries its assumptions
+unnoticed. D18 cut the tier anyway and named the assumptions. The second domain then arrived,
+privately: a handler that is a store-mutating VERB — read a store, write and delete files, commit,
+push — with those effects as the `'Op` of `ApplyOps`, run under the unmodified 0.6.0 `Handler.run`.
+It was correct (byte-identical to the verb it replaced across thirty-five fixtures), and the contract
+admitted it without change. That is the half of D4's warning that did not come true.
+
+The other half did. Twenty-five of the contract's thirty-one members were vacuous or unfillable at
+those types — the tree half is UI-shaped and a verb is not reached from a node tree, so `Action`,
+`Expr` and `Effect` were each one inert case and `Tree` was ten-elevenths empty. That vacuity is a
+finding and not a defect: it says the contract's centre is the fold and the op channel, and that a
+verb lives at that centre. And three gaps forced the domain to build, beside Program, what belongs in
+it:
+
+| Finding | What the domain built beside Program | What Program now has (D19) |
+|---|---|---|
+| **F1** — no halting refusal outside the op channel: a leaf's `Refuse` is a diagnostic and the next stage's effect runs | guards as ops whose apply error halts | the `Require` shape of the view (§3.2) |
+| **F2** — Program performs nothing of an op: `ApplyOps` folds `Apply` while planning and the perform phase runs staged host calls only | a two-phase discipline of its own, performing the plan after `Handler.run` commits | `OpPerformance.Performed`, under which `ApplyOps` is a staged arm (§3.9) |
+| **W3 / W4** — no member projects an op's reach, and the reach-describing member sits on client effects | its own envelope walk and policy over `'Op` | `OpWitness.Reach`, read by the argument policy and the demanded document (§3.5) |
+| **W5** — the op channel's rejection is `string` | a canonical-JSON crossing for its typed refusal | stays `string`; the crossing is the documented answer (§3.5) |
+
+Each of the three is one witness member or one view shape, which is the size D4 predicted a real
+assumption would be. What D4 did not predict is which direction the drift ran: not an assumption of
+the UI tier baked into the contract, but a CAPABILITY the UI tier never needed and so never asked
+for, which a second domain had to grow beside the core. A second demanded projection and a second
+two-phase discipline, parallel to Program's, is the shape D4 warned about with the arrow reversed,
+and it is why the findings landed here rather than staying in that domain.
+
+The in-repo witness that stands for that domain — a verb over an in-memory file map, with an
+adversary per finding — is `tests/Fuaran.Program.Tests/VerbDomain.fs`, in the project that references
+no UI package. That domain's own differential and adversaries are the regression test for whether its
+parallel machinery can now be deleted; re-running it is that domain's act, not this repository's.
 
 ---
 
@@ -504,3 +599,19 @@ projection and the signed effect envelope. They are pinned the same way. The dem
 host-channel spellings (`Query`, `Call`, `Invoke`, `Notify`, `AiTool`) come from the adapter's
 `LeafDeclaration`s and from the core's `Call` channel constant, and the existing projection tests pin
 them.
+
+**Phase 1967 moved the first of those two, deliberately, and not the specification.** The demanded
+document is at version 5: its server tier carries `reach` — what the handlers' ops reach, read
+through the op witness — present and empty where the ops name nothing, on the argument versions 2, 3
+and 4 each made. The UI documents whose bytes moved are exactly those of a handler whose ops address
+a node, and the new bytes are pinned (`ServerDemandedTests`, `VerbWitnessTests`); the client-only
+document is unchanged but for the version number. Because a signed envelope is verified by
+recomputing the document, every envelope signed under version 4 now reports `Unreadable` drift naming
+the version; the repository's own K7 pin was re-signed over the same tree, its tree-hash half still
+the pre-cut value, and the test says so. Nothing in the program wire specification moved: the guard is
+a shape of the action algebra, which the specification references and does not spell; the op
+performer changes no wire; and the codec families and the twelve driver scenarios pass byte for byte.
+The one sentence of the specification a registered op performer reads past — §6.2's "only `HostCall`
+is staged" — describes the in-memory placement every conformant host had and every UI host still has.
+Carrying the performer case into the normative text would be a specification act across all five
+artefacts, and it is not taken here; it is recorded as the specification's own follow-on.

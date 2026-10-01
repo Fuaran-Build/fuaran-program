@@ -137,10 +137,11 @@ would be the same defect the paragraph above rules out for a local run.
 
 ### Mechanised: four of the interpreter's laws are theorems
 
-The four laws the bounded interpreter's own header states — that its fold is total over the closed
-`Action` union, that it never invokes a closure an action carries, that `Chain` is its homomorphism,
-and that host-reserved `State` keys are not writable from a tree — are **proved**, in an F\* model of
-the fold under a pinned prover with no admits. The extracted model is then run beside the shipped
+The four laws the bounded interpreter's own header states — that its fold is total over the view's
+five shapes (and over the closed `Action` union at the UI witness), that it never invokes a closure
+an action carries, that `Sequence` is its homomorphism — short-circuiting at a guard that halts, and
+unconditionally where no guard can — and that host-reserved `State` keys are not writable from a
+tree — are **proved**, in an F\* model of the fold under a pinned prover with no admits. The extracted model is then run beside the shipped
 interpreter over the conformance corpus's driver-semantics family, so the theorem is a claim about
 the code rather than about a document.
 

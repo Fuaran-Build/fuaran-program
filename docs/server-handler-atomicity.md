@@ -69,6 +69,11 @@ exists to avoid.
 > The residual the decision does **not** abolish — a performer failing in the perform phase leaves its
 > predecessors run — is reported rather than absorbed: `Committed = false` with `Performed` naming the
 > calls that did happen, under a `PerformFailed` diagnostic distinct from the planning-phase `Failed`.
+>
+> **Amended by [D19](../DECISIONS.md) (2026-10-01).** "Only `HostCall` stages" describes the
+> in-memory placement. A placement that registers an op performer (`OpPerformance.Performed`) stages
+> `ApplyOps` as well: its ops are applied in memory while planning and performed after the plan
+> commits, one staged call per op, under the same law and the same residual report.
 
 *Concurrency is not addressed at all.* One session, one event, one handler. Two sessions running
 handlers against the same domain tree is a question about where durable state actually lives, which

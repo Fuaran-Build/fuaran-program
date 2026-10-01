@@ -60,7 +60,7 @@ vocabularies interleave, which is what a handler is for.
 | Arm | What it does |
 |---|---|
 | `RunQuery` | evaluate a declarative pipeline over a source; the table lands in a query slot |
-| `ApplyOps` | **the only domain-state mutation** — a `TreeOp` sequence through the apply engine |
+| `ApplyOps` | **the only domain-state mutation** — an op sequence through the witness's apply engine; under a registered op performer (`OpPerformance.Performed`, 0.7.0) the apply is a PLAN and each op is staged and performed after the plan commits |
 | `HostCall` | the named, registered, policy-gated escape to computation the total algebra cannot express |
 | `EmitPatch` | ops shipped to a connected client, touching nothing durable |
 | `Notify` | a host-channel message |
@@ -126,6 +126,19 @@ the staged calls in declaration order. So a domain failure happens before anythi
 price is stated: a later stage cannot read an earlier host call's result. The residual staging does
 not abolish — a performer failing in the perform phase leaves its predecessors run — is reported, as
 `Committed = false` with `Performed` naming exactly the calls that happened.
+
+Since 0.7.0 (`DECISIONS.md` D19) two more things halt or stage. A `Compute` stage whose action meets
+the shared fold's `Require` shape and does not hold comes back `Halted`, and the handler treats it as
+an effect that failed: every later stage is skipped, nothing reaches the perform phase, and the
+outcome rolls back with the fold's own refusal saying why. And a placement whose ops reach the world
+registers an op performer — `Handler.runWith … (OpPerformance.performedBy perform) …`, or
+`ServerServices.OpPerformance` for the session loop — under which `ApplyOps` is a staged arm too: its
+ops are applied in memory while planning and performed after the plan commits, one staged call per op
+in plan order beside the host calls, with `Performed` naming `ApplyOps` once per op that ran and a
+part-way failure reported as the prefix that did. `Handler.run` is `runWith` in memory, the UI tier's
+placement and the default. The argument policy reads what an op REACHES through the op witness's
+`Reach`, so an `AllowList` or a `Ceiling` on `ApplyOps` binds, and the demanded document carries the
+reach beside the capability.
 
 The question the note left open — **idempotency on replay** — is answered by the second interpreter
 below, and answered with its boundary attached rather than in general. The note itself

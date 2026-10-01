@@ -149,7 +149,9 @@ why, is [`DECISIONS.md`](../../DECISIONS.md) **D10**.
 ## Design commitments
 
 The algebra's shape — a pipeline core, with richer control structure expressed as vocabulary atop it
-rather than as a second evaluator — is [`DECISIONS.md`](../../DECISIONS.md) **D1**. The closed
+rather than as a second evaluator — is [`DECISIONS.md`](../../DECISIONS.md) **D1**. The core's view
+of an action has five shapes: `Sequence`, `Assign`, `Call`, `Require` — the halting guard a second
+domain needed and the UI tier never produces (**D19**) — and `Leaf`. The closed
 per-placement effect vocabulary and its registered host-performer seam is **D3**. The UI-typed first
 instantiation, and the dependency direction that follows from it, are **D4** and **D5**. This README
 cites those decisions rather than restating them; `DECISIONS.md` is authoritative.

@@ -15,14 +15,17 @@ with the leg that checks them and the seam that ties each model back to the code
 
 - **[The bounded fold](#the-fold-theorem)** — `BoundedFold.fst`, four theorems (Phase 1715),
   restated over the generic tier's ACTION VIEW and re-proved there before the generic core is
-  written (Phase 1898; `DECISIONS.md` D14 and D18). Bounded CODE: a generated tree running through
-  this fold has no arbitrary-code surface.
+  written (Phase 1898; `DECISIONS.md` D14 and D18), and restated again over the view's fifth shape —
+  the halting guard — before the port that added it (Phase 1967; D19), with a fifth theorem saying
+  only a guard halts. Bounded CODE: a generated tree running through this fold has no arbitrary-code
+  surface.
 - **[The interaction budget](#the-budget-theorem)** — `Budget.fst`, five theorems (Phase 1716).
   Bounded COST: a generated tree cannot be priced cheaper than it is, and a breach changes
   nothing.
-- **[Two-phase staging](#the-staging-theorem)** — `Staging.fst`, four theorems (Phase 1717).
-  Bounded RESIDUE: what a handler that reaches outside can leave behind is exactly the prefix of
-  host calls that ran.
+- **[Two-phase staging](#the-staging-theorem)** — `Staging.fst`, four theorems (Phase 1717),
+  re-proved over a staged list that holds ops as well as host calls since a placement can register
+  an op performer (Phase 1967). Bounded RESIDUE: what a handler that reaches outside can leave
+  behind is exactly the prefix of staged calls that ran.
 - **[The effect gate](#the-effect-gate-theorem)** — `EffectGate.fst`, three theorems (Phase 1759),
   proved over the staging model. A CONSTRAINED boundary: policy before the effect, contract on
   return, against an arbitrary performer.
@@ -43,10 +46,13 @@ generic tier, the `DECISIONS.md` D18 contract member — above every definition,
 it has two layers in one file.
 
 **The generic tier** is a model of the fold the generic core runs (`BoundedActions.run witness`,
-which Phase 1896 wrote against this model — D14's "model first"): one `match` over the four shapes
-of D18's `ActionView` — `Sequence`, `Assign`, `Call`, `Leaf` — parameterised by a WITNESS record
-holding the fold-read members of `ProgramWitness` (`View`, `Lower`, `Describe`, `Resolve`,
-`IsReserved`, `ReservedPrefix`). Its four theorems are over the view and quantified over every
+which Phase 1896 wrote against this model — D14's "model first"): one `match` over the five shapes
+of D18's `ActionView` — `Sequence`, `Assign`, `Call`, `Require` (the halting guard, Phase 1967),
+`Leaf` — parameterised by a WITNESS record holding the fold-read members of `ProgramWitness`
+(`View`, `Lower`, `Describe`, `Resolve`, `IsReserved`, `ReservedPrefix`) plus the core's own truth
+test as an arrow (`w_is_true`, because the model's value type is abstract). Its four theorems are
+over the view and quantified over every witness, and a fifth — `fold_no_require_no_halt` — says a
+view with no guard never halts, which is what keeps every pre-1967 statement unchanged at the UI
 witness. **The UI witness** is today's fourteen-arm `Action` union seen through that view — `ui_view`
 is the adapter's total `View`, `ui_lower` its `Lower` — and `run` is the generic fold at that witness
 with the exact signature Phase 1715 gave it. Phase 1715's five theorems are re-proved there, each as a
@@ -67,6 +73,7 @@ warned about.
 | `w_describe` | `ActionWitness.Describe` | a total arrow; the diagnostics carry its answer verbatim | the no-closure half, through `same_shape` |
 | `w_resolve` | `ExprWitness.Resolve` | a total pure arrow, the same answer for the same store; nothing depends on WHAT it answers | `fold_total`, `fold_reserved_untouched` |
 | `w_is_reserved`, `w_reserved_prefix` | `StoreWitness.IsReserved` / `ReservedPrefix` | a total predicate and a constant (K5); `fold_reserved_untouched` is quantified over every such predicate | `fold_total`, `fold_reserved_untouched` |
+| `w_is_true` | the core's own `jv = JBool true` — NOT a witness member in F# | a total predicate; an arrow here only because the model's value type is abstract, exactly as its store is concrete where the core's is abstract. Nothing proved depends on what it answers. The differential host wires it to that comparison; the UI witness fills it with the fail-closed constant, and `ui_view_no_require` proves it is never reached there | `fold_total` (the guard clause), `fold_no_require_no_halt` |
 | `answer` | `HandlerArm.Answer` | what a call MEANS at this placement; opaque, and its store, effects and diagnostics are its own | `fold_total` names the answered case and excludes it; `fold_reserved_untouched` carries `arm_preserves_reserved` as a hypothesis |
 
 **The store is modelled concretely, on purpose.** D18 §3.4 makes the store abstract behind
@@ -78,7 +85,7 @@ the differential host's projection of the domain store onto that channel is wher
 
 ### 1. `fold_total` / `run_total` — the fold is defined on every shape, and one step is characterised
 
-The view has four shapes and the fold names all four, with no wildcard arm, no partial match and no
+The view has five shapes and the fold names all five, with no wildcard arm, no partial match and no
 throw; termination is structural on the view, carried by the `decreases` clause rather than by a
 depth counter. In F\* that much is the `Tot` effect, and `handled_view` states it a second time by
 naming every constructor again — so a fifth shape fails to compile here exactly as it fails to
@@ -88,10 +95,11 @@ into the adapter's `View`, checked here by the same means.
 
 The lemma adds the part typing does not give. For one step that is neither `Sequence` nor a call
 the placement ANSWERED: the placement's own accumulation comes back untouched, the store is either
-unchanged or written at exactly one key the reserved predicate rejects, and at most one effect and
-at most one diagnostic are emitted. For a leaf that is K3 made a theorem: whatever `Lower` answers,
-this is the most it can do. `run_total` is `fold_total` at the UI witness, with Phase 1715's
-statement word for word.
+unchanged or written at exactly one key the reserved predicate rejects, at most one effect and at
+most one diagnostic are emitted, and ONLY A GUARD HALTS — a `Require` step writes nothing and emits
+nothing, and no other shape's step can come back halted (Phase 1967). For a leaf that is K3 made a
+theorem: whatever `Lower` answers, this is the most it can do. `run_total` is `fold_total` at the UI
+witness, with Phase 1715's statement word for word.
 
 The two exclusions are the interesting part of the statement rather than fine print. Composition is
 excluded because it is characterised by law 3 instead. An answered call is excluded because its
@@ -128,17 +136,21 @@ differential host's job, not the prover's — the go-red case below is what says
 
 ### 3. `sequence_homomorphism` / `chain_homomorphism` — `Sequence` is a composition, not a fifth special case
 
-Running the concatenation of two operation lists equals running the first and then the second
-against the store the first left, with the effect lists and the diagnostic lists concatenated in
-order and the placement threaded through — now over `VSequence`, for every witness.
+Running the concatenation of two operation lists equals running the first and — if it did not halt
+— then the second against the store the first left, with the effect lists and the diagnostic lists
+concatenated in order and the placement threaded through; a first half that halted is the whole
+answer, and the second half never runs. Over `VSequence`, for every witness.
 
 This is `DECISIONS.md` D7's splice property — a nested call sees the writes before it and is seen by
 the writes after it — stated as an equation instead of as a sentence. It is why an answer is folded
 IN PLACE rather than reported for later, and it is the law that would break first if the `Sequence`
-arm ever stopped threading the store. `sequence_action_homomorphism` is the same statement at the
-view level; `chain_homomorphism` is the action-level statement at the UI witness (Phase 1715's
-`chain_action_homomorphism`, renamed to the headline), through `ui_view_list_app` — viewing a
-concatenation is concatenating the views.
+arm ever stopped threading the store. The halting clause is the one thing Phase 1967's guard changes
+in the ladder (D19): a guard is control structure, so it is the evaluator's, and this is the law it
+touches. `sequence_action_homomorphism` is the same statement at the view level; `chain_homomorphism`
+is the action-level statement at the UI witness (Phase 1715's `chain_action_homomorphism`, renamed to
+the headline), through `ui_view_list_app` — viewing a concatenation is concatenating the views — and
+it keeps its UNCONDITIONAL form, because `ui_view_no_require` says no UI arm views as a guard and
+`fold_no_require_no_halt` says such a view never halts.
 
 ### 4. `fold_reserved_untouched` / `reserved_untouched` — reserved keys are not writable from a tree
 
@@ -152,6 +164,20 @@ code plus a closed host namespace. It carries one side condition, about the plac
 discharges it — under EVERY predicate — for the placements that run no handlers, which is what keeps
 the theorem from being a conditional nobody has met. `reserved_untouched` is the UI corollary, at
 the host's `isHostReserved`.
+
+### 5. `fold_no_require_no_halt` / `ui_never_halts` — only a guard halts (Phase 1967)
+
+A view with no `Require` in it, at its root or inside a sequence at any depth, folds to an outcome
+that is not halted, under every witness and every placement arm. With `fold_total`'s clause that a
+halted step is a `Require` step, this is the whole account of halting: a guard, and nothing else. An
+answered call never halts either — `handler_answer` carries no halt, by its type, because a handler
+is its own atomicity unit (D8) and one that failed rolled ITSELF back while the fold carries on.
+
+`ui_view_no_require` proves the UI witness's `View` produces no `VRequire` at any depth, and
+`ui_never_halts` is the corollary: the UI tier never halts, so a leaf's refusal is a diagnostic and
+the chain carries on, exactly as before the shape existed. It is this lemma, not a convention, that
+lets `run_total`, `run_no_closure`, `chain_homomorphism` and `reserved_untouched` keep their
+pre-1967 statements word for word.
 
 ### Phase 1715's lemmas, one by one
 
@@ -172,7 +198,9 @@ under a new name with the old one kept as its corollary.
 | `inert_preserves_reserved` | kept, now quantified over every predicate |
 | `handled`, `answered`, `at_most_one`, `same_but_closures` (+ `_opt`, `_list`), `write_preserves_other`, `app_assoc`, `app_nil` | kept unchanged |
 
-Retired: none.
+Retired: none. Added by Phase 1967: `fold_no_require_no_halt` (+ `_list`), `has_require`,
+`composed`, `ui_view_no_require` (+ `_list`), `ui_never_halts`; and `fold_total` gained its guard
+clause, `sequence_homomorphism` its halting clause.
 
 ## What the model does NOT own
 
@@ -234,6 +262,8 @@ Over the generic tier's view, for every witness (Phase 1898):
    handler-free placements.
 5. **No closure invocation, for any witness that meets its obligation** — `run_action_blind`.
    **Conditional** on `blind_to`: the witness's `View` sends related actions to same-shaped views.
+6. **Only a guard halts** — `fold_no_require_no_halt`, with `fold_total`'s guard clause (Phase 1967).
+   Unconditional.
 
 At the UI witness (Phase 1715's five, each a corollary of the generic theorem above it):
 
@@ -243,6 +273,8 @@ At the UI witness (Phase 1715's five, each a corollary of the generic theorem ab
 8. **`Chain` is the fold's homomorphism** — `chain_homomorphism`.
 9. **Host-reserved keys untouched** — `reserved_untouched`, conditional on the same seam
    hypothesis as 4, discharged the same way.
+10. **The UI tier never halts** — `ui_never_halts`, through `ui_view_no_require` (Phase 1967).
+    Unconditional; it is what keeps 6–9 at their pre-1967 statements.
 
 **The conditional theorems, named:** `fold_reserved_untouched` and `reserved_untouched` (on the
 placement seam); `run_action_blind` (on the witness's blindness). Every other theorem is quantified
@@ -267,6 +299,9 @@ The extracted model agrees with production over two corpora and one seam:
   arms that have one (a reserved key, an unresolved `valueFrom`, an unsafe route, an
   unresolved route, an unwritten-`State` clipboard payload, a missing i18n key, a call
   declaring its own result target);
+- **the toy witness's corpus**, which since Phase 1967 names every way a guard halts — false,
+  non-boolean, unresolved, errored — at the top level and inside a sequence, and compares the
+  halt flag beside the store, the effects and the diagnostics;
 - **an answering placement**, including an answered call spliced between two other operations
   inside a chain, so the seam is exercised rather than assumed.
 
@@ -484,6 +519,15 @@ The subject is the plan phase (`runStage` / `runEffect` — the five effect arms
 constructors, modelled clause for clause with the PERFORMER abstract. Four headline lemmas and
 one supporting clause.
 
+**Since Phase 1967 the staged list may hold OPS.** A placement that registers an op performer
+(`OpPerformance.Performed`; the model's `r_op_perform`) makes `ApplyOps` a staged arm: its ops are
+applied in memory while planning, as always, and each is staged as a call of its own — the
+performer closed over the op, no landing slot — and performed in the perform phase in plan order
+beside the host calls. Nothing in the perform phase changed for it, which is why every theorem
+below is stated over the staged list as before and re-proves unchanged; `plan_pure` gained the one
+clause that matters, that the plan phase reads only WHETHER a performer is registered and what it
+stages, never what it answers. Without one (`ONone`, the UI tier) the arm is exactly what it was.
+
 ### 1. `plan_pure` — nothing external runs in the plan phase
 
 The plan phase's output is a function of the entry state, the program, the witness and the
@@ -538,7 +582,8 @@ records of arrows, and both are the assumed rung:
   another is one opaque and the clause the handler owns is halt-or-land; the evaluator's error
   reaches the model already reduced to its discriminator, as `Handler.evalErrorKind` reduces it;
 - **the registry** — the gate, the argument policy (with its defect already described), the
-  lookup and the performer's behaviour.
+  lookup, the performer's behaviour, and — since Phase 1967 — the op performer's registration and
+  what it stages for an op (`r_op_perform`), the token and argument the perform phase will apply.
 
 The denial sink (`OnDenied`) is a unit-returning observer and is not modelled.
 
@@ -562,7 +607,10 @@ drive — `HandlerLoopTests`' every-arm handler, its ordered handler, its landin
 three-call half-performer, its plan-then-halt, its reads-too-early and its refused gate;
 `DurableInterpreterTests`' refresh handler and its two-call handler — plus the plan-halt arms
 those cases do not reach (an unregistered performer, a refused argument policy, a reserved
-landing slot, an apply refusal, an unresolvable query). Each case runs with a SCRIPTED
+landing slot, an apply refusal, an unresolvable query), and since Phase 1967 the OP-PERFORMER
+cases: one handler run in memory and again under a registered op performer, two ops in one stage
+beside a landing host call, a plan that halts after ops were staged, and an op sequence the policy
+refuses — each at every failure position, counted across ops and host calls together. Each case runs with a SCRIPTED
 performer that counts its invocations and refuses at one position, at every position of the
 staged list and once with no refusal at all. Three things are compared: the two outcomes
 (projected as the durable parity leg projects them), the two performers' logs of what they

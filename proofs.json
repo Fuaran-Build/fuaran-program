@@ -26,7 +26,7 @@
   "kind": "proofs",
   "version": 1,
   "subject": "Fuaran-Program",
-  "$scope": "the proved models under proofs/: the shared bounded fold — BoundedActions.runBoundedActionWith, the one interpreter every placement runs, over the closed Action union, its State store, its closure-free client effects and its diagnostics (Phase 1715), restated over the generic tier's ActionView and the fold-read members of the ProgramWitness contract (DECISIONS.md D18) and re-proved there before the generic core is written, with the fourteen-arm union kept as the UI witness seen through the view (Phase 1898); and the interaction budget — Budget.satAdd/satMul, Budget.actionCascadeCost, Budget.treeCost and the G2 stage of BoundedDriver.step that refuses on them (Phase 1716); and two-phase staging — Handler.run's plan phase, phase boundary and perform phase with the performer abstract, DECISIONS.md D8's law that the residual of a failed handler is exactly the prefix of staged host calls that ran (Phase 1717). and the effect gate — ServerEffectRegistry.Gate consulted before any performer, the policy an operator declares over the trace of performed effects, and the return contract ServerEffectRegistry.registerChecked composes with a performer, proved over the staging model with the performer abstract (Phase 1759). Bounded code and bounded cost, the two halves of running an untrusted generated tree on shared infrastructure; bounded residue, what a handler that reaches outside can leave behind; and a constrained boundary, what reaches a performer and what it can hand back.",
+  "$scope": "the proved models under proofs/: the shared bounded fold — BoundedActions.runBoundedActionWith, the one interpreter every placement runs, over the closed Action union, its State store, its closure-free client effects and its diagnostics (Phase 1715), restated over the generic tier's ActionView and the fold-read members of the ProgramWitness contract (DECISIONS.md D18) and re-proved there before the generic core is written, with the fourteen-arm union kept as the UI witness seen through the view (Phase 1898), and restated over the view's fifth shape — the halting guard Require the second witness needed — before the port that added it, with a fifth theorem that only a guard halts and the UI tier never does (Phase 1967); and the interaction budget — Budget.satAdd/satMul, Budget.actionCascadeCost, Budget.treeCost and the G2 stage of BoundedDriver.step that refuses on them (Phase 1716); and two-phase staging — Handler.run's plan phase, phase boundary and perform phase with the performer abstract, DECISIONS.md D8's law that the residual of a failed handler is exactly the prefix of staged calls that ran (Phase 1717), over a staged list that since Phase 1967 holds ops as well as host calls under a registered op performer. and the effect gate — ServerEffectRegistry.Gate consulted before any performer, the policy an operator declares over the trace of performed effects, and the return contract ServerEffectRegistry.registerChecked composes with a performer, proved over the staging model with the performer abstract (Phase 1759). Bounded code and bounded cost, the two halves of running an untrusted generated tree on shared infrastructure; bounded residue, what a handler that reaches outside can leave behind; and a constrained boundary, what reaches a performer and what it can hand back.",
   "claims": [
     {
       "id": "fold-totality",
@@ -54,7 +54,7 @@
       "id": "view-fold-totality",
       "level": "proved",
       "phase": "Phase 1898",
-      "claim": "The generic fold is defined on every shape of the action view — Sequence, Assign, Call, Leaf — with no wildcard, no partial match and no throw, for every witness; and one step that is neither Sequence nor a call the placement answered is characterised structurally: the placement accumulation is untouched, the store is either unchanged or written at exactly one key the witness's reserved predicate rejects, and at most one effect and at most one diagnostic are emitted. For a leaf that is the kept assumption K3 made a theorem: whatever the witness's Lower answers, this is the most it can do.",
+      "claim": "The generic fold is defined on every shape of the action view — Sequence, Assign, Call, Require, Leaf — with no wildcard, no partial match and no throw, for every witness; and one step that is neither Sequence nor a call the placement answered is characterised structurally: the placement accumulation is untouched, the store is either unchanged or written at exactly one key the witness's reserved predicate rejects, at most one effect and at most one diagnostic are emitted, and ONLY A GUARD HALTS — a Require step writes nothing and emits nothing, and no other shape's step comes back halted. For a leaf that is the kept assumption K3 made a theorem: whatever the witness's Lower answers, this is the most it can do.",
       "evidence": {
         "theorem": "fold_total",
         "model": "proofs/BoundedFold.fst",
@@ -68,7 +68,7 @@
           "handled_view",
           "answered_view"
         ],
-        "note": "unconditional. Termination is structural on the view, carried by the decreases clause on `fold`/`fold_many`; the view is taken to exhaustion (a tree), so the obligation that a witness's View unfolds finitely is carried by the TYPE of the witness's `w_view` field — a Tot arrow — rather than by a fuel; `ui_view` discharges it for the UI witness by being accepted as Tot"
+        "note": "unconditional. Termination is structural on the view, carried by the decreases clause on `fold`/`fold_many`; the view is taken to exhaustion (a tree), so the obligation that a witness's View unfolds finitely is carried by the TYPE of the witness's `w_view` field — a Tot arrow — rather than by a fuel; `ui_view` discharges it for the UI witness by being accepted as Tot; since Phase 1967 the view has a fifth shape, the halting guard `VRequire`, named by `handled_view` like the other four, and the lemma carries the guard clause — the model was restated and re-proved BEFORE the F# port (D14, D19)"
       }
     },
     {
@@ -163,26 +163,67 @@
         "prover": "proofs/fstar-pin.json",
         "supporting": [
           "sequence_homomorphism",
-          "ui_view_list_app"
+          "ui_view_list_app",
+          "ui_view_no_require",
+          "fold_no_require_no_halt"
         ],
-        "note": "since Phase 1898 the action-level statement (Phase 1715's `chain_action_homomorphism`, now under the headline name) — `sequence_homomorphism` at the UI witness, through `ui_view_list_app`: viewing a concatenation is concatenating the views"
+        "note": "since Phase 1898 the action-level statement (Phase 1715's `chain_action_homomorphism`, now under the headline name) — `sequence_homomorphism` at the UI witness, through `ui_view_list_app`: viewing a concatenation is concatenating the views; since Phase 1967 the statement is unchanged and unconditional because `ui_view_no_require` discharges the generic law's halting clause — no UI arm views as a guard"
       }
     },
     {
       "id": "view-sequence-homomorphism",
       "level": "proved",
       "phase": "Phase 1898",
-      "claim": "Over the view, for every witness: running the concatenation of two operation lists equals running the first and then the second against the store the first left, with the effect lists and the diagnostic lists concatenated in order and the placement threaded through. DECISIONS.md D7's splice property as an equation, now the generic tier's — what makes Sequence a composition rather than a fifth special case.",
+      "claim": "Over the view, for every witness: running the concatenation of two operation lists equals running the first and — if it did not halt — then the second against the store the first left, with the effect lists and the diagnostic lists concatenated in order and the placement threaded through; a first half that halted is the whole answer and the second half never runs. DECISIONS.md D7's splice property as an equation, now the generic tier's, with the halting clause Phase 1967's guard adds (D19) — what makes Sequence a composition rather than a special case.",
       "evidence": {
         "theorem": "sequence_homomorphism",
         "model": "proofs/BoundedFold.fst",
         "prover": "proofs/fstar-pin.json",
         "supporting": [
           "sequence_action_homomorphism",
+          "composed",
           "app_assoc",
           "app_nil"
         ],
-        "note": "unconditional"
+        "note": "unconditional; the halting clause is vacuous for every view without a guard (`fold_no_require_no_halt`), which is how `chain_homomorphism` at the UI witness keeps its pre-1967 unconditional form"
+      }
+    },
+    {
+      "id": "view-only-guard-halts",
+      "level": "proved",
+      "phase": "Phase 1967",
+      "claim": "A view with no Require shape in it — at its root or inside a sequence at any depth — folds to an outcome that is not halted, under every witness and every placement arm; with fold_total's clause that a halted step is a Require step, a guard is the only thing that halts. An answered call never halts: the placement's answer carries no halt, by its type, because a handler is its own atomicity unit (D8).",
+      "evidence": {
+        "theorem": "fold_no_require_no_halt",
+        "model": "proofs/BoundedFold.fst",
+        "prover": "proofs/fstar-pin.json",
+        "supporting": [
+          "fold_no_require_no_halt_list",
+          "has_require",
+          "has_require_list"
+        ],
+        "definitions": [
+          "halted",
+          "bounded_outcome"
+        ],
+        "note": "unconditional. The fold does not roll back on a halt — the outcome's store is the store as of the halt — and the placement that rolls back is the handler (D8); `Staging.fst`'s plan phase treats a halted Compute stage as a halt of the handler"
+      }
+    },
+    {
+      "id": "ui-never-halts",
+      "level": "proved",
+      "phase": "Phase 1967",
+      "claim": "The UI tier never halts: no arm of the fourteen views as a guard, so every outcome the fold produces at the UI witness has Halted = false, and a leaf's refusal is a diagnostic the chain carries on past, exactly as before Phase 1967. This is what keeps run_total, run_no_closure, chain_homomorphism and reserved_untouched at their pre-1967 statements, word for word.",
+      "evidence": {
+        "theorem": "ui_never_halts",
+        "model": "proofs/BoundedFold.fst",
+        "prover": "proofs/fstar-pin.json",
+        "supporting": [
+          "ui_view_no_require",
+          "ui_view_no_require_list",
+          "fold_no_require_no_halt"
+        ],
+        "note": "unconditional; `ui_witness` fills `w_is_true` with the fail-closed constant, and this theorem is why that arrow is never read"
       }
     },
     {
@@ -285,7 +326,7 @@
           "GO RED: a fold that invokes a carried closure loses the comparison"
         ],
         "runner": "proofs/check.ps1 step 6, which asserts a CASE COUNT because a filter matching nothing reports success",
-        "note": "production at the UI witness is the UI adapter package, src/Fuaran.Program.UI (the UI witness and the aliases over the generic core), promoted there from a non-packable project by Phase 1897; since Phase 1896 the same list also compares the extraction's generic run_action with the core's BoundedActions.run at a non-UI test witness"
+        "note": "production at the UI witness is the UI adapter package, src/Fuaran.Program.UI (the UI witness and the aliases over the generic core), promoted there from a non-packable project by Phase 1897; since Phase 1896 the same list also compares the extraction's generic run_action with the core's BoundedActions.run at a non-UI test witness; since Phase 1967 the toy witness's corpus names every way a guard halts and the comparison includes the halt flag"
       }
     },
     {
@@ -553,7 +594,7 @@
       "id": "staging-plan-pure",
       "level": "proved",
       "phase": "Phase 1717",
-      "claim": "Nothing external runs in the plan phase. The plan phase's output — the store, the staged list, the audit trail, the patches, the notifications, the client effects and the diagnostics — is a function of the entry state, the program, the witness and the registry's gate, argument policy and performer lookup ALONE: under every behaviour the performers could have, it is EQUAL. And the record of what ran outside is untouched by planning.",
+      "claim": "Nothing external runs in the plan phase. The plan phase's output — the store, the staged list, the audit trail, the patches, the notifications, the client effects and the diagnostics — is a function of the entry state, the program, the witness and the registry's gate, argument policy and performer lookup ALONE: under every behaviour the performers could have, it is EQUAL. And the record of what ran outside is untouched by planning. Since Phase 1967 the plan phase also reads only WHETHER an op performer is registered and what it stages for an op, never what it answers.",
       "evidence": {
         "theorem": "plan_pure",
         "model": "proofs/Staging.fst",
@@ -571,7 +612,7 @@
           "halt",
           "deny"
         ],
-        "note": "statable because the model splits production's HostFunctions map — name to closure — into a LOOKUP (name to an opaque performer token, read while planning) and a BEHAVIOUR (token and argument to a result, read only while performing); the theorem replaces the behaviour by an arbitrary other and shows the plan equal. In the differential host the token is production's own closure and the behaviour is application, so the split loses nothing"
+        "note": "statable because the model splits production's HostFunctions map — name to closure — into a LOOKUP (name to an opaque performer token, read while planning) and a BEHAVIOUR (token and argument to a result, read only while performing); the theorem replaces the behaviour by an arbitrary other and shows the plan equal. In the differential host the token is production's own closure and the behaviour is application, so the split loses nothing; since Phase 1967 the staged list may hold ops as well as host calls — a placement that registers an op performer (`r_op_perform`; `OpPerformance.Performed` in F#) makes ApplyOps a staged arm, one staged call per op in plan order — and the theorem is stated over that list unchanged"
       }
     },
     {
@@ -596,7 +637,7 @@
           "take",
           "caps"
         ],
-        "note": "plan_halt_performs_nothing is the plan-phase half of the same clause: a handler that halted while planning reports nothing performed, under every performer at once, because nothing reached the perform phase"
+        "note": "plan_halt_performs_nothing is the plan-phase half of the same clause: a handler that halted while planning reports nothing performed, under every performer at once, because nothing reached the perform phase; since Phase 1967 the staged list may hold ops as well as host calls — a placement that registers an op performer (`r_op_perform`; `OpPerformance.Performed` in F#) makes ApplyOps a staged arm, one staged call per op in plan order — and the theorem is stated over that list unchanged"
       }
     },
     {
@@ -622,7 +663,7 @@
           "rev",
           "app"
         ],
-        "note": "perform_spec is the inductive core — the whole behaviour of the perform phase stated once: it halts exactly when the performer refused before the end of the list, records as run the prefix it answered in declaration order appended to what was recorded before, and touches nothing else the outcome reads"
+        "note": "perform_spec is the inductive core — the whole behaviour of the perform phase stated once: it halts exactly when the performer refused before the end of the list, records as run the prefix it answered in declaration order appended to what was recorded before, and touches nothing else the outcome reads; since Phase 1967 the staged list may hold ops as well as host calls — a placement that registers an op performer (`r_op_perform`; `OpPerformance.Performed` in F#) makes ApplyOps a staged arm, one staged call per op in plan order — and the theorem is stated over that list unchanged"
       }
     },
     {
@@ -644,7 +685,8 @@
           "run",
           "perform",
           "all_ok"
-        ]
+        ],
+        "note": "since Phase 1967 the staged list may hold ops as well as host calls — a placement that registers an op performer (`r_op_perform`; `OpPerformance.Performed` in F#) makes ApplyOps a staged arm, one staged call per op in plan order — and the theorem is stated over that list unchanged"
       }
     },
     {
@@ -664,7 +706,7 @@
           "GO RED: a performer that reports success for a call it did not run loses the comparison"
         ],
         "runner": "proofs/check.ps1 step 6, which asserts a CASE COUNT because a filter matching nothing reports success",
-        "note": "the host is in Fuaran.Program.Server.Tests, beside the two suites whose private cases it re-declares, and check.ps1 names the host project per module. The go-red case commits a performer that answers Ok for a call it did not run, on both sides: production and the model still agree — both believed it — and the check asserted to catch it is the claim against the performer's log, which is the ground truth every green case rests on"
+        "note": "the host is in Fuaran.Program.Server.Tests, beside the two suites whose private cases it re-declares, and check.ps1 names the host project per module. The go-red case commits a performer that answers Ok for a call it did not run, on both sides: production and the model still agree — both believed it — and the check asserted to catch it is the claim against the performer's log, which is the ground truth every green case rests on; since Phase 1967 the corpus includes the op-performer cases — one handler in memory and under a registered performer, two ops in one stage beside a landing host call, a plan that halts after ops were staged, an op sequence the policy refuses — at every failure position counted across ops and host calls together, with the scripted performer logging capabilities for both"
       }
     },
     {

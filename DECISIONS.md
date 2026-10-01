@@ -69,6 +69,14 @@ UI-type dependency altogether.
 > **Amended by D18 (2026-09-27) — the timing clause.** "cut only when a second domain instantiation
 > materialises" is superseded: the cut is taken now, as a design decision. Everything else in this
 > entry stands, including its warning, which D18 answers by naming each assumption it keeps.
+>
+> **Standing note, 2026-10-01 (Phase 1967).** A second domain instantiation now EXISTS, privately: a
+> domain whose handler is a store-mutating verb, run under the unmodified 0.6.0 core. The contract
+> admitted it without change and the run was correct, which is the half of this entry's warning that
+> did not come true. The other half did: 25 of the contract's 31 members were vacuous or unfillable
+> at those types, and three gaps forced the domain to build machinery beside Program that belongs in
+> it — no member projected an op's reach, no shape of the view halted, and Program performed nothing
+> of an op. D19 is the answer to each; `docs/generic-tier.md` §3.10 is the finding written out.
 
 The domain is chartered now, as a design decision — its identity, name, wire-family destiny, and
 package surface are sovereign from birth. Its **first instantiation is UI-typed**: the bounded
@@ -739,3 +747,98 @@ witness. Phase 1897 builds the adapter wherever this clause lands.
   the twelve driver scenarios passing through the adapter's loop. **Any difference in a fixture byte
   falsifies this clause**, and it means the refactor changed behaviour, not only where the types
   live.
+
+## D19 — The second witness's findings land IN Program: a halting guard in the view, an op's reach on the op witness, a registered op performer in the perform phase, and the op channel's rejection stays `string` (2026-10-01)
+
+**2026-10-01. Phase 1967. Amends K2 of `docs/generic-tier.md` §3.7 and the D8 reading of which arm
+is staged; D4's standing note records the instantiation this answers.**
+
+The first second-domain instantiation of the generic tier — a handler that is a VERB, with store
+reads, file writes and deletes, a commit and a push as the `'Op` of `ApplyOps` — ran under the
+unmodified 0.6.0 `Handler.run` and was correct, and built three things beside Program to be so: its
+own walk over its ops to say what the handler reaches, guards that rode the op channel as apply
+errors so a refusal could halt, and a two-phase discipline of its own so a refused plan performed
+nothing. Each is the drift D4 warned about, pointed the other way: a second demanded projection and
+policy growing in parallel to Program's. This entry moves all three into Program, and records the
+one thing it leaves as it was.
+
+**1. The halting refusal is a shape of the view, `Require of condition: 'Expr` — option (a).**
+Halting is control structure: "nothing after this runs" is a statement about the sequence, and D1
+puts control structure in the evaluator and vocabulary beneath it. A handler-stage guard (option b)
+would have halted too, but at the placement rather than in the algebra — a browser placement would
+have had no guard at all — and it would have been a THIRD stage kind, which the program wire
+specification's §4.2 closes at two and whose widening is a specification act across five artefacts.
+A view shape is the action algebra's, which the specification references and does not spell; no
+wire moves. The guard's condition resolves through `ExprWitness.Resolve` exactly as an `Assign`'s
+`from` does: the boolean `true` holds, any other value, an unresolved condition and an errored one
+halt, and an errored one's text is the halt's reason verbatim — so a domain's typed refusal reaches
+the diagnostic through the arrow the contract already had. **A guard reads the state channel** (K4):
+what a guard needs to see is where a verb's arguments and read results land, and a domain that keeps
+its model in the tree exposes what its guards read through the channel. The fold's outcome says
+`Halted`; the fold does not roll back — the store is the store as of the halt, and the placement that
+rolls back is the handler, whose atomicity unit it is (D8). A leaf's `Refuse` keeps its non-halting
+behaviour; nothing at the UI witness views as a guard, and `ui_never_halts` proves the UI tier
+unchanged. K2 now reads: control structure is sequence + assign + call + require, and everything else
+is a leaf. **D14 applied: `BoundedFold.fst` was restated over five shapes and re-proved before the
+port** — the sequence homomorphism is the one law the shape changes, gaining a halting clause that is
+vacuous for every view without a guard.
+
+**2. An op's reach is a member of the op witness, `Reach: 'Op -> OpReach`, read by the argument
+policy and the demanded projection.** `OpReach` is the op's named arguments — the `(argument, value)`
+pairs `ServerArgumentPolicy.arguments` already returned for a host call — and its destination class
+in the client effects' own `EffectDestination` vocabulary (W4: the reach-describing member sat on the
+wrong channel; it now sits on both). `ServerArgumentPolicy.arguments` reads it for `ApplyOps` and
+`EmitPatch`, so an `AllowList` on either arm binds, and the destination class is allow-listed under
+the reserved `destination` argument, so a policy can bound WHERE an op may reach without knowing how
+a domain names it. `payloadBytes` measures an op sequence as its ops' canonical bytes, so a `Ceiling`
+binds too. The demanded document carries the reach as a server-tier member at **version 5** —
+present and empty where the ops name nothing, on the argument versions 2, 3 and 4 each made — and
+`ServerDemanded.ofEffect` reads it through the policy's own extraction, so the document and the
+enforcement are one enumeration. The reach is DESCRIPTIVE, like the replay posture and the declared
+policy: no coverage finding is computed from it; the argument policy is the enforcement. The UI
+witness's reach is the nodes a tree op addresses, under the op's own member names, and deliberately
+not every string member: a prop path, a binding slot and a prop value are what an op writes, and a
+reach the document carries must never be a payload. A consequence stated rather than discovered: a
+signed envelope is verified by recomputation, so every envelope signed under version 4 reports
+`Unreadable` drift under this reader, naming the version — the honest refusal — and is re-signed.
+
+**3. Program performs an op through a REGISTERED op performer, in the perform phase — the hook, not
+the stated plan-only contract.** `OpPerformance<'Op>` is `InMemory` — the apply is the effect, the UI
+tier's placement and every placement's default — or `Performed of ('Op -> Result<unit, string>)`.
+Under a performer `ApplyOps` is a staged arm: its ops are applied in memory while planning, as always,
+so a later stage reads the planned tree, and each op is staged as a call of its own — the registered
+performer closed over the op, in the shape a staged host call carries — and performed after the plan
+commits, in plan order beside the host calls. D8's law then covers ops with no new vocabulary:
+`Performed` names `ApplyOps` once per op PERFORMED in execution order, a part-way failure is a
+`PerformFailed` under that capability with the prefix that ran reported, and `Staging.fst` proves it
+over the same staged list, its `plan_pure` gaining the one clause that matters — the plan phase reads
+only whether a performer is registered and what it stages, never what it answers. The hook was
+chosen over the documented plan-only contract because the contract would have widened `PerformFailed`
+to describe a host-performed plan, which is an outcome-wire vocabulary change the specification
+spells, while the hook changes no wire at all; and because that domain's placement had already written
+the hook once, beside Program, which is the measure of where it belongs. The one specification
+sentence a registered performer reads past — §6.2's "only `HostCall` is staged" — describes the
+in-memory placement, which every conformant host had and every UI host still has; carrying the
+performer case into the normative text is a specification act and is not taken here. The durable
+interpreter (D12) runs in memory and journals no performed op; a verb under the durable tier is
+stated as not covered rather than half-covered. `Handler.run` keeps its signature as `runWith` at
+`InMemory`; `ServerServices` carries the performance and the session's arm passes it.
+
+**4. The op channel's rejection stays `string` (W5).** A seventh type parameter for the rejection
+would reach every public type that names the witness, the handler's halt vocabulary, the outcome wire
+— where a reason is a string by specification — and the journal, to carry a type that crosses a
+process boundary as text in every one of those places anyway. What a typed refusal does instead is
+what the first second witness did: render it canonically (`Canon.render` over its own JSON) into the
+string the op channel or the guard's `Errored` carries, and parse it back on the far side. The
+in-repo second witness pins that crossing (`tests/Fuaran.Program.Tests/VerbWitnessTests.fs`, W5).
+
+**What this forecloses.** A guard that recurses — a conditional with two non-refusal arms — is still
+a new view case plus a model change under D14, never a leaf that threads the store (K2's falsifier
+stands). An op performer is trusted on the terms a host function is; the gate and the policy decide
+what reaches it, and nothing here says what it does when invoked. A reach that could carry a payload
+is a witness defect, not a vocabulary one.
+
+**The regression test is the second witness itself.** The first second witness's differential and adversaries
+are the test for whether its parallel machinery can now be deleted; re-running it against 0.7.0 is
+that domain's act. The in-repo second witness — a verb over an in-memory file map, with an adversary
+per finding — is this repository's own, and runs in the ordinary gate.
