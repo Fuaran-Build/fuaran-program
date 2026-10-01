@@ -562,22 +562,22 @@ module Demanded =
     ///     host that cannot serve the endpoint is still worth telling);
     ///   - `Leaf` demands exactly what it declares.
     let rec private demandsOfAction
-        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (fold: DispatchFold<'Action, 'Expr, 'Store, 'Effect>)
         (action: 'Action)
         : string list * HostCallDemand list * (string * bool) list =
-        match witness.Action.View action with
+        match fold.Action.View action with
         | ActionView.Sequence actions ->
             actions
             |> List.fold
                 (fun (accE, accH, accN) a ->
-                    let e, h, n = demandsOfAction witness a
+                    let e, h, n = demandsOfAction fold a
                     accE @ e, accH @ h, accN @ n)
                 ([], [], [])
 
         | ActionView.Assign(key, _, from) ->
             let uses =
                 match from with
-                | Some expr -> witness.Expr.Uses expr
+                | Some expr -> fold.Expr.Uses expr
                 | None -> []
 
             let reads =
@@ -605,7 +605,7 @@ module Demanded =
         // A guard READS what its condition reads, exactly as an assignment's
         // `from` does, and writes nothing (Phase 1967).
         | ActionView.Require condition ->
-            let uses = witness.Expr.Uses condition
+            let uses = fold.Expr.Uses condition
 
             let reads =
                 uses
@@ -629,13 +629,10 @@ module Demanded =
     /// — a hand-authored handler the decoder replaced with an inert
     /// placeholder, reported rather than assumed away. Which events a node
     /// accepts, and which of its actions survive the wire, are the witness's
-    /// (`Tree.Events`, `Tree.Handlers`).
-    let private opaqueHandler
-        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
-        (node: 'Node)
-        : bool =
-        not (List.isEmpty (witness.Tree.Events node))
-        && List.isEmpty (witness.Tree.Handlers node)
+    /// (the dispatch axis's `Events` and `Handlers`).
+    let private opaqueHandler (dispatch: DispatchWitness<'Node, 'Action, 'Expr, 'Store, 'Effect>) (node: 'Node) : bool =
+        not (List.isEmpty (dispatch.Events node))
+        && List.isEmpty (dispatch.Handlers node)
 
     /// Merge namespace touches into one entry per namespace, its two flags OR'd
     /// across every touch.
@@ -743,11 +740,15 @@ module Demanded =
     /// else. That parity is the point — it is the one algebra claim, read at the
     /// projection rather than at the interpreter — and it is why the walk over
     /// stages calls this rather than matching an `Action` a second time.
+    ///
+    /// Reads the DISPATCH axis (the action view and the expressions' uses)
+    /// and nothing else.
     let ofAction
-        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (action: 'Action)
         : DemandedProjection =
-        let effects, hostCalls, namespaces = demandsOfAction witness action
+        let effects, hostCalls, namespaces =
+            demandsOfAction (DispatchPosition.fold witness.Dispatch) action
 
         normalise
             { empty with
@@ -831,29 +832,32 @@ module Demanded =
     /// The server tier is `None`: this walk sees a tree, and a handler is not in
     /// the tree. A placement that HAS a handler registration projects it and
     /// attaches the result with `withServer`.
-    let ofTree
-        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
-        (root: 'Node)
-        : DemandedProjection =
+    ///
+    /// Reads the WALK axis (the traversal) and the DISPATCH axis (the
+    /// handlers and events on each node), so it takes a composition that
+    /// fills both.
+    let ofTree (witness: FullWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>) (root: 'Node) : DemandedProjection =
+        let fold = DispatchPosition.fold witness.Dispatch
+
         let rec walk (node: 'Node) =
             let own =
-                witness.Tree.Handlers node
+                witness.Dispatch.Handlers node
                 |> List.map snd
                 |> List.fold
                     (fun (accE, accH, accN) a ->
-                        let e, h, n = demandsOfAction witness a
+                        let e, h, n = demandsOfAction fold a
                         accE @ e, accH @ h, accN @ n)
                     ([], [], [])
 
             let ownE, ownH, ownN = own
 
             let ownO =
-                if opaqueHandler witness node then
-                    [ witness.Tree.Nodes.Id node ]
+                if opaqueHandler witness.Dispatch node then
+                    [ witness.Walk.Nodes.Id node ]
                 else
                     []
 
-            witness.Tree.Traverse node
+            witness.Walk.Traverse node
             |> List.fold
                 (fun (accE, accH, accN, accO) child ->
                     let e, h, n, o = walk child
@@ -1813,7 +1817,7 @@ module Demanded =
     /// BEFORE any event runs. An empty list means the host can serve everything
     /// this program is able to ask for.
     let check
-        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (witness: FullWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
         (coverage: HostCoverage)
         (tree: 'Node)
         : CoverageFinding list =

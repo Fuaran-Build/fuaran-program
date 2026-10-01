@@ -198,7 +198,7 @@ module Durable =
     /// share nothing, which is what a caller wants for two clicks of the same
     /// button.
     let run
-        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (services: DurableServices)
         (invocation: string)
         (registry: ServerEffectRegistry)
@@ -528,7 +528,7 @@ module DurableControls =
     /// at the registry reaches every arm of the closed vocabulary without this
     /// file enumerating them.
     let run
-        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (services: DurableServices)
         (controls: ControlServices)
         (invocation: string)

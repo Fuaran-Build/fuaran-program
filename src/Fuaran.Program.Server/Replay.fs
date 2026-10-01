@@ -133,7 +133,7 @@ module Replay =
     /// Total, allocation-light, and decided entirely from the declared form: no
     /// store is read, no effect is performed, and the handler is not run.
     let admit
-        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (witness: ProgramWitness<'Node, 'Op, 'Walk, DispatchWitness<'Node, 'Action, 'Expr, 'Store, 'Effect>>)
         (mode: ReplayMode)
         (policy: ReplayPolicy)
         (handler: Handler<'Action, 'Op>)
@@ -171,7 +171,7 @@ module Replay =
     /// key — what a host resuming a session asks once, before resuming any of
     /// them.
     let admitAll
-        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (witness: ProgramWitness<'Node, 'Op, 'Walk, DispatchWitness<'Node, 'Action, 'Expr, 'Store, 'Effect>>)
         (mode: ReplayMode)
         (policy: ReplayPolicy)
         (handlers: Handler<'Action, 'Op> seq)
@@ -212,7 +212,7 @@ module Replay =
 
     /// One handler's posture, as the demanded-projection document carries it.
     let postureOf
-        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (witness: ProgramWitness<'Node, 'Op, 'Walk, DispatchWitness<'Node, 'Action, 'Expr, 'Store, 'Effect>>)
         (handler: Handler<'Action, 'Op>)
         : ReplayPosture =
         let reasons = HandlerWire.replayReasons witness handler
@@ -233,7 +233,7 @@ module Replay =
     /// the field's own contract forbids. Use `ofTreeAndHandlers` below, which
     /// walks and joins together and so cannot reach that state.
     let withPostures
-        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (witness: ProgramWitness<'Node, 'Op, 'Walk, DispatchWitness<'Node, 'Action, 'Expr, 'Store, 'Effect>>)
         (handlers: Handler<'Action, 'Op> seq)
         (projection: DemandedProjection)
         : DemandedProjection =
@@ -255,7 +255,7 @@ module Replay =
     /// reachability, through the same function, so the document cannot describe
     /// one set of handlers in its capabilities and another in its postures.
     let ofTreeAndHandlers
-        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (witness: FullWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
         (handlers: Map<string, Handler<'Action, 'Op>>)
         (root: 'Node)
         : DemandedProjection =

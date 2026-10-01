@@ -7,6 +7,14 @@
 /// second-domain instantiation found and had to build beside Program (the
 /// four findings `DECISIONS.md` D19 records), so each is a test here rather
 /// than a report elsewhere.
+///
+/// Since Phase 1974 it fills the STATE AXIS ONLY (`DECISIONS.md` D20): a verb
+/// has no events, no node tree to walk and no binding store, so its
+/// composition is `ProgramWitness<FileMap, FileOp, Unfilled, Unfilled>` — six
+/// members, where 0.7.0 asked it for thirty-two and found twenty-five of them
+/// vacuous. Its guards are ops (`Check`), which the state witness VIEWS as
+/// guards: resolved against the plan as of their position, never performed —
+/// the shape the first second witness reached for before Program had one.
 module Fuaran.Program.Tests.VerbDomain
 
 open Fuaran.Core
@@ -18,9 +26,9 @@ open Fuaran.Program.Runtime
 /// A refusal the verb's guards raise, as the domain types it.
 type VerbRefusal = { Code: string; Detail: string }
 
-/// The op channel's and the guard's rejection stay `string` (D19): a typed
-/// refusal crosses as its canonical JSON and is parsed back on the far side,
-/// which is the one answer the decision names.
+/// The op channel's rejection stays `string` (D19): a typed refusal crosses
+/// as its canonical JSON and is parsed back on the far side, which is the one
+/// answer the decision names.
 module VerbRefusal =
     let render (r: VerbRefusal) : string =
         Canon.render (JObj [ "code", JStr r.Code; "detail", JStr r.Detail ])
@@ -37,98 +45,31 @@ module VerbRefusal =
 
 // ─── the vocabulary ─────────────────────────────────────────────────────────
 
-/// An expression over the verb's ARGUMENTS — the state channel is where a
-/// verb's arguments live, and a guard reads them there (K4).
-type VerbExpr =
-    | Lit of JVal
-    | Arg of key: string
-    /// True exactly when the argument is a non-empty string; unresolved when
-    /// it is absent.
-    | NonEmpty of key: string
-    /// A typed refusal, carried as the guard's errored text.
-    | Refusing of VerbRefusal
-
-/// The verb's actions. `Steps`, `Set` and `Need` are control structure the
-/// core owns — `Need` is the halting guard; `Say` is its one leaf, and an
-/// empty `Say` is REFUSED without halting, so the two kinds of refusal can be
-/// told apart in one sequence.
-type VerbAction =
-    | Steps of VerbAction list
-    | Set of key: string * value: JVal option * from: VerbExpr option
-    | Need of condition: VerbExpr
-    | Say of string
-
-/// The verb's tree: an in-memory file map and what has been published. This
+/// The verb's state: an in-memory file map and what has been published. This
 /// is the PLAN the handler edits; the world is the performer's.
 type FileMap =
     { Files: Map<string, string>
       Published: string list }
 
-/// The state channel: the verb's arguments.
-type VerbStore = Map<string, JVal>
+/// What a guard checks of the plan.
+type FileCheck =
+    /// The plan holds this file.
+    | Exists of path: string
+    /// The plan does not hold this file.
+    | Missing of path: string
+    /// Refuses, always, with this typed refusal — the W5 crossing in one op.
+    | Refused of VerbRefusal
 
 /// The verb's ops. A read, a write, a delete and a publish — the four shapes
-/// a store-mutating verb has.
+/// a store-mutating verb has — and a check, its guard.
 type FileOp =
     | Read of path: string
     | Write of path: string * content: string
     | Delete of path: string
     | Publish of target: string
+    | Check of FileCheck
 
-type VerbEffect = Said of string
-
-[<Literal>]
-let ReservedPrefix = "host."
-
-// ─── the witness ────────────────────────────────────────────────────────────
-
-let private lookup (store: VerbStore) (key: string) = Map.tryFind key store
-
-let resolve (store: VerbStore) (expr: VerbExpr) : ExprResolution =
-    match expr with
-    | Lit value -> ExprResolution.Resolved value
-    | Arg key ->
-        match lookup store key with
-        | Some value -> ExprResolution.Resolved value
-        | None -> ExprResolution.NotResolved
-    | NonEmpty key ->
-        match lookup store key with
-        | Some(JStr text) -> ExprResolution.Resolved(JBool(text <> ""))
-        | Some _ -> ExprResolution.Resolved(JBool false)
-        | None -> ExprResolution.NotResolved
-    | Refusing refusal -> ExprResolution.Errored(VerbRefusal.render refusal)
-
-let describe (action: VerbAction) : string =
-    match action with
-    | Steps _ -> "Steps"
-    | Set(key, _, _) -> sprintf "Set(%s)" key
-    | Need _ -> "Need"
-    | Say _ -> "Say"
-
-let view (action: VerbAction) : ActionView<VerbAction, VerbExpr> =
-    match action with
-    | Steps actions -> ActionView.Sequence actions
-    | Set(key, value, from) -> ActionView.Assign(key, value, from)
-    | Need condition -> ActionView.Require condition
-    | Say _ ->
-        ActionView.Leaf
-            { EffectKinds = [ "Said" ]
-              HostCalls = [] }
-
-let lower (_: string) (action: VerbAction) (_: VerbStore) : LeafOutcome<VerbEffect> =
-    match action with
-    | Say "" -> LeafOutcome.Refuse "nothing to say"
-    | Say text -> LeafOutcome.Emit(Said text)
-    | Steps _
-    | Set _
-    | Need _ -> LeafOutcome.Decline
-
-let rec private encodeAction (action: VerbAction) : JVal =
-    match action with
-    | Steps actions -> Canon.typed "Steps" [ "ops", JArr(actions |> List.map encodeAction) ]
-    | Set(key, _, _) -> Canon.typed "Set" [ "key", JStr key ]
-    | Need _ -> Canon.typed "Need" []
-    | Say text -> Canon.typed "Say" [ "text", JStr text ]
+// ─── the state witness ──────────────────────────────────────────────────────
 
 /// The op codec: canonical, and the content a write carries is IN it, so a
 /// ceiling on the arm measures what the handler document would carry.
@@ -138,10 +79,15 @@ let encodeOp (op: FileOp) : string =
     | Write(path, content) -> Canon.render (Canon.typed "Write" [ "content", JStr content; "path", JStr path ])
     | Delete path -> Canon.render (Canon.typed "Delete" [ "path", JStr path ])
     | Publish target -> Canon.render (Canon.typed "Publish" [ "target", JStr target ])
+    | Check(Exists path) -> Canon.render (Canon.typed "Exists" [ "path", JStr path ])
+    | Check(Missing path) -> Canon.render (Canon.typed "Missing" [ "path", JStr path ])
+    | Check(Refused refusal) -> Canon.render (Canon.typed "Refused" [ "refusal", JStr(VerbRefusal.render refusal) ])
 
 /// Apply one op to the PLAN. A read reads the plan; a delete of a file the
 /// plan does not hold is an apply refusal, which halts the handler as every
-/// apply refusal does.
+/// apply refusal does. A check answers whether the plan holds what it names,
+/// with a typed refusal rendered into the reason when it does not — and the
+/// handler discards what a check answers, so a check cannot write.
 let apply (op: FileOp) (tree: FileMap) : Result<FileMap, string> =
     match op with
     | Read path ->
@@ -164,10 +110,22 @@ let apply (op: FileOp) (tree: FileMap) : Result<FileMap, string> =
         Ok
             { tree with
                 Published = tree.Published @ [ target ] }
+    | Check(Exists path) ->
+        if Map.containsKey path tree.Files then
+            Ok tree
+        else
+            Error(VerbRefusal.render { Code = "missing"; Detail = path })
+    | Check(Missing path) ->
+        if Map.containsKey path tree.Files then
+            Error(VerbRefusal.render { Code = "present"; Detail = path })
+        else
+            Ok tree
+    | Check(Refused refusal) -> Error(VerbRefusal.render refusal)
 
 /// What an op REACHES (W3, W4): a path under `path`, local; a publish target
 /// under `target`, and REMOTE — the class a policy can bound without knowing
-/// how this domain names its targets.
+/// how this domain names its targets. A check reaches the path it reads, and
+/// no destination: it acts on nothing.
 let reach (op: FileOp) : OpReach =
     match op with
     | Read path
@@ -178,6 +136,11 @@ let reach (op: FileOp) : OpReach =
     | Publish target ->
         { Arguments = [ "target", target ]
           Destination = EffectDestination.Remote target }
+    | Check(Exists path)
+    | Check(Missing path) ->
+        { Arguments = [ "path", path ]
+          Destination = EffectDestination.Absent }
+    | Check(Refused _) -> OpReach.nothing
 
 let private canonical (tree: FileMap) : string =
     Canon.render (
@@ -186,73 +149,36 @@ let private canonical (tree: FileMap) : string =
               "published", JArr(tree.Published |> List.map JStr) ]
     )
 
-/// The verb witness. The tree half is as vacuous as a verb makes it — one
-/// node, no children, no handlers — and that vacuity is the finding, not a
-/// defect: a verb is not reached from a node tree.
-let witness: ProgramWitness<FileMap, VerbAction, VerbExpr, VerbStore, FileOp, VerbEffect> =
-    { Tree =
-        { Nodes =
-            { Id = fun _ -> "store"
-              KindTag = fun _ -> "FileMap"
-              Children = fun _ -> []
-              ReplaceChildren = fun tree _ -> tree }
-          Traverse = fun _ -> []
-          Handlers = fun _ -> []
-          Events = fun _ -> []
-          Resolve = fun _ tree -> tree
-          Cost = fun _ -> 0
-          QueryReaders = fun _ -> []
-          Canonical = canonical }
-      Action =
-        { View = view
-          Lower = lower
-          Describe = describe
-          Encode = encodeAction
-          Decode =
-            fun _ ->
-                Error
-                    { Class = "malformed-referenced-value"
-                      Detail = "the verb decodes nothing" } }
-      Expr =
-        { Resolve = resolve
-          Uses =
-            fun expr ->
-                match expr with
-                | Arg key
-                | NonEmpty key -> [ BindingUse.State key ]
-                | Lit _
-                | Refusing _ -> [] }
-      Store =
-        { Assign = Map.add
-          LandQuery = fun slot table store -> Map.add slot (JInt(List.length table.Columns)) store
-          IsReserved = fun key -> key.StartsWith ReservedPrefix
-          ReservedPrefix = ReservedPrefix }
-      Op =
+/// The verb witness: the state axis, and nothing else.
+let witness: ProgramWitness<FileMap, FileOp, Unfilled, Unfilled> =
+    { State =
         { Stream =
             { Apply = apply
               Encode = encodeOp
               Decode = fun _ -> Error "the verb decodes no op" }
-          Diff = fun _ _ -> []
+          Reach = reach
           AbsoluteTarget =
             fun op ->
                 match op with
                 | Read path
                 | Write(path, _)
-                | Delete path -> Some path
+                | Delete path
+                | Check(Exists path)
+                | Check(Missing path) -> Some path
                 | Publish target -> Some target
-          Reach = reach }
-      Effect =
-        { Kind = fun _ -> "Said"
-          Destination = fun _ -> EffectDestination.Absent
-          Encode =
-            fun effect ->
-                match effect with
-                | Said text -> Canon.render (JObj [ "kind", JStr "Said"; "text", JStr text ])
-          Decode =
-            fun _ ->
-                Error
-                    { Class = "unknown-effect-arm"
-                      Detail = "the verb decodes no effect" } } }
+                | Check(Refused _) -> None
+          Canonical = canonical
+          Diff = fun _ _ -> []
+          View =
+            fun op ->
+                match op with
+                | Check _ -> OpView.Require
+                | Read _
+                | Write _
+                | Delete _
+                | Publish _ -> OpView.Edit }
+      Walk = Unfilled
+      Dispatch = Unfilled }
 
 // ─── the world, and the performer over it ───────────────────────────────────
 
@@ -263,21 +189,29 @@ type World() =
     let files = System.Collections.Generic.Dictionary<string, string>()
     let published = System.Collections.Generic.List<string>()
     let invocations = System.Collections.Generic.List<string>()
+    let handed = System.Collections.Generic.List<FileMap>()
 
     member _.Files = files |> Seq.map (fun kv -> kv.Key, kv.Value) |> Map.ofSeq
     member _.Published = List.ofSeq published
     /// Every op the performer was asked to perform, in order — the ground
     /// truth `Performed` is checked against.
     member _.Invocations = List.ofSeq invocations
+    /// The planned state handed with each op, in order (Phase 1974). A verb
+    /// whose op IS the act does not need it; the test reads it to see what a
+    /// tail that persisted the plan would have been handed.
+    member _.Handed = List.ofSeq handed
 
     member _.Seed(path: string, content: string) = files.[path] <- content
 
     /// The performer: performs each op against the world, refusing at ONE
-    /// position (zero-based, counted over its own invocations) or never.
-    member _.Performer(failAt: int option) : FileOp -> Result<unit, string> =
-        fun op ->
+    /// position (zero-based, counted over its own invocations) or never. A
+    /// check is a guard and never reaches it; one that did would be refused,
+    /// so a test would see it.
+    member _.Performer(failAt: int option) : FileMap -> FileOp -> Result<unit, string> =
+        fun state op ->
             let position = invocations.Count
             invocations.Add(encodeOp op)
+            handed.Add state
 
             match failAt with
             | Some k when k = position -> Error(sprintf "the world refused op %d" k)
@@ -293,3 +227,4 @@ type World() =
                 | Publish target ->
                     published.Add target
                     Ok()
+                | Check _ -> Error "a guard reached the performer"

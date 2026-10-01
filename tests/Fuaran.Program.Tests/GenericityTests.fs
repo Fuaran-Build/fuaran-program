@@ -151,7 +151,7 @@ let tests =
               Expect.equal (Budget.treeCost witness System.Int32.MaxValue root) 3 "two nodes plus one handler's weight"
               Expect.equal (Demanded.ofTree witness root).Effects [ "Sound" ] "the handler's demand is found"
 
-              let hash = SignedEnvelope.treeHash witness.Tree root
+              let hash = SignedEnvelope.treeHash witness.State root
 
               Expect.stringStarts
                   hash

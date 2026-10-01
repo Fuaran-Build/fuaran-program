@@ -52,16 +52,23 @@ module Budget =
     /// The leaf-action count of one bounded-action cascade. A `Sequence`
     /// flattens; every other shape costs 1. Read through the witness's view,
     /// so what counts as composition is the fold's own notion of it.
-    let rec actionCascadeCost
-        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+    ///
+    /// Reads the DISPATCH axis (the action view) and nothing else.
+    let actionCascadeCost
+        (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (a: 'Action)
         : int =
-        match witness.Action.View a with
-        | ActionView.Sequence xs -> xs |> List.sumBy (actionCascadeCost witness)
-        | ActionView.Assign _
-        | ActionView.Call _
-        | ActionView.Require _
-        | ActionView.Leaf _ -> 1
+        let view = (DispatchPosition.fold witness.Dispatch).Action.View
+
+        let rec cost (a: 'Action) : int =
+            match view a with
+            | ActionView.Sequence xs -> xs |> List.sumBy cost
+            | ActionView.Assign _
+            | ActionView.Call _
+            | ActionView.Require _
+            | ActionView.Leaf _ -> 1
+
+        cost a
 
     // ─── Per-node render cost ────────────────────────────────────────────────
     //
@@ -75,7 +82,7 @@ module Budget =
     // reappearing on the next data-bearing kind.
     //
     // Which kinds are data-bearing, and by what they are weighted, is the
-    // domain's: the witness's `Tree.Cost` answers a node's OWN data cost, and
+    // domain's: the walk axis's `Cost` answers a node's OWN data cost, and
     // the walk below adds the node itself. The arithmetic and the walk are
     // this module's, and they are what proofs/Budget.fst proves.
 
@@ -89,7 +96,7 @@ module Budget =
 
     /// Saturating `int` arithmetic — a cost is a budget comparand, and an
     /// overflow that wrapped NEGATIVE would read as "cheap" and admit the very
-    /// tree the budget exists to refuse. Public so a witness's `Tree.Cost`
+    /// tree the budget exists to refuse. Public so a witness's `Walk.Cost`
     /// composes its weights with the same arithmetic.
     let satAdd (a: int) (b: int) : int =
         let sum = int64 a + int64 b
@@ -109,13 +116,13 @@ module Budget =
 
     /// The render cost of ONE node, excluding its children: the node itself,
     /// plus whatever data it carries.
-    let private nodeCost (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>) (node: 'Node) : int =
-        satAdd 1 (witness.Tree.Cost node)
+    let private nodeCost (walk: WalkWitness<'Node>) (node: 'Node) : int = satAdd 1 (walk.Cost node)
 
     /// The tree's total render cost — the node count, with data-bearing nodes
     /// weighted by the data they carry. For every non-data-bearing tree this is
     /// exactly the node count. Walked over the STRUCTURAL child surface
-    /// (the witness's `Tree.Nodes`), in the order it enumerates.
+    /// (the WALK axis's `Nodes`), in the order it enumerates. Reads the walk
+    /// axis and nothing else.
     ///
     /// ITERATIVE, with an explicit stack, and it STOPS as soon as the cost
     /// passes `ceiling`. Both properties matter:
@@ -133,7 +140,7 @@ module Budget =
     /// "greater than `ceiling`" otherwise — all a budget comparand needs, since
     /// every use of it past that point is a refusal.
     let treeCost
-        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (witness: ProgramWitness<'Node, 'Op, WalkWitness<'Node>, 'Dispatch>)
         (ceiling: int)
         (node: 'Node)
         : int =
@@ -143,9 +150,9 @@ module Budget =
 
         while pending.Count > 0 && total <= ceiling do
             let current = pending.Pop()
-            total <- satAdd total (nodeCost witness current)
+            total <- satAdd total (nodeCost witness.Walk current)
 
-            for kid in witness.Tree.Nodes.Children current do
+            for kid in witness.Walk.Nodes.Children current do
                 pending.Push kid
 
         total

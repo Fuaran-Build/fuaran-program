@@ -106,7 +106,7 @@ module Harvest =
     /// document, computed through the single reachability rule so the
     /// capabilities and the postures cannot describe different handler sets.
     let ofProgram
-        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (witness: FullWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
         (handlers: Map<string, Handler<'Action, 'Op>>)
         (root: 'Node)
         : HarvestedDemand =
@@ -121,7 +121,7 @@ module Harvest =
     /// tier is therefore empty — there is no tree — and the server tier is
     /// present, because a walk did run.
     let ofRegistration
-        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (witness: ProgramWitness<'Node, 'Op, 'Walk, DispatchWitness<'Node, 'Action, 'Expr, 'Store, 'Effect>>)
         (handlers: Handler<'Action, 'Op> seq)
         : HarvestedDemand =
         publish (

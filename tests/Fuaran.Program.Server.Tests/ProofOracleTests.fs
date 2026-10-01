@@ -89,7 +89,7 @@ type private ModelWitness =
         BoundedDiagnostic
      >
 
-type private ModelRegistry = Staging.registry<Fuaran.Core.JVal, TreeOp<obj>, Query, Performer>
+type private ModelRegistry = Staging.registry<Node<obj>, Fuaran.Core.JVal, TreeOp<obj>, Query, Performer>
 type private ModelStage = Staging.stage<Action<obj>, Fuaran.Core.JVal, TreeOp<obj>, Query>
 
 type private ModelOutcome =
@@ -119,7 +119,25 @@ let private evalErrorKind (error: Fuaran.Core.EvalError) : string =
 
 let private witness = UiWitness.witness
 
-let private modelWitness (resolve: string -> Result<Fuaran.Core.Table, Fuaran.Core.EvalError>) : ModelWitness =
+/// The UI witness with an op-channel GUARD (Phase 1974): `UpdateStyle` is
+/// viewed as one — it resolves to a refusal exactly when the node it names is
+/// not in the tree as planned, and whatever style it would have set is
+/// discarded. The UI tier itself has no guard; this composition exists so the
+/// differential reaches the guard clause of the `ApplyOps` arm.
+let private guardedWitness: UiWitness.UiProgramWitness =
+    { witness with
+        State =
+            { witness.State with
+                View =
+                    fun op ->
+                        match op with
+                        | TreeOp.UpdateStyle _ -> OpView.Require
+                        | _ -> OpView.Edit } }
+
+let private modelWitness
+    (witness: UiWitness.UiProgramWitness)
+    (resolve: string -> Result<Fuaran.Core.Table, Fuaran.Core.EvalError>)
+    : ModelWitness =
     { w_compute =
         fun nodeId action bindings ->
             let outcome = BoundedActions.runInert witness nodeId action bindings
@@ -131,13 +149,28 @@ let private modelWitness (resolve: string -> Result<Fuaran.Core.Table, Fuaran.Co
         fun name (source, pipeline) bindings ->
             Fuaran.Core.DataFrame.evalSource resolve source
             |> Result.bind (Fuaran.Core.DataFrame.evalPipelineWith resolve pipeline)
-            |> Result.map (fun table -> witness.Store.LandQuery name table bindings)
+            |> Result.map (fun table -> witness.Dispatch.Store.LandQuery name table bindings)
             |> Result.mapError evalErrorKind
             |> modelRes
-      w_apply = fun op tree -> witness.Op.Stream.Apply op tree |> modelRes
-      w_assign = witness.Store.Assign
-      w_is_reserved = witness.Store.IsReserved
-      w_reserved_prefix = witness.Store.ReservedPrefix }
+      w_apply = fun op tree -> witness.State.Stream.Apply op tree |> modelRes
+      w_op_view =
+        fun op ->
+            match witness.State.View op with
+            | OpView.Edit -> Staging.OEdit
+            | OpView.Require -> Staging.ORequire
+      w_assign = witness.Dispatch.Store.Assign
+      // The landing-slot refusal as production renders it (Phase 1974): the
+      // reserved-namespace text over this witness's predicate and prefix.
+      w_slot_refused =
+        fun key ->
+            if witness.Dispatch.Store.IsReserved key then
+                Staging.OSome(
+                    sprintf
+                        "landing slot is under the host-reserved '%s' namespace"
+                        witness.Dispatch.Store.ReservedPrefix
+                )
+            else
+                Staging.ONone }
 
 let private modelEffect
     (effect: ServerEffect<TreeOp<obj>>)
@@ -158,7 +191,10 @@ let private modelStage (stage: HandlerStage) : ModelStage =
 /// closure as an opaque token, and the BEHAVIOUR applies it. The argument
 /// policy is consulted on the production effect, because the policy's
 /// vocabulary is production's.
-let private modelRegistry (performance: OpPerformance<TreeOp<obj>>) (registry: ServerEffectRegistry) : ModelRegistry =
+let private modelRegistry
+    (performance: OpPerformance<Node<obj>, TreeOp<obj>>)
+    (registry: ServerEffectRegistry)
+    : ModelRegistry =
     { r_gate = registry.Gate
       r_policy =
         fun effect ->
@@ -177,21 +213,22 @@ let private modelRegistry (performance: OpPerformance<TreeOp<obj>>) (registry: S
                 | Staging.EmitPatch ops -> ServerEffect.EmitPatch ops
                 | Staging.Notify(channel, payload) -> ServerEffect.Notify(channel, payload)
 
-            match ServerArgumentPolicy.check witness.Op registry production with
+            match ServerArgumentPolicy.check witness.State registry production with
             | Ok() -> Staging.ONone
             | Error defect -> Staging.OSome(ServerArgumentPolicy.describe defect)
       r_lookup = fun fn -> Map.tryFind fn registry.HostFunctions |> modelOpt
       r_perf = fun performer args -> performer args |> modelRes
       // The op performer, split as the model splits it (Phase 1967): the
-      // TOKEN is production's own closure over the op, the argument inert —
-      // the same shape production stages, so the perform phase runs the two
-      // through one loop on both sides.
+      // TOKEN is production's own closure over the state as of the op and the
+      // op (Phase 1974), the argument inert — the same shape production
+      // stages, so the perform phase runs the two through one loop on both
+      // sides.
       r_op_perform =
         match performance with
         | OpPerformance.InMemory -> Staging.ONone
         | OpPerformance.Performed perform ->
-            Staging.OSome(fun op ->
-                (fun (_: Fuaran.Core.JVal) -> perform op |> Result.map (fun () -> Fuaran.Core.JObj [])),
+            Staging.OSome(fun state op ->
+                (fun (_: Fuaran.Core.JVal) -> perform state op |> Result.map (fun () -> Fuaran.Core.JObj [])),
                 Fuaran.Core.JObj []) }
 
 let private productionDiagnostic (diagnostic: Staging.diagnostic<BoundedDiagnostic>) : ServerDiagnostic =
@@ -232,7 +269,8 @@ let private projectionOf (outcome: HandlerOutcome) =
        Diagnostics = outcome.Diagnostics |> List.map (sprintf "%A") |}
 
 let private runModel
-    (performance: OpPerformance<TreeOp<obj>>)
+    (witness: UiWitness.UiProgramWitness)
+    (performance: OpPerformance<Node<obj>, TreeOp<obj>>)
     (registry: ServerEffectRegistry)
     (resolve: string -> Result<Fuaran.Core.Table, Fuaran.Core.EvalError>)
     (nodeId: string)
@@ -240,7 +278,7 @@ let private runModel
     (store: ServerStore)
     : HandlerOutcome =
     Staging.run
-        (modelWitness resolve)
+        (modelWitness witness resolve)
         (modelRegistry performance registry)
         nodeId
         (handler.Stages |> List.map modelStage)
@@ -261,8 +299,15 @@ type private Log = System.Collections.Generic.List<string>
 /// ops and host calls through one loop in plan order, and a failure position
 /// counts across both.
 type private Scripted =
-    { Host: string -> Performer
-      Op: TreeOp<obj> -> Result<unit, string> }
+    {
+        Host: string -> Performer
+        Op: Node<obj> -> TreeOp<obj> -> Result<unit, string>
+        /// The state the op performer was handed with each op, canonically
+        /// encoded, in invocation order (Phase 1974) — compared across the two
+        /// sides, so the model's `staged_from` and production's staged op agree
+        /// on WHICH state travels with each op, not only on which op.
+        Handed: System.Collections.Generic.List<string>
+    }
 
 /// A performer that counts its invocations across every name it is
 /// registered under — and every op it performs — and refuses at ONE position,
@@ -270,6 +315,7 @@ type private Scripted =
 /// start from zero.
 let private scripted (log: Log) (failAt: int option) : Scripted =
     let calls = ref 0
+    let handed = System.Collections.Generic.List<string>()
 
     let ask (capability: string) : Result<unit, string> =
         let position = calls.Value
@@ -281,7 +327,11 @@ let private scripted (log: Log) (failAt: int option) : Scripted =
         | _ -> Ok()
 
     { Host = fun name -> fun _ -> ask ("host:" + name) |> Result.map (fun () -> jstr (sprintf "ran:%s" name))
-      Op = fun _ -> ask "ApplyOps" }
+      Op =
+        fun state _ ->
+            handed.Add(Fuaran.UI.OpStream.Abstractions.CanonicalJson.encodeNode state)
+            ask "ApplyOps"
+      Handed = handed }
 
 /// The functions a case registers, and the registry built around a
 /// performer factory so production and the model each get their own.
@@ -300,10 +350,17 @@ type private StagingCase =
         /// making `ApplyOps` a staged arm; `false` is in-memory, every
         /// placement's default and the UI tier's.
         PerformOps: bool
+        /// Whether this case runs under the witness with an op-channel guard
+        /// (Phase 1974); `false` is the UI witness as it ships.
+        Guarded: bool
     }
 
+/// The witness a case runs under, on both sides.
+let private witnessOf (case: StagingCase) : UiWitness.UiProgramWitness =
+    if case.Guarded then guardedWitness else witness
+
 /// The op performance a case runs under, over this run's scripted performer.
-let private performanceOf (case: StagingCase) (s: Scripted) : OpPerformance<TreeOp<obj>> =
+let private performanceOf (case: StagingCase) (s: Scripted) : OpPerformance<Node<obj>, TreeOp<obj>> =
     if case.PerformOps then
         OpPerformance.Performed s.Op
     else
@@ -319,33 +376,44 @@ let private registryFor (case: StagingCase) (performer: string -> Performer) : S
 type private Run =
     { Production: HandlerOutcome
       ProductionLog: string list
+      ProductionHanded: string list
       Model: HandlerOutcome
-      ModelLog: string list }
+      ModelLog: string list
+      ModelHanded: string list }
 
 let private runCase (case: StagingCase) (failAt: int option) : Run =
     let productionLog = Log()
     let modelLog = Log()
 
-    let production =
-        let s = scripted productionLog failAt
+    let productionScript = scripted productionLog failAt
+    let modelScript = scripted modelLog failAt
 
+    let production =
         Fuaran.Program.Server.Handler.runWith
-            witness
-            (registryFor case s.Host)
-            (performanceOf case s)
+            (witnessOf case)
+            (registryFor case productionScript.Host)
+            (performanceOf case productionScript)
             case.Resolve
             "call"
             case.Handler
             case.Store
 
     let model =
-        let s = scripted modelLog failAt
-        runModel (performanceOf case s) (registryFor case s.Host) case.Resolve "call" case.Handler case.Store
+        runModel
+            (witnessOf case)
+            (performanceOf case modelScript)
+            (registryFor case modelScript.Host)
+            case.Resolve
+            "call"
+            case.Handler
+            case.Store
 
     { Production = production
       ProductionLog = List.ofSeq productionLog
+      ProductionHanded = List.ofSeq productionScript.Handed
       Model = model
-      ModelLog = List.ofSeq modelLog }
+      ModelLog = List.ofSeq modelLog
+      ModelHanded = List.ofSeq modelScript.Handed }
 
 /// The calls the performer's log says ran — the log already records
 /// capabilities.
@@ -386,6 +454,14 @@ let private divergence (case: StagingCase) (failAt: int option) (run: Run) : str
                 where
                 run.ProductionLog
                 run.ModelLog
+        )
+    elif run.ProductionHanded <> run.ModelHanded then
+        Some(
+            sprintf
+                "%s: the op performers were handed different states\n  production: %A\n  model:      %A"
+                where
+                run.ProductionHanded
+                run.ModelHanded
         )
     else
         // What ran, per the log, minus the refused call — the log records an
@@ -461,12 +537,16 @@ let private case
       Store = store
       Shape = id
       Resolve = Fuaran.Core.DataFrame.noResolve
-      PerformOps = false }
+      PerformOps = false
+      Guarded = false }
 
 let private shaped (shape: ServerEffectRegistry -> ServerEffectRegistry) (c: StagingCase) = { c with Shape = shape }
 
 /// The case registers the scripted op performer (Phase 1967).
 let private performingOps (c: StagingCase) = { c with PerformOps = true }
+
+/// The case runs under the witness with an op-channel guard (Phase 1974).
+let private guarded (c: StagingCase) = { c with Guarded = true }
 
 let private loopOrigin = "HandlerLoopTests"
 let private durableOrigin = "DurableInterpreterTests"
@@ -599,7 +679,7 @@ let private planHaltCases: StagingCase list =
           [ "audit" ]
           loopStore
           [ Effect(ServerEffect.HostCall("audit", jstr "note", Some "first"))
-            Effect(ServerEffect.HostCall("audit", jstr "note", Some(witness.Store.ReservedPrefix + "x"))) ]
+            Effect(ServerEffect.HostCall("audit", jstr "note", Some(witness.Dispatch.Store.ReservedPrefix + "x"))) ]
       case
           "plan-halt"
           "an op the apply engine refuses, after a host call was staged"
@@ -669,6 +749,54 @@ let private opCases: StagingCase list =
           ServerEffectRegistry.constrain "ApplyOps" [ ServerConstraintClause.AllowList("target", [ "readout" ]) ]
       ) ]
 
+/// A style no node in the corpus carries, so a guard that wrote it would leave
+/// a visible trace — the guard clause's "moves nothing" is then observable.
+let private guardStyle =
+    { Defaults.style with
+        Tone = ToneVariant.Critical }
+
+/// The cases with an OP-CHANNEL GUARD (Phase 1974): `UpdateStyle` names a
+/// node the plan must hold at that point. A guard that holds stages nothing
+/// and moves nothing; a guard that refuses after an edit removed what it
+/// checks refuses on the PLAN; and under a performer every edit is handed the
+/// state it produced — compared across the two sides by `Handed`.
+let private guardCases: StagingCase list =
+    [ case
+          "op-guard"
+          "a guard that holds, performed: the edits are staged, the guard is not"
+          [ "audit" ]
+          durableStore
+          [ Effect(
+                ServerEffect.ApplyOps
+                    [ TreeOp.RemoveNode(NodeId "refresh")
+                      TreeOp.UpdateStyle(NodeId "readout", guardStyle) ]
+            )
+            Effect(ServerEffect.HostCall("audit", jstr "note", None))
+            Effect(ServerEffect.ApplyOps [ TreeOp.RemoveNode(NodeId "readout") ]) ]
+      |> performingOps
+      |> guarded
+      case
+          "op-guard"
+          "a guard that holds, in memory: the state does not move for it"
+          [ "audit" ]
+          durableStore
+          [ Effect(ServerEffect.ApplyOps [ TreeOp.UpdateStyle(NodeId "readout", guardStyle) ])
+            Effect(ServerEffect.HostCall("audit", jstr "note", None)) ]
+      |> guarded
+      case
+          "op-guard"
+          "a guard after an edit that removed what it checks refuses on the plan"
+          [ "audit" ]
+          durableStore
+          [ Effect(ServerEffect.HostCall("audit", jstr "note", None))
+            Effect(
+                ServerEffect.ApplyOps
+                    [ TreeOp.RemoveNode(NodeId "readout")
+                      TreeOp.UpdateStyle(NodeId "readout", guardStyle) ]
+            ) ]
+      |> performingOps
+      |> guarded ]
+
 /// The failure positions a case is run at: every position of its staged
 /// list, and none. Counted over the `HostCall` stages and, under a registered
 /// op performer, every op of every `ApplyOps` stage — a position past what the
@@ -704,7 +832,7 @@ let stagingTests =
               // none of the perform phase. The floor is that the corpus reaches
               // the perform phase, reaches a failure INSIDE it at more than one
               // position, and reaches the all-succeed run.
-              let all = loopCases @ durableCases @ planHaltCases @ opCases
+              let all = loopCases @ durableCases @ planHaltCases @ opCases @ guardCases
 
               let verdicts =
                   [ for c in all do
@@ -803,6 +931,49 @@ let stagingTests =
                   Expect.isEmpty run.Production.Performed (sprintf "%s: something is reported performed" c.Name)
           }
 
+          test "the oracle agrees with production on the OP-CHANNEL GUARD and the performer's state (Phase 1974)" {
+              Expect.isEmpty (divergences guardCases) "the extracted model and production diverged"
+
+              // A guard that holds is never staged: the log holds the two
+              // edits and the host call, never the guard.
+              let holds = runCase guardCases.[0] None
+              Expect.isTrue holds.Production.Committed "holds: committed"
+
+              Expect.equal
+                  holds.ProductionLog
+                  [ "ApplyOps"; "host:audit"; "ApplyOps" ]
+                  "holds: two edits and the host call — the guard was not staged"
+
+              // The performer is handed the state each edit PRODUCED: the
+              // first with `refresh` gone, the last with both gone — which is
+              // the committed tree.
+              Expect.equal (List.length holds.ProductionHanded) 2 "holds: one handed state per edit"
+
+              Expect.equal
+                  (List.last holds.ProductionHanded)
+                  (Fuaran.UI.OpStream.Abstractions.CanonicalJson.encodeNode holds.Production.Store.Tree)
+                  "holds: the last state handed is the committed plan"
+
+              // In memory the guard moves nothing: the tree is the entry tree.
+              let inMemory = runCase guardCases.[1] None
+              Expect.isTrue inMemory.Production.Committed "in memory: committed"
+
+              Expect.equal
+                  (Fuaran.UI.OpStream.Abstractions.CanonicalJson.encodeNode inMemory.Production.Store.Tree)
+                  (Fuaran.UI.OpStream.Abstractions.CanonicalJson.encodeNode durableStore.Tree)
+                  "in memory: the style the guard would have set is discarded"
+
+              // A guard over the PLAN: the edit before it removed the node it
+              // names, so it refuses — and nothing reaches any performer.
+              let refuses = runCase guardCases.[2] None
+              Expect.isFalse refuses.Production.Committed "refuses: halted"
+              Expect.isEmpty refuses.ProductionLog "refuses: no performer ran"
+
+              match refuses.Production.Diagnostics |> List.last with
+              | ServerDiagnostic.Failed("ApplyOps", _) -> ()
+              | other -> failtestf "refuses: expected the op channel's halt, got %A" other
+          }
+
           test "the oracle agrees with production on every plan-phase halt — gate, policy, lookup, slot, apply, query" {
               Expect.isEmpty (divergences planHaltCases) "the extracted model and production diverged"
 
@@ -893,15 +1064,18 @@ let stagingTests =
               let run =
                   { Production = Handler.run (registryFor c (lying productionLog)) c.Resolve "call" c.Handler c.Store
                     ProductionLog = List.ofSeq productionLog
+                    ProductionHanded = []
                     Model =
                       runModel
+                          witness
                           OpPerformance.InMemory
                           (registryFor c (lying modelLog))
                           c.Resolve
                           "call"
                           c.Handler
                           c.Store
-                    ModelLog = List.ofSeq modelLog }
+                    ModelLog = List.ofSeq modelLog
+                    ModelHanded = [] }
 
               Expect.equal
                   (projectionOf run.Production)
@@ -949,7 +1123,7 @@ let stagingTests =
 /// it under — which is how `registerChecked` keys it.
 type private GateToken = string * Performer
 
-type private GateModelRegistry = Staging.registry<Fuaran.Core.JVal, TreeOp<obj>, Query, GateToken>
+type private GateModelRegistry = Staging.registry<Node<obj>, Fuaran.Core.JVal, TreeOp<obj>, Query, GateToken>
 
 type private GateAccumulator =
     Staging.accumulator<
@@ -1176,7 +1350,7 @@ let private runTripleWith
 
     let model =
         run
-            (modelWitness Fuaran.Core.DataFrame.noResolve)
+            (modelWitness witness Fuaran.Core.DataFrame.noResolve)
             (gateModelRegistry modelEvents triple)
             "call"
             (triple.Stages |> List.map modelStage)

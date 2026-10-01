@@ -20,8 +20,10 @@ open Fuaran.UI.ServerDriven
 open Fuaran.Program.Bounded
 open Fuaran.Program.Runtime
 
-/// The core's witness at the UI tier's types.
-type UiProgramWitness = ProgramWitness<Node<obj>, Action<obj>, Binding<JVal>, BindingSources, TreeOp<obj>, ClientEffect>
+/// The core's witness at the UI tier's types: all three axes (Phase 1974) —
+/// the UI tier is the one domain with events, so it fills the dispatch axis,
+/// and its state is a tree it walks.
+type UiProgramWitness = FullWitness<Node<obj>, Action<obj>, Binding<JVal>, BindingSources, TreeOp<obj>, ClientEffect>
 
 // ─── the expression witness ─────────────────────────────────────────────────
 
@@ -239,7 +241,7 @@ let decodeAction (value: JVal) : Result<Action<obj>, WireRefusal> =
         | NodeKind.Button spec -> Ok spec.OnClick
         | _ -> ProgramWire.refuse RefusalClass.MalformedReferencedValue "the action carrier did not decode as expected"
 
-// ─── the tree witness ───────────────────────────────────────────────────────
+// ─── the tree: walk and dispatch members ───────────────────────────────────
 
 /// Substitute a binding with `Binding.Static (resolved value)` when it resolves;
 /// leave it untouched otherwise (NotResolved / Errored — the renderer's
@@ -382,7 +384,7 @@ let private staticListCount (binding: Binding<'t list>) : int =
     | Binding.Static(Some items) -> min Budget.maxCountedRows (List.length items)
     | _ -> 0
 
-/// `TreeWitness.Cost` — one node's own data cost, excluding the node itself
+/// `WalkWitness.Cost` — one node's own data cost, excluding the node itself
 /// (the core adds it). A `Chart` costs one per (point × series), a `DataGrid`
 /// one per (row × column); every other kind carries no data of its own.
 let nodeDataCost (node: Node<obj>) : int =
@@ -401,7 +403,7 @@ let private slotOf (source: Binding<Row seq>) : string option =
     | Binding.Query(name, _, _) -> Some name
     | _ -> None
 
-/// `TreeWitness.QueryReaders` — the columns a node needs of the query slot it
+/// `WalkWitness.QueryReaders` — the columns a node needs of the query slot it
 /// reads, where it reads one. A grid's columns name their fields, and a chart
 /// names its axes. `ClosureHeld` covers the projections that decide WHICH
 /// COLUMNS ARE READ: a grid column with no `field` and a closure row key.
@@ -429,7 +431,7 @@ let queryReaders (node: Node<obj>) : QueryReader list =
 
     | _ -> []
 
-/// `TreeWitness.Handlers` — the action slots the WIRE preserves, named by the
+/// `DispatchWitness.Handlers` — the action slots the WIRE preserves, named by the
 /// event that dispatches each. Every other handler slot is a closure the
 /// decoder replaces with an inert placeholder, so it can demand nothing on a
 /// decoded tree.
@@ -440,7 +442,7 @@ let handlers (node: Node<obj>) : (string * Action<obj>) list =
     | NodeKind.Modal spec -> spec.OnDismiss |> Option.map (fun a -> "dismiss", a) |> Option.toList
     | _ -> []
 
-/// `TreeWitness.Nodes` — Core's node witness over the STRUCTURAL surface, the
+/// `WalkWitness.Nodes` — Core's node witness over the STRUCTURAL surface, the
 /// one `getChildren` / `withChildren` describe and the budget and
 /// re-resolution walk.
 let nodes: NodeWitness<Node<obj>, string> =
@@ -471,12 +473,14 @@ let store: StoreWitness<BindingSources> =
       IsReserved = StateKeys.isHostReserved
       ReservedPrefix = StateKeys.HostReservedPrefix }
 
-// ─── the op witness ─────────────────────────────────────────────────────────
+// ─── the state axis ─────────────────────────────────────────────────────────
 
-/// `OpWitness`: the tier's apply engine, canonical op codec and structural
-/// diff. A refusal from the apply engine is reported by its code, exactly as
-/// the handler's halt always named it.
-let ops: OpWitness<Node<obj>, TreeOp<obj>> =
+/// `StateWitness`: the tier's apply engine, canonical op codec, structural
+/// diff and canonical tree encoding. A refusal from the apply engine is
+/// reported by its code, exactly as the handler's halt always named it. The UI
+/// tier has no op-channel guard: every op is an edit (Phase 1974), so the
+/// handler's `ApplyOps` arm is byte-for-byte what it was.
+let state: StateWitness<Node<obj>, TreeOp<obj>> =
     { Stream =
         { Apply =
             fun op tree ->
@@ -519,7 +523,9 @@ let ops: OpWitness<Node<obj>, TreeOp<obj>> =
                         | JStr id when List.contains name addressing -> Some(name, id)
                         | _ -> None)
                 | _ -> []
-              Destination = EffectDestination.Absent } }
+              Destination = EffectDestination.Absent }
+      Canonical = Fuaran.UI.OpStream.Abstractions.CanonicalJson.encodeNode
+      View = OpView.edits }
 
 // ─── the effect witness ─────────────────────────────────────────────────────
 
@@ -652,20 +658,21 @@ let claimVerifier
 
 // ─── the witness, assembled ─────────────────────────────────────────────────
 
-/// The tree witness.
-let tree: TreeWitness<Node<obj>, Action<obj>, BindingSources> =
+/// The walk axis: the structural and traversal surfaces, the per-node data
+/// cost and the query readers.
+let walk: WalkWitness<Node<obj>> =
     { Nodes = nodes
       Traverse = descendantNodes
-      Handlers = handlers
+      Cost = nodeDataCost
+      QueryReaders = queryReaders }
+
+/// The dispatch axis: handlers and events on nodes, per-node re-resolution,
+/// the fourteen-arm action view, expressions, the binding store and the
+/// client effects.
+let dispatch: DispatchWitness<Node<obj>, Action<obj>, Binding<JVal>, BindingSources, ClientEffect> =
+    { Handlers = handlers
       Events = fun node -> Validation.legitimateEvents node |> Set.toList
       Resolve = resolveOwnFields
-      Cost = nodeDataCost
-      QueryReaders = queryReaders
-      Canonical = Fuaran.UI.OpStream.Abstractions.CanonicalJson.encodeNode }
-
-/// The UI witness: D18's `ProgramWitness` at the UI tier's types.
-let witness: UiProgramWitness =
-    { Tree = tree
       Action =
         { View = view
           Lower = lower
@@ -676,5 +683,11 @@ let witness: UiProgramWitness =
         { Resolve = resolveExpr
           Uses = usesOfExpr }
       Store = store
-      Op = ops
       Effect = effects }
+
+/// The UI witness: `ProgramWitness` at the UI tier's types, all three axes
+/// filled (D18, D20).
+let witness: UiProgramWitness =
+    { State = state
+      Walk = walk
+      Dispatch = dispatch }

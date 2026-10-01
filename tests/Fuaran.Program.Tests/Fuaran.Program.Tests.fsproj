@@ -16,6 +16,10 @@
          adversary per finding of the first second-domain instantiation. -->
     <Compile Include="VerbDomain.fs" />
     <Compile Include="VerbWitnessTests.fs" />
+    <!-- Phase 1974: the THIRD witness — a document pipeline whose state is its
+         tree, at a composition filling the state and walk axes. -->
+    <Compile Include="DocDomain.fs" />
+    <Compile Include="DocWitnessTests.fs" />
     <Compile Include="CoreBoundaryTests.fs" />
     <Compile Include="SchemaClockTests.fs" />
     <Compile Include="Program.fs" />

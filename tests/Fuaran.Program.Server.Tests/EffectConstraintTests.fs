@@ -289,7 +289,9 @@ let tests =
                     let payload = Fuaran.Core.JObj [ "url", jstr "api.example.com" ]
 
                     Expect.equal
-                        (ServerArgumentPolicy.payloadBytes UiWitness.ops (ServerEffect.HostCall("fetch", payload, None)))
+                        (ServerArgumentPolicy.payloadBytes
+                            UiWitness.state
+                            (ServerEffect.HostCall("fetch", payload, None)))
                         (System.Text.Encoding.UTF8.GetByteCount(ProgramWire.render payload))
                         "the bytes the wire carries, not an in-memory estimate"
 
@@ -299,8 +301,8 @@ let tests =
                     let op = TreeOp.RemoveNode(NodeId "call")
 
                     Expect.equal
-                        (ServerArgumentPolicy.payloadBytes UiWitness.ops (ServerEffect.ApplyOps [ op; op ]))
-                        (2 * System.Text.Encoding.UTF8.GetByteCount(UiWitness.ops.Stream.Encode op))
+                        (ServerArgumentPolicy.payloadBytes UiWitness.state (ServerEffect.ApplyOps [ op; op ]))
+                        (2 * System.Text.Encoding.UTF8.GetByteCount(UiWitness.state.Stream.Encode op))
                         "an op sequence is measured as its ops' canonical bytes, summed"
                 } ]
 
@@ -468,13 +470,13 @@ let tests =
                         [ ServerEffect.ApplyOps [ TreeOp.RemoveNode(NodeId "call") ]
                           ServerEffect.EmitPatch [ TreeOp.RemoveNode(NodeId "call") ] ] do
                         Expect.equal
-                            (ServerArgumentPolicy.arguments UiWitness.ops effect)
+                            (ServerArgumentPolicy.arguments UiWitness.state effect)
                             [ "target", "call" ]
                             (ServerEffect.kind effect)
 
                     Expect.equal
                         (ServerArgumentPolicy.arguments
-                            UiWitness.ops
+                            UiWitness.state
                             (ServerEffect.ApplyOps
                                 [ TreeOp.MoveNode(NodeId "call", NodeId "root")
                                   TreeOp.RemoveNode(NodeId "call") ]))
@@ -482,7 +484,7 @@ let tests =
                         "every op's reach, in op order, every argument it names"
 
                     Expect.isEmpty
-                        (ServerArgumentPolicy.arguments UiWitness.ops (ServerEffect.ApplyOps []))
+                        (ServerArgumentPolicy.arguments UiWitness.state (ServerEffect.ApplyOps []))
                         "and an empty sequence reaches nothing"
                 }
 
@@ -536,7 +538,7 @@ let tests =
                               "request", Fuaran.Core.JObj [ "url", jstr "nested.example.net" ] ]
 
                     Expect.equal
-                        (ServerArgumentPolicy.arguments UiWitness.ops (ServerEffect.HostCall("fetch", args, None)))
+                        (ServerArgumentPolicy.arguments UiWitness.state (ServerEffect.HostCall("fetch", args, None)))
                         [ "url", "api.example.com" ]
                         "a nested value is NOT reachable by an allow-list; the bound belongs on the top-level argument"
                 } ] ]

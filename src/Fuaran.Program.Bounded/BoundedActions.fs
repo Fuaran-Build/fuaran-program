@@ -224,15 +224,15 @@ module BoundedActions =
     /// budget's cascade cost and the demanded-effect projection. Neither
     /// performs, mutates or resolves anything, which is exactly the distinction
     /// D1 draws.)
-    let rec run
-        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+    let rec private runFold
+        (fold: DispatchFold<'Action, 'Expr, 'Store, 'Effect>)
         (arm: HandlerArm<'Store, 'Effect, 'Placement>)
         (nodeId: string)
         (action: 'Action)
         (s: 'Store)
         (placement: 'Placement)
         : BoundedOutcome<'Store, 'Effect> * 'Placement =
-        match witness.Action.View action with
+        match fold.Action.View action with
         // The one store mutation: write the state channel. The reserved key
         // namespace is closed on the bounded path too. This loop's whole
         // premise is that the tree is untrusted, so a generated tree writing a
@@ -244,14 +244,11 @@ module BoundedActions =
         // §10.5 it leaves the step's event-level refusal unset. Which keys are
         // reserved is the witness's (K5); that the fold refuses them is not.
         | ActionView.Assign(key, value, from) ->
-            (if witness.Store.IsReserved key then
+            (if fold.Store.IsReserved key then
                  refused
                      nodeId
-                     (witness.Action.Describe action)
-                     (sprintf
-                         "State key '%s' is under the host-reserved '%s' namespace"
-                         key
-                         witness.Store.ReservedPrefix)
+                     (fold.Action.Describe action)
+                     (sprintf "State key '%s' is under the host-reserved '%s' namespace" key fold.Store.ReservedPrefix)
                      s
              else
                  // `from` (value XOR from, decode-enforced) evaluates AT DISPATCH
@@ -260,24 +257,24 @@ module BoundedActions =
                  let payload: Result<JVal option, string> =
                      match from with
                      | Some expr ->
-                         (match witness.Expr.Resolve s expr with
+                         (match fold.Expr.Resolve s expr with
                           | ExprResolution.Resolved jv -> Ok(Some jv)
                           | ExprResolution.NotResolved -> Ok None
                           | ExprResolution.Errored m -> Error m)
                      | None -> Ok value
 
                  match payload with
-                 | Ok(Some jv) -> store (witness.Store.Assign key jv s)
+                 | Ok(Some jv) -> store (fold.Store.Assign key jv s)
                  | Ok None ->
                      refused
                          nodeId
-                         (witness.Action.Describe action)
+                         (fold.Action.Describe action)
                          "valueFrom did not resolve to a value — no write performed"
                          s
                  | Error m ->
                      refused
                          nodeId
-                         (witness.Action.Describe action)
+                         (fold.Action.Describe action)
                          (sprintf "valueFrom errored: %s — no write performed" m)
                          s),
             placement
@@ -302,13 +299,13 @@ module BoundedActions =
             if declaresTarget then
                 refused
                     nodeId
-                    (witness.Action.Describe action)
+                    (fold.Action.Describe action)
                     "the call declares a result target; a handler declares where its own results land"
                     s,
                 placement
             else
                 match arm.Answer nodeId endpoint s placement with
-                | None -> noOp nodeId (witness.Action.Describe action) s, placement
+                | None -> noOp nodeId (fold.Action.Describe action) s, placement
                 | Some answer ->
                     // An answered call never halts: a handler is its own
                     // atomicity unit (D8), so one that failed rolled ITSELF
@@ -329,12 +326,12 @@ module BoundedActions =
         // and emits nothing, whichever way it goes. The model's `VRequire` arm;
         // `fold_total` proves it is the ONLY shape whose step can halt.
         | ActionView.Require condition ->
-            (match witness.Expr.Resolve s condition with
+            (match fold.Expr.Resolve s condition with
              | ExprResolution.Resolved(JBool true) -> store s
-             | ExprResolution.Resolved _ -> halted nodeId (witness.Action.Describe action) "the guard did not hold" s
+             | ExprResolution.Resolved _ -> halted nodeId (fold.Action.Describe action) "the guard did not hold" s
              | ExprResolution.NotResolved ->
-                 halted nodeId (witness.Action.Describe action) "the guard did not resolve to a value" s
-             | ExprResolution.Errored m -> halted nodeId (witness.Action.Describe action) m s),
+                 halted nodeId (fold.Action.Describe action) "the guard did not resolve to a value" s
+             | ExprResolution.Errored m -> halted nodeId (fold.Action.Describe action) m s),
             placement
 
         // A leaf is the domain's: lowered to at most one effect, refused with a
@@ -343,14 +340,14 @@ module BoundedActions =
         // look inside it, and it never recurses into one. A leaf's refusal does
         // NOT halt: the sequence carries on past it, as it always has.
         | ActionView.Leaf _ ->
-            (match witness.Action.Lower nodeId action s with
+            (match fold.Action.Lower nodeId action s with
              | LeafOutcome.Emit effect ->
                  { Store = s
                    Effects = [ effect ]
                    Diagnostics = []
                    Halted = false }
-             | LeafOutcome.Refuse reason -> refused nodeId (witness.Action.Describe action) reason s
-             | LeafOutcome.Decline -> noOp nodeId (witness.Action.Describe action) s),
+             | LeafOutcome.Refuse reason -> refused nodeId (fold.Action.Describe action) reason s
+             | LeafOutcome.Decline -> noOp nodeId (fold.Action.Describe action) s),
             placement
 
         // Compose: fold in order, threading the store AND the placement's
@@ -369,7 +366,7 @@ module BoundedActions =
                     if acc.Halted then
                         acc, p
                     else
-                        let next, p' = run witness arm nodeId a acc.Store p
+                        let next, p' = runFold fold arm nodeId a acc.Store p
 
                         { Store = next.Store
                           Effects = acc.Effects @ next.Effects
@@ -377,6 +374,21 @@ module BoundedActions =
                           Halted = next.Halted },
                         p')
                 (store s, placement)
+
+    /// `runFold` over a composition's dispatch position — the fold every
+    /// placement runs (Phase 1974: the fold reads the DISPATCH axis and only
+    /// it). Generic over the position, so a path that runs under every
+    /// composition (the server handler) can call it; it is only ever handed
+    /// an action, and only a composition that fills the dispatch axis has one.
+    let run
+        (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
+        (arm: HandlerArm<'Store, 'Effect, 'Placement>)
+        (nodeId: string)
+        (action: 'Action)
+        (s: 'Store)
+        (placement: 'Placement)
+        : BoundedOutcome<'Store, 'Effect> * 'Placement =
+        runFold (DispatchPosition.fold witness.Dispatch) arm nodeId action s placement
 
     /// Interpret one bounded action against the store at a placement that runs
     /// NO handlers — the browser client and the server driver, neither of which
@@ -386,7 +398,7 @@ module BoundedActions =
     /// than a simpler one: a placement without handlers differs from a
     /// placement with them in what it ANSWERS, never in how it interprets.
     let runInert
-        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (nodeId: string)
         (action: 'Action)
         (s: 'Store)

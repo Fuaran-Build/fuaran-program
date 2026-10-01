@@ -69,7 +69,7 @@ type ServerServices<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect> =
     {
         /// G1 check (d): the dispatch policy gate.
         /// The domain this placement runs (DECISIONS.md D18).
-        Witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>
+        Witness: FullWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>
         CanDispatch: 'Action -> bool
         /// The closed handler registry, by the endpoint an `Action.Call` names.
         /// A tree can reach only what is in here.
@@ -81,7 +81,7 @@ type ServerServices<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect> =
         /// through a registered performer, which makes `ApplyOps` a staged arm
         /// performed after the plan commits. A host act, like registering a
         /// performer; `create` leaves it in memory.
-        OpPerformance: OpPerformance<'Op>
+        OpPerformance: OpPerformance<'Node, 'Op>
         /// Resolves a named data source for `ServerEffect.RunQuery`. Defaults to
         /// refusing every name, so a host that wires no data serves no query.
         Sources: string -> Result<Fuaran.Core.Table, Fuaran.Core.EvalError>
@@ -110,7 +110,7 @@ module ServerServices =
     /// the named opt-in, and it opens the gates — it does not conjure handlers,
     /// performers or sources, because those are host acts.
     let create
-        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (witness: FullWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
         : ServerServices<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect> =
         { Witness = witness
           CanDispatch = fun _ -> false
@@ -125,7 +125,7 @@ module ServerServices =
     /// **The named opt-in back to allow-everything gates** — both of them, the
     /// dispatch gate and the effect gate. Still no handlers and no performers.
     let createPermissive
-        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (witness: FullWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
         : ServerServices<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect> =
         { create witness with
             CanDispatch = fun _ -> true
@@ -398,7 +398,7 @@ module ServerSession =
             else
                 Resolve.resolveTree session.Services.Witness store tree
 
-        let ops = session.Services.Witness.Op.Diff session.Resolved resolved
+        let ops = session.Services.Witness.State.Diff session.Resolved resolved
         session.Services.OnApply ops
 
         { session with

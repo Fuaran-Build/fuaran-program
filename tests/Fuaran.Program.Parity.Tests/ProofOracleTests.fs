@@ -529,7 +529,7 @@ let private toyLookup (s: BoundedFold.store<Fuaran.Core.JVal>) (key: string) : F
 
 /// The production `View`, taken to exhaustion — the model's `w_view`.
 let rec private toyModelView (a: ToyAction) : BoundedFold.action_view<ToyAction, ToyExpr, Fuaran.Core.JVal> =
-    match toyWitness.Action.View a with
+    match toyWitness.Dispatch.Action.View a with
     | ActionView.Sequence items -> BoundedFold.VSequence(a, items |> List.map toyModelView)
     | ActionView.Assign(key, value, from) -> BoundedFold.VAssign(a, key, modelOpt value, modelOpt from)
     | ActionView.Call(endpoint, declaresTarget) -> BoundedFold.VCall(a, endpoint, declaresTarget)
@@ -544,15 +544,15 @@ let private toyModelWitness: BoundedFold.witness<ToyAction, ToyExpr, Fuaran.Core
             | LeafOutcome.Emit effect -> BoundedFold.Emit effect
             | LeafOutcome.Refuse reason -> BoundedFold.Refuse reason
             | LeafOutcome.Decline -> BoundedFold.Decline
-      w_describe = toyWitness.Action.Describe
+      w_describe = toyWitness.Dispatch.Action.Describe
       w_resolve =
         fun s expr ->
             match resolveWith (toyLookup s) expr with
             | ExprResolution.Resolved value -> BoundedFold.Resolved value
             | ExprResolution.NotResolved -> BoundedFold.NotResolved
             | ExprResolution.Errored message -> BoundedFold.Errored message
-      w_is_reserved = toyWitness.Store.IsReserved
-      w_reserved_prefix = toyWitness.Store.ReservedPrefix
+      w_is_reserved = toyWitness.Dispatch.Store.IsReserved
+      w_reserved_prefix = toyWitness.Dispatch.Store.ReservedPrefix
       // The core's own `jv = JBool true`, an arrow here because the model's
       // value type is abstract — see the model's `w_is_true`.
       w_is_true = fun jv -> jv = JBool true }
@@ -682,7 +682,7 @@ let private genericTests =
               let shapes =
                   toyCorpus
                   |> List.map (fun (_, a) ->
-                      match toyWitness.Action.View a with
+                      match toyWitness.Dispatch.Action.View a with
                       | ActionView.Sequence _ -> "Sequence"
                       | ActionView.Assign _ -> "Assign"
                       | ActionView.Call _ -> "Call"

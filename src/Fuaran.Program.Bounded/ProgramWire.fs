@@ -303,28 +303,26 @@ module ProgramWire =
 
     /// Encode an action for a compute-stage position — through the tree codec's
     /// own encoder, so this file spells no action case.
-    let encodeAction (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>) (action: 'Action) : JVal =
-        witness.Action.Encode action
+    let encodeAction
+        (witness: ProgramWitness<'Node, 'Op, 'Walk, DispatchWitness<'Node, 'Action, 'Expr, 'Store, 'Effect>>)
+        (action: 'Action)
+        : JVal =
+        witness.Dispatch.Action.Encode action
 
     let decodeAction
-        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (witness: ProgramWitness<'Node, 'Op, 'Walk, DispatchWitness<'Node, 'Action, 'Expr, 'Store, 'Effect>>)
         (value: JVal)
         : Result<'Action, WireRefusal> =
-        refuseResultTarget value |> Result.bind (fun () -> witness.Action.Decode value)
+        refuseResultTarget value
+        |> Result.bind (fun () -> witness.Dispatch.Action.Decode value)
 
-    let encodeOp
-        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
-        (op: 'Op)
-        : Result<JVal, WireRefusal> =
-        match Json.parse (witness.Op.Stream.Encode op) with
+    let encodeOp (witness: ProgramWitness<'Node, 'Op, 'Walk, 'Dispatch>) (op: 'Op) : Result<JVal, WireRefusal> =
+        match Json.parse (witness.State.Stream.Encode op) with
         | Ok value -> Ok value
         | Error message -> refuse RefusalClass.MalformedReferencedValue message
 
-    let decodeOp
-        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
-        (value: JVal)
-        : Result<'Op, WireRefusal> =
-        match witness.Op.Stream.Decode(Canon.render value) with
+    let decodeOp (witness: ProgramWitness<'Node, 'Op, 'Walk, 'Dispatch>) (value: JVal) : Result<'Op, WireRefusal> =
+        match witness.State.Stream.Decode(Canon.render value) with
         | Ok op -> Ok op
         | Error code -> refuse RefusalClass.MalformedReferencedValue ("the op does not decode: " + code)
 
@@ -404,10 +402,10 @@ module ProgramWire =
     ///               is undecidable, and reported as such (Phase 1967).
     ///   Leaf      — undecidable, and reported as such.
     let rec replayDefectsOfAction
-        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (witness: ProgramWitness<'Node, 'Op, 'Walk, DispatchWitness<'Node, 'Action, 'Expr, 'Store, 'Effect>>)
         (action: 'Action)
         : ReplayDefect list =
-        match witness.Action.View action with
+        match witness.Dispatch.Action.View action with
         | ActionView.Call _ -> []
         | ActionView.Sequence items -> items |> List.collect (replayDefectsOfAction witness) |> List.distinct
         | ActionView.Assign(_, _, Some _) -> [ ReplayDefect.NonLiteralWrite ]
@@ -419,27 +417,21 @@ module ProgramWire =
     /// against the same node; one addressed relative to where a previous op
     /// left things does not; and one the op codec cannot encode cannot be
     /// classified at all.
-    let replayDefectsOfOp
-        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
-        (op: 'Op)
-        : ReplayDefect list =
+    let replayDefectsOfOp (witness: ProgramWitness<'Node, 'Op, 'Walk, 'Dispatch>) (op: 'Op) : ReplayDefect list =
         match encodeOp witness op with
         | Error _ -> [ ReplayDefect.UnencodableOp ]
         | Ok _ ->
-            match witness.Op.AbsoluteTarget op with
+            match witness.State.AbsoluteTarget op with
             | Some target when target <> "" -> []
             | _ -> [ ReplayDefect.RelativeAddressing ]
 
     let replaySafetyOfAction
-        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (witness: ProgramWitness<'Node, 'Op, 'Walk, DispatchWitness<'Node, 'Action, 'Expr, 'Store, 'Effect>>)
         (action: 'Action)
         : ReplaySafety =
         replayDefectsOfAction witness action |> verdictOfDefects
 
-    let replaySafetyOfOp
-        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
-        (op: 'Op)
-        : ReplaySafety =
+    let replaySafetyOfOp (witness: ProgramWitness<'Node, 'Op, 'Walk, 'Dispatch>) (op: 'Op) : ReplaySafety =
         replayDefectsOfOp witness op |> verdictOfDefects
 
     let replaySafetyTag (safety: ReplaySafety) : string =
@@ -600,14 +592,14 @@ module ProgramWire =
     /// bytes something actually ships, not against a second implementation of
     /// them here.
     let encodeClientEffect
-        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (witness: ProgramWitness<'Node, 'Op, 'Walk, DispatchWitness<'Node, 'Action, 'Expr, 'Store, 'Effect>>)
         (effect: 'Effect)
         : string =
-        witness.Effect.Encode effect
+        witness.Dispatch.Effect.Encode effect
 
     /// The witness's reader for the same family.
     let decodeClientEffect
-        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (witness: ProgramWitness<'Node, 'Op, 'Walk, DispatchWitness<'Node, 'Action, 'Expr, 'Store, 'Effect>>)
         (value: JVal)
         : Result<'Effect, WireRefusal> =
-        witness.Effect.Decode value
+        witness.Dispatch.Effect.Decode value

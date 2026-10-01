@@ -4,10 +4,15 @@
 ///   W3/W4  an off-list publish target is refused BEFORE anything performs,
 ///          and the demanded document names the paths and the target;
 ///   F1     a guard that does not hold halts the handler with NOTHING
-///          performed, while a leaf's refusal does not halt;
+///          performed;
 ///   F2     a part-way performance failure is reported with the prefix that
 ///          ran and the position it failed at;
 ///   W5     a typed refusal crosses the op channel as text and parses back.
+///
+/// Since Phase 1974 (`DECISIONS.md` D20) the verb fills the STATE AXIS ONLY,
+/// and every test here runs it so: its handlers carry no compute stage (its
+/// action type has no values), its guards are op-channel guards resolved
+/// against the plan, and its performer is handed the planned state.
 ///
 /// This project references the three core packages and no UI-tier package,
 /// so the verb is the whole domain here, as the toy is beside it.
@@ -21,16 +26,17 @@ open Fuaran.Program.Tests.VerbDomain
 
 let private empty: FileMap = { Files = Map.empty; Published = [] }
 
-let private args (note: string) : VerbStore = Map.ofList [ "args.note", JStr note ]
+/// A handler under a witness that fills no dispatch axis: effect stages only.
+type private VerbHandler = Handler<Nothing, FileOp>
 
-/// The verb: require a note, write a shard, delete the old one, publish.
-let private archive: Handler<VerbAction, FileOp> =
+/// The verb: check the shard exists, read it, write the archive copy, delete
+/// the old one, check it is gone, publish.
+let private archive: VerbHandler =
     { Name = "archive"
       Stages =
-        [ Compute(Need(NonEmpty "args.note"))
-          Effect(ServerEffect.ApplyOps [ Read "notes/x.md" ])
+        [ Effect(ServerEffect.ApplyOps [ Check(Exists "notes/x.md"); Read "notes/x.md" ])
           Effect(ServerEffect.ApplyOps [ Write("notes/archive/x.md", "archived"); Delete "notes/x.md" ])
-          Effect(ServerEffect.ApplyOps [ Publish "origin" ]) ] }
+          Effect(ServerEffect.ApplyOps [ Check(Missing "notes/x.md"); Publish "origin" ]) ] }
 
 /// A registry admitting every capability, with the verb's own policy: ops
 /// may reach the notes store, locally, and publish to `origin` and nowhere
@@ -48,12 +54,13 @@ let private seeded () =
     world.Seed("notes/x.md", "live")
     world
 
-let private run
+let private runIn
+    (registry: ServerEffectRegistry)
     (world: World)
     (failAt: int option)
-    (handler: Handler<VerbAction, FileOp>)
-    (store: VerbStore)
-    : HandlerOutcome<FileMap, VerbStore, FileOp, VerbEffect> =
+    (handler: VerbHandler)
+    (tree: FileMap)
+    : HandlerOutcome<FileMap, unit, FileOp, Nothing> =
     Handler.runWith
         witness
         registry
@@ -61,23 +68,25 @@ let private run
         DataFrame.noResolve
         "verb"
         handler
-        { Tree = { empty with Files = world.Files }
-          Bindings = store }
+        { Tree = tree; Bindings = () }
+
+let private run (world: World) (failAt: int option) (handler: VerbHandler) =
+    runIn registry world failAt handler { empty with Files = world.Files }
 
 [<Tests>]
 let tests =
     testList
         "Phase 1967 — the second witness: a verb over a file map"
-        [ test "the verb runs: a guard that holds, a plan applied, the plan performed after it commits" {
+        [ test "the verb runs: guards that hold, a plan applied, the plan performed after it commits" {
               let world = seeded ()
-              let outcome = run world None archive (args "archived by the test")
+              let outcome = run world None archive
 
               Expect.isTrue outcome.Committed "the handler commits"
 
               Expect.equal
                   outcome.Performed
                   [ "ApplyOps"; "ApplyOps"; "ApplyOps"; "ApplyOps" ]
-                  "four ops performed, each its own staged call, in plan order — nothing at plan time"
+                  "four edits performed, each its own staged call, in plan order — the two checks are guards and never performed"
 
               Expect.equal
                   (world.Files |> Map.toList)
@@ -86,6 +95,11 @@ let tests =
 
               Expect.equal world.Published [ "origin" ] "and published"
               Expect.equal outcome.Store.Tree.Published [ "origin" ] "the committed plan agrees with the world"
+
+              Expect.isFalse
+                  (world.Invocations
+                   |> List.exists (fun op -> op.Contains "Exists" || op.Contains "Missing"))
+                  "no guard reached the performer"
           }
 
           // ── W3 / W4: the envelope says what the ops reach, and the policy binds it ──
@@ -105,15 +119,16 @@ let tests =
                     "ApplyOps", "path", "notes/archive/x.md"
                     "ApplyOps", "path", "notes/x.md"
                     "ApplyOps", "target", "origin" ]
-                  "every path, the target, and the two destination classes — distinct and sorted"
+                  "every path, the target, and the two destination classes — distinct and sorted; the guards' paths are among them"
 
               // The document's bytes, pinned: this projection is this
               // repository's own artefact (docs/generic-tier.md §6), and the
-              // reach is what version 5 added to it.
+              // reach is what version 5 added to it. A state-only verb reads
+              // no state namespace — it has no binding store (Phase 1974).
               Expect.equal
                   (Demanded.encode projection)
                   ("{\"kind\":\"demanded\",\"version\":5,\"effects\":[],\"hostCalls\":[],"
-                   + "\"stateNamespaces\":[{\"namespace\":\"args\",\"written\":false,\"read\":true}],"
+                   + "\"stateNamespaces\":[],"
                    + "\"opaqueHandlers\":[],\"server\":{\"effects\":[\"ApplyOps\"],\"capabilities\":[\"ApplyOps\"],"
                    + "\"functions\":[],\"channels\":[],"
                    + "\"reach\":[{\"capability\":\"ApplyOps\",\"argument\":\"destination\",\"name\":\"local\"},"
@@ -147,7 +162,7 @@ let tests =
                   { archive with
                       Stages = archive.Stages @ [ Effect(ServerEffect.ApplyOps [ Publish "upstream" ]) ] }
 
-              let outcome = run world None elsewhere (args "note")
+              let outcome = run world None elsewhere
 
               Expect.isFalse outcome.Committed "refused"
               Expect.isEmpty outcome.Performed "nothing performed"
@@ -175,15 +190,13 @@ let tests =
               let world = seeded ()
 
               let outcome =
-                  Handler.runWith
-                      witness
+                  runIn
                       byClass
-                      (OpPerformance.performedBy (world.Performer None))
-                      DataFrame.noResolve
-                      "verb"
+                      world
+                      None
                       { Name = "push"
                         Stages = [ Effect(ServerEffect.ApplyOps [ Write("notes/x.md", "x"); Publish "origin" ]) ] }
-                      { Tree = empty; Bindings = Map.empty }
+                      empty
 
               Expect.isFalse outcome.Committed "refused"
               Expect.isEmpty world.Invocations "before anything performs"
@@ -205,15 +218,13 @@ let tests =
               let world = World()
 
               let outcome (content: string) =
-                  Handler.runWith
-                      witness
+                  runIn
                       bounded
-                      (OpPerformance.performedBy (world.Performer None))
-                      DataFrame.noResolve
-                      "verb"
+                      world
+                      None
                       { Name = "write"
                         Stages = [ Effect(ServerEffect.ApplyOps [ Write("a.md", content) ]) ] }
-                      { Tree = empty; Bindings = Map.empty }
+                      empty
 
               Expect.isTrue (outcome "small").Committed "under the ceiling"
               Expect.isFalse (outcome (String.replicate 64 "x")).Committed "over it"
@@ -224,46 +235,67 @@ let tests =
                   "naming the limit, never the size"
           }
 
-          // ── F1: a guard that halts ──
+          // ── F1: a guard that halts — on the op channel, over the plan ──
 
           test "ADVERSARY F1 — a guard that does not hold halts the handler with nothing performed" {
+              // The archive copy already exists in the world, so the plan's
+              // `Missing` check after the delete holds — but a run whose
+              // delete is absent leaves the shard in the PLAN, and the guard
+              // sees the plan.
               let world = seeded ()
-              let outcome = run world None archive (args "")
+
+              let keeps =
+                  { Name = "keeps"
+                    Stages =
+                      [ Effect(ServerEffect.ApplyOps [ Write("notes/archive/x.md", "archived") ])
+                        Effect(ServerEffect.ApplyOps [ Check(Missing "notes/x.md"); Publish "origin" ]) ] }
+
+              let outcome = run world None keeps
 
               Expect.isFalse outcome.Committed "halted"
               Expect.isEmpty outcome.Performed "nothing performed"
-              Expect.isEmpty world.Invocations "the performer was never asked"
+              Expect.isEmpty world.Invocations "the performer was never asked — not even for the write before the guard"
               Expect.equal (world.Files |> Map.toList) [ "notes/x.md", "live" ] "the world is untouched"
 
               Expect.equal
                   outcome.Diagnostics
-                  [ ServerDiagnostic.Bounded(BoundedDiagnostic.Refused("verb", "Need", "the guard did not hold")) ]
-                  "the fold's own refusal is the whole record of why"
+                  [ ServerDiagnostic.Failed(
+                        "ApplyOps",
+                        VerbRefusal.render
+                            { Code = "present"
+                              Detail = "notes/x.md" }
+                    ) ]
+                  "the guard's own refusal is the whole record of why"
 
-              Expect.equal outcome.Store.Bindings (args "") "the store is the entry store"
-              Expect.equal outcome.Store.Tree.Files world.Files "and so is the tree"
+              Expect.equal outcome.Store.Tree.Files world.Files "the state is the entry state"
+              Expect.isEmpty world.Published "and the publish after the guard never performed"
+          }
 
-              // The guard that halts and the leaf that only refuses, in one
-              // handler: the leaf's refusal is a diagnostic the handler carries
-              // on past, and the guard's is the one that stops it.
-              let both =
-                  { Name = "both"
-                    Stages =
-                      [ Compute(Steps [ Say ""; Say "going on"; Need(Lit(JBool false)); Say "never" ])
-                        Effect(ServerEffect.ApplyOps [ Publish "origin" ]) ] }
+          test "a guard reads the PLANNED state, not the entry state" {
+              // The entry world holds the shard; the plan deletes it; a check
+              // that it exists, placed after the delete, refuses — because it
+              // reads the state the ops before it produced.
+              let world = seeded ()
 
-              let outcome = run world None both Map.empty
+              let outcome =
+                  run
+                      world
+                      None
+                      { Name = "after-delete"
+                        Stages = [ Effect(ServerEffect.ApplyOps [ Delete "notes/x.md"; Check(Exists "notes/x.md") ]) ] }
 
-              Expect.isFalse outcome.Committed "the guard halted the handler"
-              Expect.isEmpty outcome.ClientEffects "rolled back — including the leaf that did emit"
+              Expect.isFalse outcome.Committed "the guard saw the delete"
+              Expect.isEmpty world.Invocations "nothing performed"
 
               Expect.equal
                   outcome.Diagnostics
-                  [ ServerDiagnostic.Bounded(BoundedDiagnostic.Refused("verb", "Say", "nothing to say"))
-                    ServerDiagnostic.Bounded(BoundedDiagnostic.Refused("verb", "Need", "the guard did not hold")) ]
-                  "the leaf's refusal did not halt; the guard's did; `Say never` never ran"
-
-              Expect.isEmpty world.Published "and the publish after the guard never performed"
+                  [ ServerDiagnostic.Failed(
+                        "ApplyOps",
+                        VerbRefusal.render
+                            { Code = "missing"
+                              Detail = "notes/x.md" }
+                    ) ]
+                  "refused on the plan"
           }
 
           // ── W5: a typed refusal crosses as text ──
@@ -280,16 +312,13 @@ let tests =
                       world
                       None
                       { Name = "ambiguous"
-                        Stages =
-                          [ Compute(Need(Refusing refusal))
-                            Effect(ServerEffect.ApplyOps [ Publish "origin" ]) ] }
-                      Map.empty
+                        Stages = [ Effect(ServerEffect.ApplyOps [ Check(Refused refusal); Publish "origin" ]) ] }
 
               Expect.isFalse outcome.Committed "halted"
               Expect.isEmpty world.Invocations "nothing performed"
 
               match outcome.Diagnostics with
-              | [ ServerDiagnostic.Bounded(BoundedDiagnostic.Refused(_, "Need", reason)) ] ->
+              | [ ServerDiagnostic.Failed("ApplyOps", reason) ] ->
                   Expect.equal
                       (VerbRefusal.parse reason)
                       (Some refusal)
@@ -301,7 +330,7 @@ let tests =
 
           test "ADVERSARY F2 — a part-way performance failure reports the prefix that ran and where it stopped" {
               let world = seeded ()
-              let outcome = run world (Some 2) archive (args "note")
+              let outcome = run world (Some 2) archive
 
               Expect.isFalse outcome.Committed "rolled back"
 
@@ -325,6 +354,23 @@ let tests =
               Expect.equal (List.length world.Invocations) 3 "the performer was asked three times and stopped"
           }
 
+          test "F-PERFORM — the performer is handed the planned state as of each op, and the last is the plan" {
+              let world = seeded ()
+              let outcome = run world None archive
+
+              Expect.isTrue outcome.Committed "committed"
+
+              Expect.equal
+                  (world.Handed |> List.map (fun s -> s.Files |> Map.toList, s.Published))
+                  [ [ "notes/x.md", "live" ], []
+                    [ "notes/archive/x.md", "archived"; "notes/x.md", "live" ], []
+                    [ "notes/archive/x.md", "archived" ], []
+                    [ "notes/archive/x.md", "archived" ], [ "origin" ] ]
+                  "each edit handed the state it produced"
+
+              Expect.equal (List.last world.Handed) outcome.Store.Tree "and the last handed state IS the committed plan"
+          }
+
           test "in memory, the same verb performs nothing outside — the apply is the effect" {
               let world = seeded ()
 
@@ -336,7 +382,7 @@ let tests =
                       "verb"
                       archive
                       { Tree = { empty with Files = world.Files }
-                        Bindings = args "note" }
+                        Bindings = () }
 
               Expect.isTrue outcome.Committed "committed"
               Expect.equal outcome.Performed [ "ApplyOps"; "ApplyOps"; "ApplyOps" ] "once per effect, at plan time"
@@ -347,7 +393,13 @@ let tests =
 
           test "an apply refusal halts while planning, so a performer registered or not sees nothing" {
               let world = World()
-              let outcome = run world None archive (args "note")
+
+              let outcome =
+                  run
+                      world
+                      None
+                      { Name = "read-missing"
+                        Stages = [ Effect(ServerEffect.ApplyOps [ Read "notes/x.md" ]) ] }
 
               Expect.isFalse outcome.Committed "the read of a missing shard refuses the apply"
               Expect.isEmpty world.Invocations "nothing performed"
@@ -356,4 +408,60 @@ let tests =
                   (outcome.Diagnostics |> List.last)
                   (ServerDiagnostic.Failed("ApplyOps", "no such file: notes/x.md"))
                   "the apply's own refusal"
+          }
+
+          // ── no dispatch axis: no binding channel ──
+
+          test "a landing slot under a state-only witness is refused while planning — there is no binding channel" {
+              let world = seeded ()
+              let called = ref false
+
+              let withHost =
+                  ServerEffectRegistry.permissive ServerEffectRegistry.denyAll
+                  |> ServerEffectRegistry.register "fetch" (fun _ ->
+                      called.Value <- true
+                      Ok(JStr "ran"))
+
+              let landing =
+                  runIn
+                      withHost
+                      world
+                      None
+                      { Name = "lands"
+                        Stages = [ Effect(ServerEffect.HostCall("fetch", JObj [], Some "result")) ] }
+                      empty
+
+              Expect.isFalse landing.Committed "refused"
+              Expect.isFalse called.Value "the host function was never invoked"
+
+              Expect.equal
+                  landing.Diagnostics
+                  [ ServerDiagnostic.Failed("host:fetch", Handler.NoBindingChannel) ]
+                  "named, through the landing-slot halt"
+
+              let query =
+                  runIn
+                      withHost
+                      world
+                      None
+                      { Name = "reads"
+                        Stages = [ Effect(ServerEffect.RunQuery("rows", Fuaran.Core.Ref "anything", [])) ] }
+                      empty
+
+              Expect.equal
+                  query.Diagnostics
+                  [ ServerDiagnostic.Failed("RunQuery", Handler.NoBindingChannel) ]
+                  "a query has nowhere to land either, so it is refused before it reads"
+
+              let noLanding =
+                  runIn
+                      withHost
+                      world
+                      None
+                      { Name = "calls"
+                        Stages = [ Effect(ServerEffect.HostCall("fetch", JObj [], None)) ] }
+                      empty
+
+              Expect.isTrue noLanding.Committed "a host call that lands nothing needs no channel"
+              Expect.isTrue called.Value "and runs"
           } ]

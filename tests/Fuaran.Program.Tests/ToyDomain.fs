@@ -136,44 +136,9 @@ let private relabel (id: string) (label: string) (root: ToyNode) : Result<ToyNod
 
     Ok(go root)
 
-/// The toy witness.
-let witness: ProgramWitness<ToyNode, ToyAction, ToyExpr, ToyStore, ToyOp, ToyEffect> =
-    { Tree =
-        { Nodes =
-            { Id = fun n -> n.Id
-              KindTag = fun _ -> "Toy"
-              Children = fun n -> n.Children
-              ReplaceChildren = fun n kids -> { n with Children = kids } }
-          Traverse = fun n -> n.Children
-          Handlers = fun n -> n.Handlers
-          Events = fun n -> n.Handlers |> List.map fst
-          Resolve = resolveNode
-          Cost = fun n -> List.length n.Handlers
-          QueryReaders = fun _ -> []
-          Canonical = canonical }
-      Action =
-        { View = view
-          Lower = fun nodeId action store -> lowerWith (fun k -> Map.tryFind k store) nodeId action
-          Describe = describe
-          Encode = encodeAction
-          Decode =
-            fun _ ->
-                Error
-                    { Class = "malformed-referenced-value"
-                      Detail = "the toy decodes nothing" } }
-      Expr =
-        { Resolve = fun store expr -> resolveWith (fun k -> Map.tryFind k store) expr
-          Uses =
-            fun expr ->
-                match expr with
-                | Read key -> [ BindingUse.State key ]
-                | _ -> [] }
-      Store =
-        { Assign = Map.add
-          LandQuery = fun slot table store -> Map.add slot (JInt(List.length table.Columns)) store
-          IsReserved = fun key -> key.StartsWith ReservedPrefix
-          ReservedPrefix = ReservedPrefix }
-      Op =
+/// The toy witness: all three axes, like the UI tier, at its own types.
+let witness: FullWitness<ToyNode, ToyAction, ToyExpr, ToyStore, ToyOp, ToyEffect> =
+    { State =
         { Stream =
             { Apply =
                 fun op tree ->
@@ -195,16 +160,54 @@ let witness: ProgramWitness<ToyNode, ToyAction, ToyExpr, ToyStore, ToyOp, ToyEff
                 match op with
                 | Relabel(id, _) ->
                     { Arguments = [ "target", id ]
-                      Destination = EffectDestination.Absent } }
-      Effect =
-        { Kind = fun _ -> "Sound"
-          Destination = fun _ -> EffectDestination.Absent
-          Encode =
-            fun effect ->
-                match effect with
-                | Sound(nodeId, volume) -> sprintf "{\"kind\":\"Sound\",\"nodeId\":\"%s\",\"volume\":%d}" nodeId volume
-          Decode =
-            fun _ ->
-                Error
-                    { Class = "unknown-effect-arm"
-                      Detail = "the toy decodes no effect" } } }
+                      Destination = EffectDestination.Absent }
+          Canonical = canonical
+          View = OpView.edits }
+      Walk =
+        { Nodes =
+            { Id = fun n -> n.Id
+              KindTag = fun _ -> "Toy"
+              Children = fun n -> n.Children
+              ReplaceChildren = fun n kids -> { n with Children = kids } }
+          Traverse = fun n -> n.Children
+          Cost = fun n -> List.length n.Handlers
+          QueryReaders = fun _ -> [] }
+      Dispatch =
+        { Handlers = fun n -> n.Handlers
+          Events = fun n -> n.Handlers |> List.map fst
+          Resolve = resolveNode
+          Action =
+            { View = view
+              Lower = fun nodeId action store -> lowerWith (fun k -> Map.tryFind k store) nodeId action
+              Describe = describe
+              Encode = encodeAction
+              Decode =
+                fun _ ->
+                    Error
+                        { Class = "malformed-referenced-value"
+                          Detail = "the toy decodes nothing" } }
+          Expr =
+            { Resolve = fun store expr -> resolveWith (fun k -> Map.tryFind k store) expr
+              Uses =
+                fun expr ->
+                    match expr with
+                    | Read key -> [ BindingUse.State key ]
+                    | _ -> [] }
+          Store =
+            { Assign = Map.add
+              LandQuery = fun slot table store -> Map.add slot (JInt(List.length table.Columns)) store
+              IsReserved = fun key -> key.StartsWith ReservedPrefix
+              ReservedPrefix = ReservedPrefix }
+          Effect =
+            { Kind = fun _ -> "Sound"
+              Destination = fun _ -> EffectDestination.Absent
+              Encode =
+                fun effect ->
+                    match effect with
+                    | Sound(nodeId, volume) ->
+                        sprintf "{\"kind\":\"Sound\",\"nodeId\":\"%s\",\"volume\":%d}" nodeId volume
+              Decode =
+                fun _ ->
+                    Error
+                        { Class = "unknown-effect-arm"
+                          Detail = "the toy decodes no effect" } } } }

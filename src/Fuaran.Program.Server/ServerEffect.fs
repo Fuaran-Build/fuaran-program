@@ -318,7 +318,7 @@ type ServerConstraintDefect =
 /// arms carry some: a host call's declarative argument object, a notification's
 /// channel, the by-reference sources a query reads, and — since Phase 1967 —
 /// what the ops of the two op-carrying arms REACH, read through the op
-/// witness's `Reach` (`OpWitness`, §3.5): each op's named arguments, plus its
+/// witness's `Reach` (`StateWitness`, §3.1): each op's named arguments, plus its
 /// destination's class under the reserved `destination` argument where the op
 /// names one. Before that member existed an op sequence named nothing a policy
 /// could see, and a handler that wrote files and pushed a branch was bounded
@@ -366,7 +366,7 @@ module ServerArgumentPolicy =
     /// arguments, then its destination class where it names one. The one
     /// place an op's reach is read into the policy's vocabulary, so the
     /// demanded projection reads it here too rather than deriving its own.
-    let reachOfOp (ops: Fuaran.Program.Bounded.OpWitness<'Node, 'Op>) (op: 'Op) : (string * string) list =
+    let reachOfOp (ops: Fuaran.Program.Bounded.StateWitness<'Node, 'Op>) (op: 'Op) : (string * string) list =
         let reach = ops.Reach op
 
         match reach.Destination with
@@ -414,7 +414,7 @@ module ServerArgumentPolicy =
     /// yields three `source` pairs — and an allow-list must admit every one of
     /// them, because a pipeline that reaches one off-list table has reached it.
     let arguments
-        (ops: Fuaran.Program.Bounded.OpWitness<'Node, 'Op>)
+        (ops: Fuaran.Program.Bounded.StateWitness<'Node, 'Op>)
         (effect: ServerEffect<'Op>)
         : (string * string) list =
         match effect with
@@ -441,7 +441,7 @@ module ServerArgumentPolicy =
     /// encoding — the same bytes the wire carries, so a ceiling a deployer reads
     /// bounds the thing they would meet rather than an in-memory estimate of it.
     /// Zero for the arms that carry no such payload; see the module header.
-    let payloadBytes (ops: Fuaran.Program.Bounded.OpWitness<'Node, 'Op>) (effect: ServerEffect<'Op>) : int =
+    let payloadBytes (ops: Fuaran.Program.Bounded.StateWitness<'Node, 'Op>) (effect: ServerEffect<'Op>) : int =
         let sizeOf (value: Fuaran.Core.JVal) =
             System.Text.Encoding.UTF8.GetByteCount(Fuaran.Program.Bounded.ProgramWire.render value)
 
@@ -463,7 +463,7 @@ module ServerArgumentPolicy =
     /// for a deployer and an auditor, and a check that invented a meaning for it
     /// would be enforcing a policy nobody wrote.
     let private checkClause
-        (ops: Fuaran.Program.Bounded.OpWitness<'Node, 'Op>)
+        (ops: Fuaran.Program.Bounded.StateWitness<'Node, 'Op>)
         (effect: ServerEffect<'Op>)
         (clause: Fuaran.Program.Bounded.ServerConstraintClause)
         : Result<unit, ServerConstraintDefect> =
@@ -521,7 +521,7 @@ module ServerArgumentPolicy =
     /// list is empty, so the fold is vacuous, and "unconstrained" needs no arm of
     /// its own anywhere in this module.
     let check
-        (ops: Fuaran.Program.Bounded.OpWitness<'Node, 'Op>)
+        (ops: Fuaran.Program.Bounded.StateWitness<'Node, 'Op>)
         (registry: ServerEffectRegistry)
         (effect: ServerEffect<'Op>)
         : Result<unit, ServerConstraintDefect> =
@@ -546,8 +546,20 @@ module ServerArgumentPolicy =
 /// runs until the plan committed, and a failure part-way is reported as the
 /// prefix that ran. Before this type existed that discipline was the
 /// placement's to build beside Program; now it is Program's, by registration.
+///
+/// **The performer is handed the STATE as of the op (Phase 1974, the third
+/// witness's F-PERFORM).** A verb whose op IS the act needs only the op; a
+/// tail that persists what the plan produced — render the document, commit
+/// the ops — needs the state, and before this it could have it only by
+/// folding the ops itself from the entry state, in the trusted base: the plan
+/// phase run twice, once inside Program and once outside it. The state handed
+/// with an op is the planned state WITH THAT OP APPLIED, so the state handed
+/// with the last op performed is the state the plan produced
+/// (`performer_handed_the_plan` in `proofs/Staging.fst`); the state before an
+/// op is the state handed with the one before it, or the entry state the host
+/// passed in. A guard (`OpView.Require`) is never handed to the performer.
 [<RequireQualifiedAccess>]
-type OpPerformance<'Op> =
+type OpPerformance<'Node, 'Op> =
     /// The in-memory apply is the whole effect, performed in the plan phase —
     /// the UI tier's placement, and every placement's default. `Performed`
     /// carries `ApplyOps` once per effect, at plan time, as it always has.
@@ -559,13 +571,15 @@ type OpPerformance<'Op> =
     /// order, and a part-way failure reports exactly the ops that ran before it
     /// (D8's residual, unchanged in shape) under a `PerformFailed` naming the
     /// capability and the performer's own reason. Trusted code, on the terms a
-    /// host function is: what it does when invoked is the host's.
-    | Performed of ('Op -> Result<unit, string>)
+    /// host function is: what it does when invoked is the host's. Handed the
+    /// state as of the op, then the op.
+    | Performed of ('Node -> 'Op -> Result<unit, string>)
 
 module OpPerformance =
 
     /// The default: ops are performed by being applied.
-    let inMemory<'Op> : OpPerformance<'Op> = OpPerformance.InMemory
+    let inMemory<'Node, 'Op> : OpPerformance<'Node, 'Op> = OpPerformance.InMemory
 
-    /// Register an op performer.
-    let performedBy (perform: 'Op -> Result<unit, string>) : OpPerformance<'Op> = OpPerformance.Performed perform
+    /// Register an op performer: handed the state as of each op, and the op.
+    let performedBy (perform: 'Node -> 'Op -> Result<unit, string>) : OpPerformance<'Node, 'Op> =
+        OpPerformance.Performed perform

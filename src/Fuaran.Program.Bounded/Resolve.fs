@@ -19,9 +19,9 @@ module Fuaran.Program.Bounded.Resolve
 //  so it resolves.
 //
 //  WHICH fields of a node are bound, and what substituting one means, is the
-//  domain's: the witness's `Tree.Resolve` re-resolves ONE node's own fields.
-//  The walk is this module's, over the witness's STRUCTURAL child surface
-//  (`Tree.Nodes`), so structure is never lost and the per-node coverage floor
+//  domain's: the dispatch axis's `Resolve` re-resolves ONE node's own fields.
+//  The walk is this module's, over the walk axis's STRUCTURAL child surface
+//  (`Walk.Nodes`), so structure is never lost and the per-node coverage floor
 //  §10.5 asks a host to declare is declared beside the witness that has it.
 //
 //  ── The base tree is FIXED (specified — §10.5) ──────────────────────────────
@@ -37,13 +37,22 @@ module Fuaran.Program.Bounded.Resolve
 /// producing a tree whose changed values a (binding-blind) structural diff can
 /// see. Structure is preserved (no node added / removed / re-id'd); only leaf
 /// binding / text values change.
-let rec resolveTree
-    (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+///
+/// Reads the WALK axis (the structural surface) and the DISPATCH axis (the
+/// per-node resolution against the binding store), so it takes a composition
+/// that fills both.
+let resolveTree
+    (witness: ProgramWitness<'Node, 'Op, WalkWitness<'Node>, DispatchWitness<'Node, 'Action, 'Expr, 'Store, 'Effect>>)
     (store: 'Store)
     (node: 'Node)
     : 'Node =
-    let node = witness.Tree.Resolve store node
+    let nodes = witness.Walk.Nodes
 
-    match witness.Tree.Nodes.Children node with
-    | [] -> node
-    | kids -> witness.Tree.Nodes.ReplaceChildren node (kids |> List.map (resolveTree witness store))
+    let rec resolve (node: 'Node) : 'Node =
+        let node = witness.Dispatch.Resolve store node
+
+        match nodes.Children node with
+        | [] -> node
+        | kids -> nodes.ReplaceChildren node (kids |> List.map resolve)
+
+    resolve node

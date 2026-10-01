@@ -87,6 +87,31 @@ open Fuaran.Program.Bounded
 //    `Performed` names `ApplyOps` once per op that ran, a part-way failure is a
 //    `PerformFailed` under that capability with the prefix that ran reported,
 //    and `proofs/Staging.fst` proves it over the same staged list.
+//
+//  ── Two more from the third witness (Phase 1974) ────────────────────────────
+//  A document pipeline under a server placement — a domain whose state is its
+//  tree — ran here too, and found both of the above on the wrong axis
+//  (DECISIONS.md D20):
+//
+//    A GUARD OVER THE STATE. A compute stage's guard resolves against the
+//    binding store, which cannot see the tree; a domain whose bound values
+//    live in the state could not guard on them, and a handler that planned a
+//    banned edit and then required a check passed it. The op channel now has
+//    a guard shape (`OpView.Require`): resolved through the op's own apply
+//    against the state as of its position in the plan, holding without
+//    moving it, refusing with its own reason as the halt's, and never staged
+//    or performed.
+//
+//    A PERFORMER HANDED THE STATE. `OpPerformance.Performed` now takes the
+//    state as of each op beside the op, so a tail that persists what the plan
+//    produced is handed it rather than folding the ops a second time itself.
+//
+//  And the handler runs under EVERY composition, filled axes or not: it reads
+//  the STATE axis for ops, and the DISPATCH axis — through `IDispatchPosition`
+//  — only for a compute stage and a landing slot. A composition with no
+//  dispatch axis cannot hold a compute stage (its action type has no values),
+//  and has no binding channel, so a landing slot is refused while planning
+//  (`NoBindingChannel`).
 // ============================================================================
 
 /// The state a handler runs against. Two channels, deliberately named apart:
@@ -285,20 +310,69 @@ module Handler =
             Halted = true
             Diagnostics = ServerDiagnostic.Denied denial :: acc.Diagnostics }
 
-    /// A staged op's performer: the registered op performer closed over the op,
-    /// in the shape a staged host call carries, so the perform phase runs ops
-    /// and host calls through ONE loop. The argument is inert (an op lands
-    /// nothing and takes no declarative payload) and the empty object is the
-    /// honest spelling of that, since the wire value has no null.
+    /// The refusal a landing slot meets under a composition with no dispatch
+    /// axis (Phase 1974): a `RunQuery` and a `HostCall` that declares an
+    /// `into` both write the binding store, and such a composition has none.
+    /// Refused while PLANNING, through the same halt a reserved slot is
+    /// refused through, so a handler that would have needed one reaches
+    /// nothing outside.
+    [<Literal>]
+    let NoBindingChannel = "no-binding-channel"
+
+    /// A staged op's performer: the registered op performer closed over the
+    /// state AS OF THE OP and the op (Phase 1974), in the shape a staged host
+    /// call carries, so the perform phase runs ops and host calls through ONE
+    /// loop. The argument is inert (an op lands nothing and takes no
+    /// declarative payload) and the empty object is the honest spelling of
+    /// that, since the wire value has no null. The model's `staged_from`.
     let private stagedOp
-        (perform: 'Op -> Result<Fuaran.Core.JVal, string>)
+        (perform: 'Node -> 'Op -> Result<unit, string>)
         (capability: string)
+        (state: 'Node)
         (op: 'Op)
         : StagedCall =
         { Capability = capability
-          Performer = fun _ -> perform op
+          Performer = fun _ -> perform state op |> Result.map (fun () -> Fuaran.Core.JObj [])
           Args = Fuaran.Core.JObj []
           Into = None }
+
+    /// The `ApplyOps` arm's fold over its ops — the model's `plan_ops`
+    /// (Phase 1974). Each op is resolved through the state witness's apply
+    /// against the state the ops before it left, short-circuiting at the
+    /// first refusal, whose text is the arm's halt reason verbatim.
+    ///
+    /// An op the state witness views as a GUARD (`OpView.Require`) holds
+    /// without moving the state — its answer is discarded, so it cannot
+    /// write — and is never staged: `guard_holds_moves_nothing`. Its refusal
+    /// is the sequence's (`guard_refusal_halts`). Every other op is an EDIT:
+    /// the state moves, and under a registered op performer it is staged with
+    /// the state it produced, prepended onto the reversed staged list exactly
+    /// as a host call is, so the perform phase meets the ops in plan order.
+    /// In memory, nothing is staged and the arm is the apply it always was.
+    let private planOps
+        (state: StateWitness<'Node, 'Op>)
+        (performance: OpPerformance<'Node, 'Op>)
+        (capability: string)
+        (ops: 'Op list)
+        (tree: 'Node)
+        (staged: StagedCall list)
+        : Result<'Node * StagedCall list, string> =
+        let rec go (ops: 'Op list) (tree: 'Node) (staged: StagedCall list) =
+            match ops with
+            | [] -> Ok(tree, staged)
+            | op :: rest ->
+                match state.Stream.Apply op tree with
+                | Error code -> Error code
+                | Ok tree' ->
+                    match state.View op with
+                    | OpView.Require -> go rest tree staged
+                    | OpView.Edit ->
+                        match performance with
+                        | OpPerformance.InMemory -> go rest tree' staged
+                        | OpPerformance.Performed perform ->
+                            go rest tree' (stagedOp perform capability tree' op :: staged)
+
+        go ops tree staged
 
     /// PLAN one effect against the store. The gate is consulted FIRST — before a
     /// pipeline is evaluated, before an op reaches the apply engine, and before
@@ -321,9 +395,10 @@ module Handler =
     /// performs after the handler returns. The fifth — `HostCall` — is the only
     /// arm that reaches outside, so it is the only one staged (D8).
     let private runEffect
-        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (state: StateWitness<'Node, 'Op>)
+        (channel: StoreWitness<'Store> option)
         (registry: ServerEffectRegistry)
-        (performance: OpPerformance<'Op>)
+        (performance: OpPerformance<'Node, 'Op>)
         (resolve: string -> Result<Fuaran.Core.Table, Fuaran.Core.EvalError>)
         (effect: ServerEffect<'Op>)
         (acc: Accumulator<'Node, 'Store, 'Op, 'Effect>)
@@ -335,7 +410,7 @@ module Handler =
             registry.OnDenied denial
             deny denial acc
         else
-            match ServerArgumentPolicy.check witness.Op registry effect with
+            match ServerArgumentPolicy.check state registry effect with
             // Reported as a HALT rather than as a denial, and the choice is
             // deliberate. The denial vocabulary is a closed, wire-specified pair
             // — "this host has no such capability" and "this host's gate refused
@@ -354,57 +429,51 @@ module Handler =
 
                 match effect with
                 | ServerEffect.RunQuery(name, source, pipeline) ->
-                    let evaluated =
-                        Fuaran.Core.DataFrame.evalSource resolve source
-                        |> Result.bind (Fuaran.Core.DataFrame.evalPipelineWith resolve pipeline)
+                    match channel with
+                    // No dispatch axis, no binding channel: the table has
+                    // nowhere to land, so the read is refused before it runs.
+                    | None -> halt capability NoBindingChannel acc
+                    | Some store ->
+                        let evaluated =
+                            Fuaran.Core.DataFrame.evalSource resolve source
+                            |> Result.bind (Fuaran.Core.DataFrame.evalPipelineWith resolve pipeline)
 
-                    match evaluated with
-                    | Error err -> halt capability (evalErrorKind err) acc
-                    | Ok table ->
-                        { performed with
-                            Store =
-                                { performed.Store with
-                                    Bindings = witness.Store.LandQuery name table performed.Store.Bindings } }
+                        match evaluated with
+                        | Error err -> halt capability (evalErrorKind err) acc
+                        | Ok table ->
+                            { performed with
+                                Store =
+                                    { performed.Store with
+                                        Bindings = store.LandQuery name table performed.Store.Bindings } }
 
                 | ServerEffect.ApplyOps ops ->
                     // The only domain-state mutation. Folded with short-circuit: an
                     // op that fails leaves the whole handler uncommitted rather than
                     // applying its predecessors, which is what makes the atomicity
-                    // claim above true of the tree and not merely of the store.
-                    let applied =
-                        ops
-                        |> List.fold
-                            (fun state op -> state |> Result.bind (witness.Op.Stream.Apply op))
-                            (Ok performed.Store.Tree)
-
-                    match applied with
+                    // claim above true of the tree and not merely of the store. A
+                    // guard on the op channel halts here, on its own reason.
+                    match planOps state performance capability ops performed.Store.Tree acc.Staged with
                     | Error code -> halt capability code acc
-                    | Ok tree ->
+                    | Ok(tree, staged) ->
                         match performance with
                         // In memory: the apply IS the effect, and it is performed
                         // here, in the plan phase — the shape every placement had
-                        // before Phase 1967, and the UI tier's still.
+                        // before Phase 1967, and the UI tier's still. `planOps`
+                        // staged nothing.
                         | OpPerformance.InMemory ->
                             { performed with
                                 Store = { performed.Store with Tree = tree } }
                         // Performed: the apply is a PLAN. The tree moves — a later
                         // stage reads the planned tree — but the capability is not
-                        // recorded as performed; the staged calls are, one per op,
+                        // recorded as performed; the staged calls are, one per edit,
                         // when the perform phase runs them. `Performed` is
                         // deliberately NOT extended here, on the host-call arm's
                         // terms: it is the audit trail of what happened, and at
                         // this point nothing has.
-                        | OpPerformance.Performed perform ->
-                            let performOne op =
-                                perform op |> Result.map (fun () -> Fuaran.Core.JObj [])
-
+                        | OpPerformance.Performed _ ->
                             { acc with
                                 Store = { acc.Store with Tree = tree }
-                                Staged =
-                                    ops
-                                    |> List.fold
-                                        (fun staged op -> stagedOp performOne capability op :: staged)
-                                        acc.Staged }
+                                Staged = staged }
 
                 | ServerEffect.HostCall(fn, args, into) ->
                     match Map.tryFind fn registry.HostFunctions with
@@ -420,15 +489,22 @@ module Handler =
                         // the slot is declared, so nothing about the check needs the
                         // performer to have run, and refusing here means a handler
                         // with a bad slot never reaches the outside world at all.
-                        match into with
-                        | Some key when witness.Store.IsReserved key ->
-                            halt
-                                capability
-                                (sprintf
-                                    "landing slot is under the host-reserved '%s' namespace"
-                                    witness.Store.ReservedPrefix)
-                                acc
-                        | _ ->
+                        let refusal =
+                            match into, channel with
+                            | None, _ -> None
+                            // No dispatch axis: no binding channel to land in.
+                            | Some _, None -> Some NoBindingChannel
+                            | Some key, Some store when store.IsReserved key ->
+                                Some(
+                                    sprintf
+                                        "landing slot is under the host-reserved '%s' namespace"
+                                        store.ReservedPrefix
+                                )
+                            | Some _, Some _ -> None
+
+                        match refusal with
+                        | Some reason -> halt capability reason acc
+                        | None ->
                             // Admitted, not performed. `Performed` is deliberately
                             // NOT extended here: it is the audit trail of what
                             // happened, and at this point nothing has.
@@ -450,9 +526,11 @@ module Handler =
 
     /// Run one stage.
     let private runStage
-        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (state: StateWitness<'Node, 'Op>)
+        (channel: StoreWitness<'Store> option)
+        (compute: string -> 'Action -> 'Store -> BoundedOutcome<'Store, 'Effect>)
         (registry: ServerEffectRegistry)
-        (performance: OpPerformance<'Op>)
+        (performance: OpPerformance<'Node, 'Op>)
         (resolve: string -> Result<Fuaran.Core.Table, Fuaran.Core.EvalError>)
         (nodeId: string)
         (stage: HandlerStage<'Action, 'Op>)
@@ -472,7 +550,7 @@ module Handler =
             // terminate, and totality would rest on a budget rather than on the
             // shape of the thing. A call action in a handler stage is therefore
             // the documented no-op, exactly as at a placement with no registry.
-            let outcome = BoundedActions.runInert witness nodeId action acc.Store.Bindings
+            let outcome = compute nodeId action acc.Store.Bindings
 
             // A HALTED fold halts the handler (Phase 1967): the guard's own
             // refusal diagnostic is the record of why, carried through
@@ -490,7 +568,7 @@ module Handler =
                 Diagnostics =
                     (outcome.Diagnostics |> List.rev |> List.map ServerDiagnostic.Bounded)
                     @ acc.Diagnostics }
-        | Effect effect -> runEffect witness registry performance resolve effect acc
+        | Effect effect -> runEffect state channel registry performance resolve effect acc
 
     /// PERFORM the staged host calls, in declaration order, stopping at the
     /// first failure (D8). This is the only code in the handler that reaches
@@ -498,7 +576,7 @@ module Handler =
     /// that was going to fail on its own terms has already failed, silently and
     /// for free, before any of this.
     let rec private perform
-        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (channel: StoreWitness<'Store> option)
         (staged: StagedCall list)
         (acc: Accumulator<'Node, 'Store, 'Op, 'Effect>)
         : Accumulator<'Node, 'Store, 'Op, 'Effect> =
@@ -516,15 +594,18 @@ module Handler =
                         Externally = call.Capability :: acc.Externally }
 
                 let landed =
-                    match call.Into with
-                    | None -> recorded
-                    | Some key ->
+                    match call.Into, channel with
+                    | None, _ -> recorded
+                    | Some key, Some store ->
                         { recorded with
                             Store =
                                 { recorded.Store with
-                                    Bindings = witness.Store.Assign key result recorded.Store.Bindings } }
+                                    Bindings = store.Assign key result recorded.Store.Bindings } }
+                    // Unreachable: a slot with no binding channel was refused
+                    // while planning, so it was never staged.
+                    | Some _, None -> invalidOp "a landing slot was staged with no binding channel"
 
-                perform witness rest landed
+                perform channel rest landed
 
     /// Run a handler's stages in order against `store`, committing only if every
     /// stage planned and every staged call — host call or, under a registered
@@ -532,10 +613,15 @@ module Handler =
     /// node, threaded into the shared interpreter exactly as the other
     /// placements thread it. `performance` says how this placement performs an
     /// op (Phase 1967); `run` below is this at `OpPerformance.InMemory`.
+    ///
+    /// Runs under every composition (Phase 1974): it reads the witness's
+    /// STATE axis for ops, and its dispatch position only for a compute stage
+    /// — which a composition with no dispatch axis cannot hold — and for a
+    /// landing slot, which such a composition has no channel for.
     let runWith
-        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (registry: ServerEffectRegistry)
-        (performance: OpPerformance<'Op>)
+        (performance: OpPerformance<'Node, 'Op>)
         (resolve: string -> Result<Fuaran.Core.Table, Fuaran.Core.EvalError>)
         (nodeId: string)
         (handler: Handler<'Action, 'Op>)
@@ -552,6 +638,13 @@ module Handler =
               ClientEffects = []
               Diagnostics = [] }
 
+        let channel =
+            (witness.Dispatch :> IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>).Fold
+            |> Option.map (fun fold -> fold.Store)
+
+        let compute (nodeId: string) (action: 'Action) (bindings: 'Store) =
+            BoundedActions.runInert witness nodeId action bindings
+
         let planned =
             handler.Stages
             |> List.fold
@@ -559,7 +652,7 @@ module Handler =
                     if acc.Halted then
                         acc
                     else
-                        runStage witness registry performance resolve nodeId stage acc)
+                        runStage witness.State channel compute registry performance resolve nodeId stage acc)
                 start
 
         // The phase boundary. Nothing external has run above this line, and
@@ -569,7 +662,7 @@ module Handler =
             if planned.Halted then
                 planned
             else
-                perform witness (List.rev planned.Staged) planned
+                perform channel (List.rev planned.Staged) planned
 
         if final.Halted then
             // Roll back to the entry state. The diagnostics survive: they are
@@ -604,7 +697,7 @@ module Handler =
     /// still. A placement whose ops reach the world registers a performer and
     /// calls `runWith`.
     let run
-        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (registry: ServerEffectRegistry)
         (resolve: string -> Result<Fuaran.Core.Table, Fuaran.Core.EvalError>)
         (nodeId: string)

@@ -77,7 +77,7 @@ let private runRecording (registry: ServerEffectRegistry) (handler: Handler) =
         Fuaran.Program.Server.Handler.runWith
             UiWitness.witness
             registry
-            (OpPerformance.performedBy (fun op ->
+            (OpPerformance.performedBy (fun _ op ->
                 performed.Value <- performed.Value @ [ op ]
                 Ok()))
             sources
@@ -110,7 +110,7 @@ let private removing (target: string) =
     ServerEffect.ApplyOps [ TreeOp.RemoveNode(NodeId target) ]
 
 let private checkUnder (clauses: ServerConstraintClause list) effect =
-    ServerArgumentPolicy.check UiWitness.ops (registryWith clauses) effect
+    ServerArgumentPolicy.check UiWitness.state (registryWith clauses) effect
 
 // ─── tests ───────────────────────────────────────────────────────────
 

@@ -97,14 +97,14 @@ module ProgramWire =
 module SignedEnvelope =
 
     let treeHash (root: Node<obj>) : string =
-        Fuaran.Program.Bounded.SignedEnvelope.treeHash UiWitness.tree root
+        Fuaran.Program.Bounded.SignedEnvelope.treeHash UiWitness.state root
 
     let sign
         (sink: IAttestationSink)
         (project: Node<obj> -> DemandedProjection)
         (root: Node<obj>)
         : Result<SignedEnvelope, SignRefusal> =
-        Fuaran.Program.Bounded.SignedEnvelope.sign UiWitness.tree sink project root
+        Fuaran.Program.Bounded.SignedEnvelope.sign UiWitness.state sink project root
 
     let verify
         (crypto: IClaimSignatureVerifier)
@@ -114,7 +114,7 @@ module SignedEnvelope =
         (signed: SignedEnvelope)
         : Async<Result<VerifiedEnvelope, VerifyRefusal>> =
         Fuaran.Program.Bounded.SignedEnvelope.verify
-            UiWitness.tree
+            UiWitness.state
             (UiWitness.claimVerifier crypto)
             key
             project

@@ -53,8 +53,10 @@ open Fuaran.Core
 //  an effect performer, and the verifier reads nothing from a key but its id.
 //  This package holds no cryptography: the tree hash is Core's Fable-clean
 //  SHA-256 (`Fuaran.Core.Hash.sha256Hex`) over the domain's canonical tree
-//  encoding (the witness's `Tree.Canonical`), so the same preimage is computed
-//  on every runtime the interpreter runs on.
+//  encoding (the STATE axis's `Canonical` — Phase 1974: a signed envelope
+//  binds the state's canonical bytes and reads no other member of the
+//  witness), so the same preimage is computed on every runtime the
+//  interpreter runs on.
 //
 //  ── What this deliberately is not ───────────────────────────────────────────
 //  A new envelope shape. `Demanded.encode` / `decode` are unchanged and the
@@ -160,8 +162,8 @@ module SignedEnvelope =
     /// canonical encoding, rendered in the `sha256:` form `ProgramWire` pins.
     /// Fable-clean on both counts, so the preimage is the same bytes on every
     /// runtime the interpreter runs on.
-    let treeHash (tree: TreeWitness<'Node, 'Action, 'Store>) (root: 'Node) : string =
-        ProgramWire.ContentAddressPrefix + Hash.sha256Hex (tree.Canonical root)
+    let treeHash (state: StateWitness<'Node, 'Op>) (root: 'Node) : string =
+        ProgramWire.ContentAddressPrefix + Hash.sha256Hex (state.Canonical root)
 
     /// The members the signature covers, rendered once so the preimage and the
     /// record it sits in cannot spell them differently.
@@ -187,12 +189,12 @@ module SignedEnvelope =
     /// for the client tier, or a placement's own two-tier walk — so the same
     /// function serves every placement and the walk is named at the call site.
     let sign
-        (tree: TreeWitness<'Node, 'Action, 'Store>)
+        (state: StateWitness<'Node, 'Op>)
         (sink: Fuaran.Core.IAttestationSink)
         (project: 'Node -> DemandedProjection)
         (root: 'Node)
         : Result<SignedEnvelope, SignRefusal> =
-        let hash = treeHash tree root
+        let hash = treeHash state root
         let envelope = Demanded.encode (project root)
         let head = preimage hash envelope
 
@@ -273,7 +275,7 @@ module SignedEnvelope =
     /// signature. Asynchronous because the crypto seam is — browser crypto is —
     /// and a synchronous host adapts trivially.
     let verify
-        (tree: TreeWitness<'Node, 'Action, 'Store>)
+        (state: StateWitness<'Node, 'Op>)
         (crypto: ClaimVerifier<'Key>)
         (key: 'Key option)
         (project: 'Node -> DemandedProjection)
@@ -286,7 +288,7 @@ module SignedEnvelope =
             | Some key when crypto.KeyId key <> signed.KeyId ->
                 return Error(VerifyRefusal.ForeignKey(signed.KeyId, crypto.KeyId key))
             | Some key ->
-                let hash = treeHash tree root
+                let hash = treeHash state root
                 let projection = project root
 
                 match driftOf projection signed.Envelope with

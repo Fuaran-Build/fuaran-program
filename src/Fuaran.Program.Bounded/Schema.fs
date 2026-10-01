@@ -489,18 +489,18 @@ module QuerySchema =
 
     /// Every query-slot reader in a tree, in traversal order.
     ///
-    /// Walks the whole traversal surface (the witness's `Tree.Traverse` — the
+    /// Walks the whole traversal surface (the walk axis's `Traverse` — the
     /// structural children AND every other position a node holds, such as a
     /// state-behaviour branch), so a reader parked in a loading state is not
     /// missed. Which nodes read a slot, and which columns they name, is the
-    /// witness's `Tree.QueryReaders`.
+    /// walk axis's `QueryReaders`. Reads the walk axis and nothing else.
     let readersOfTree
-        (witness: ProgramWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        (witness: ProgramWitness<'Node, 'Op, WalkWitness<'Node>, 'Dispatch>)
         (root: 'Node)
         : QueryReader list =
         let rec walk (node: 'Node) =
-            witness.Tree.QueryReaders node
-            @ (witness.Tree.Traverse node |> List.collect walk)
+            witness.Walk.QueryReaders node
+            @ (witness.Walk.Traverse node |> List.collect walk)
 
         walk root
 
