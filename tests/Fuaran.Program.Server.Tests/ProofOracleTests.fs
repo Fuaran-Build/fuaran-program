@@ -840,6 +840,18 @@ let private positions (case: StagingCase) : int option list =
 
     None :: [ for k in 0 .. staged - 1 -> Some k ]
 
+/// A differential host's verdict: no divergences, and if there are some the message names
+/// how many and shows the first, so a red run says WHAT diverged before anyone re-runs it.
+/// Shared by every host in this file (Phase 1987; the keyed hosts of Phase 1984 used it first).
+let private expectNoDivergence (subject: string) (divergences: string list) =
+    Expect.isEmpty
+        divergences
+        (sprintf
+            "%s diverged on %d case(s); the first: %s"
+            subject
+            (List.length divergences)
+            (divergences |> List.truncate 1 |> String.concat " | "))
+
 let private divergences (cases: StagingCase list) : string list =
     [ for c in cases do
           for failAt in positions c do
@@ -888,12 +900,12 @@ let stagingTests =
           }
 
           test "the oracle agrees with production on the HandlerLoopTests staging cases at every failure position" {
-              Expect.isEmpty (divergences loopCases) "the extracted model and production diverged"
+              expectNoDivergence "the extracted model and production" (divergences loopCases)
           }
 
           test
               "the oracle agrees with production on the DurableInterpreterTests staging cases at every failure position" {
-              Expect.isEmpty (divergences durableCases) "the extracted model and production diverged"
+              expectNoDivergence "the extracted model and production" (divergences durableCases)
           }
 
           test "the oracle agrees with production when ops are PERFORMED after the plan, at every failure position" {
@@ -901,7 +913,7 @@ let stagingTests =
               // and the same three checks cover them — the outcomes agree, the
               // performers were asked the same things in the same order, and
               // `Performed`'s claim is the log.
-              Expect.isEmpty (divergences opCases) "the extracted model and production diverged"
+              expectNoDivergence "the extracted model and production" (divergences opCases)
 
               let performed = opCases |> List.filter _.PerformOps
               Expect.isGreaterThanOrEqual (List.length performed) 3 "the corpus registers an op performer"
@@ -959,7 +971,7 @@ let stagingTests =
           }
 
           test "the oracle agrees with production on the OP-CHANNEL GUARD and the performer's state (Phase 1974)" {
-              Expect.isEmpty (divergences guardCases) "the extracted model and production diverged"
+              expectNoDivergence "the extracted model and production" (divergences guardCases)
 
               // A guard that holds is never staged: the log holds the two
               // edits and the host call, never the guard.
@@ -1002,7 +1014,7 @@ let stagingTests =
           }
 
           test "the oracle agrees with production on every plan-phase halt — gate, policy, lookup, slot, apply, query" {
-              Expect.isEmpty (divergences planHaltCases) "the extracted model and production diverged"
+              expectNoDivergence "the extracted model and production" (divergences planHaltCases)
 
               // And they are plan-phase halts: nothing was asked of any performer.
               for c in planHaltCases do
@@ -1536,11 +1548,11 @@ let undoOracleTests =
           }
 
           test "the oracle agrees with production on the undo cases at every failure position of the undo" {
-              Expect.isEmpty (undoDivergences undoCases) "the extracted model and production diverged"
+              expectNoDivergence "the extracted model and production" (undoDivergences undoCases)
           }
 
           test "the oracle agrees with production on the staging corpus, undone" {
-              Expect.isEmpty (undoDivergences corpusAsUndo) "the extracted model and production diverged"
+              expectNoDivergence "the extracted model and production" (undoDivergences corpusAsUndo)
           }
 
           test "a REVERSIBLE run is undone to the entry state, bindings included, through the performers" {
@@ -2630,14 +2642,14 @@ let effectGateTests =
               let divergences =
                   registryShapeTriples |> List.choose (fun t -> gateDivergence t (runTriple t))
 
-              Expect.isEmpty divergences "the extracted model and production diverged"
+              expectNoDivergence "the extracted model and production" divergences
           }
 
           test
               "the oracle agrees with production on every generated (capability, gate, performer) triple - outcome, denial stream, performed set" {
               let divergences = triples |> List.choose (fun t -> gateDivergence t (runTriple t))
 
-              Expect.isEmpty divergences "the extracted model and production diverged"
+              expectNoDivergence "the extracted model and production" divergences
           }
 
           test "the gate is consulted before any performer, and every performed capability is one the gate admitted" {
@@ -2970,12 +2982,7 @@ let effectGateTests =
               let divergences =
                   keyedCases |> List.choose (fun c -> keyedDivergence c (runKeyed KeyedOnToken c))
 
-              Expect.isEmpty
-                  divergences
-                  (sprintf
-                      "the extracted handler and production diverged on %d case(s); the first: %s"
-                      (List.length divergences)
-                      (divergences |> List.truncate 1 |> String.concat " | "))
+              expectNoDivergence "the extracted handler and production" divergences
 
               for c in keyedCases |> List.filter _.Contracted do
                   let run = runKeyed KeyedOnToken c
@@ -3068,12 +3075,7 @@ let effectGateTests =
 
               let divergences = runs |> List.choose (fun (c, run) -> durableKeyedDivergence c run)
 
-              Expect.isEmpty
-                  divergences
-                  (sprintf
-                      "the extracted durable run and production diverged on %d case(s); the first: %s"
-                      (List.length divergences)
-                      (divergences |> List.truncate 1 |> String.concat " | "))
+              expectNoDivergence "the extracted durable run and production" divergences
 
               let refused =
                   [ for c, run in runs do
