@@ -51,11 +51,12 @@ name: CI
 # the failure mode the corpus exists to rule out.
 #
 # `Assert the gate partition is exhaustive` is what keeps that honest over time.
-# The reduced lane names its test projects explicitly, and a second hand-kept
-# list drifts — so the step recomputes the set of Expecto runners exactly as
-# `run.ps1` does and fails if any is in neither lane. A new test project
-# therefore reddens CI until it is classified, instead of silently running in
-# neither.
+# The reduced lane is `run.ps1 -Lane pure` - the runners `run.ps1` itself names in
+# its `$pureRunners` list, which the step READS rather than copying - plus the
+# corpus-free runners the pure lane leaves out, named once in this file. The step
+# recomputes the set of Expecto runners exactly as `run.ps1` does and fails if any
+# is in none of the three sets, so a new test project reddens CI until it is
+# assigned, instead of silently running in neither lane.
 #
 # ── No deploy ────────────────────────────────────────────────────────────────
 # Build-and-verify only. No deploy job, no artifact, no package push, no
@@ -158,21 +159,38 @@ jobs:
                   Where-Object { Get-ChildItem -Path $_.FullName -Filter *.fsproj -File } |
                   Where-Object { (Get-Content (Get-ChildItem -Path $_.FullName -Filter *.fsproj -File)[0].FullName -Raw) -match '<OutputType>Exe</OutputType>' } |
                   ForEach-Object { $_.Name } | Sort-Object
-          $corpusFree = @('Fuaran.Program.Bench', 'Fuaran.Program.Bounded.Tests', 'Fuaran.Program.Runtime.Tests', 'Fuaran.Program.Tests')
+          # The pure lane is run.ps1's own list, read from its parse tree - not a
+          # second copy kept here.
+          $ast = [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path ./run.ps1).Path, [ref]$null, [ref]$null)
+          $assign = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -eq '$pureRunners' }, $true)
+          if (-not $assign) {
+              Write-Error 'run.ps1 declares no $pureRunners list; the reduced lane has nothing to run.'
+              exit 1
+          }
+          $pure = @($assign.Right.FindAll({ param($n) $n -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true) | ForEach-Object { $_.Value })
+          if ($pure.Count -eq 0) {
+              Write-Error 'run.ps1 $pureRunners yielded no runner names.'
+              exit 1
+          }
+          # The corpus-free runners the pure lane leaves out (it runs only the suites
+          # that read neither the filesystem nor the corpus). Named ONCE; the reduced
+          # job runs them after the pure lane.
+          $corpusFreeOutsidePure = @('Fuaran.Program.Bench', 'Fuaran.Program.Tests')
           $corpusBound = @('Fuaran.Program.Parity.Tests', 'Fuaran.Program.Server.Tests')
-          $unclassified = $runners | Where-Object { $_ -notin ($corpusFree + $corpusBound) }
+          $known = $pure + $corpusFreeOutsidePure + $corpusBound
+          $unclassified = $runners | Where-Object { $_ -notin $known }
           if ($unclassified) {
-              Write-Error ("Expecto runner(s) in neither CI lane: $($unclassified -join ', '). " +
-                  "Add each to the corpus-free or corpus-bound list in .github/workflows/ci.yml - an " +
-                  "unclassified runner does not run at all when the corpus is absent.")
+              Write-Error ("Expecto runner(s) in no CI lane: $($unclassified -join ', '). " +
+                  'Add each to $pureRunners in run.ps1, or to the corpus-free or corpus-bound list in ' +
+                  ".github/workflows/ci.yml - an unclassified runner does not run at all when the corpus is absent.")
               exit 1
           }
-          $missing = ($corpusFree + $corpusBound) | Where-Object { $_ -notin $runners }
+          $missing = $known | Where-Object { $_ -notin $runners }
           if ($missing) {
-              Write-Error ("ci.yml names runner(s) that no longer exist: $($missing -join ', ').")
+              Write-Error ("run.ps1 or ci.yml names runner(s) that no longer exist: $($missing -join ', ').")
               exit 1
           }
-          Write-Host "partition OK: $($runners.Count) runner(s), all classified."
+          Write-Host "partition OK: $($runners.Count) runner(s), all classified ($($pure.Count) pure from run.ps1)."
 
       # ── The full gate, when the corpus is available ─────────────────────────
       - name: The repo gate (pwsh ./run.ps1)
@@ -182,23 +200,24 @@ jobs:
         run: ./run.ps1
 
       # ── The reduced gate, when it is not ────────────────────────────────────
-      # `run.ps1` runs every Expecto runner in one loop and has no switch for
-      # excluding the corpus-bound ones — deliberately, because a local gate that
-      # can be talked out of its oracle is not a gate. So the reduced lane drives
-      # the shared legs through run.ps1 and then names the corpus-free runners
-      # itself, under the exhaustiveness guard above.
-      - name: Reduced gate — format, pins, build (pwsh ./run.ps1 -SkipTests)
+      # `run.ps1 -Lane pure` is the repo's own corpus-free lane: the same tool
+      # restore, format, pin preflight and build, then only the runners it names
+      # as reading neither the filesystem nor the corpus. It skips the Fable parity
+      # leg and says so. The lane cannot be widened to include a corpus-bound
+      # runner - a local gate that can be talked out of its oracle is not a gate -
+      # so the reduced job adds the remaining corpus-free runners by name below.
+      - name: Reduced gate - the pure lane (pwsh ./run.ps1 -Lane pure)
         if: ${{ steps.status.outputs.present != 'true' }}
         working-directory: Fuaran/Fuaran-Program
         shell: pwsh
-        run: ./run.ps1 -SkipTests
+        run: ./run.ps1 -Lane pure
 
-      - name: Reduced gate — the corpus-free Expecto runners
+      - name: Reduced gate - the corpus-free runners outside the pure lane
         if: ${{ steps.status.outputs.present != 'true' }}
         working-directory: Fuaran/Fuaran-Program
         shell: pwsh
         run: |
-          foreach ($p in 'Fuaran.Program.Bench', 'Fuaran.Program.Bounded.Tests', 'Fuaran.Program.Runtime.Tests', 'Fuaran.Program.Tests') {
+          foreach ($p in 'Fuaran.Program.Bench', 'Fuaran.Program.Tests') {
               Write-Host "-- tests: $p --"
               dotnet run --project (Join-Path 'tests' $p)
               if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
