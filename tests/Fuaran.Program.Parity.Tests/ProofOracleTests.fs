@@ -534,8 +534,14 @@ let private modelBound (bound: Bound<ToyExpr>) : BoundedFold.bound<ToyExpr> =
     | Bound.Literal count -> BoundedFold.BLiteral(bigint count)
     | Bound.Parameter(count, lo, hi) -> BoundedFold.BParameter(count, bigint lo, bigint hi)
 
-/// The production `View`, taken to exhaustion — the model's `w_view`. Seven
-/// shapes since Phase 1976, named without a wildcard, as the model names them.
+/// The production `View`, taken to exhaustion — the model's `w_view`. Eight
+/// shapes since Phase 1990, named without a wildcard, as the model names them.
+/// An `Each` reaches the model LOWERED (`VEach` carries its elements): the
+/// production `Substitute` is applied here, once per element, and the
+/// elements viewed — so the differential below compares production, which
+/// substitutes as it folds, against a model handed the substituted bodies,
+/// and a `Substitute` that did not preserve the body's shape would show as a
+/// divergence.
 let rec private toyModelView (a: ToyAction) : BoundedFold.action_view<ToyAction, ToyExpr, Fuaran.Core.JVal> =
     match toyWitness.Dispatch.Action.View a with
     | ActionView.Sequence items -> BoundedFold.VSequence(a, items |> List.map toyModelView)
@@ -545,6 +551,12 @@ let rec private toyModelView (a: ToyAction) : BoundedFold.action_view<ToyAction,
     | ActionView.Choose(entry, whenTrue, whenFalse, exit) ->
         BoundedFold.VChoose(a, entry, toyModelView whenTrue, toyModelView whenFalse, modelOpt exit)
     | ActionView.Repeat(bound, body) -> BoundedFold.VRepeat(a, modelBound bound, toyModelView body)
+    | ActionView.Each(collection, placeholder, body) ->
+        BoundedFold.VEach(
+            a,
+            ActionWitness.lowered toyWitness.Dispatch.Action collection placeholder body
+            |> List.map toyModelView
+        )
     | ActionView.Leaf _ -> BoundedFold.VLeaf a
 
 let private toyModelWitness: BoundedFold.witness<ToyAction, ToyExpr, Fuaran.Core.JVal, ToyEffect> =
@@ -650,6 +662,41 @@ let private toyCorpus: (string * ToyAction) list =
           ),
           Hush,
           Some(Const(JBool true))
+      )
+      // Per-element iteration over a literal collection (Phase 1990): the
+      // lowered form element by element — a write per element, a leaf per
+      // element, nothing for an empty collection, a halt at the element whose
+      // guard fails (and the elements after it never run), nested iterations
+      // with distinct placeholders, and an iteration inside the other two
+      // flow shapes.
+      "each writes the element, element by element",
+      ForEach([ JStr "a"; JStr "b"; JStr "c" ], "x", Put("last", None, Some(Hole "x")))
+      "each over nothing runs nothing", ForEach([], "x", Beep 9)
+      "each with a leaf and a write per element",
+      ForEach([ JInt 1; JInt 2 ], "v", Seq [ Beep 2; Put("seen", None, Some(Hole "v")) ])
+      "each halts at the element whose guard fails",
+      Seq
+          [ ForEach([ JBool true; JBool false; JBool true ], "ok", Seq [ Need(Hole "ok"); Beep 1 ])
+            Beep 5 ]
+      "each nested in each, distinct placeholders",
+      ForEach(
+          [ JStr "r1"; JStr "r2" ],
+          "row",
+          ForEach(
+              [ JInt 1; JInt 2 ],
+              "col",
+              Seq [ Put("row", None, Some(Hole "row")); Put("col", None, Some(Hole "col")) ]
+          )
+      )
+      "each inside a branch inside a repeat",
+      Times(
+          Bound.Literal 2,
+          Pick(
+              Const(JBool true),
+              ForEach([ JInt 7 ], "n", Put("n", None, Some(Hole "n"))),
+              Hush,
+              Some(Const(JBool true))
+          )
       ) ]
 
 /// A placement that answers `/answer` — writing the store, emitting an effect,
@@ -741,7 +788,8 @@ let private genericTests =
               let rec flowFree (action: Action<obj>) : bool =
                   match view action with
                   | ActionView.Choose _
-                  | ActionView.Repeat _ -> false
+                  | ActionView.Repeat _
+                  | ActionView.Each _ -> false
                   | ActionView.Sequence members -> members |> List.forall flowFree
                   | ActionView.Assign _
                   | ActionView.Call _
@@ -767,13 +815,14 @@ let private genericTests =
                       | ActionView.Require _ -> "Require"
                       | ActionView.Choose _ -> "Choose"
                       | ActionView.Repeat _ -> "Repeat"
+                      | ActionView.Each _ -> "Each"
                       | ActionView.Leaf _ -> "Leaf")
                   |> Set.ofList
 
               Expect.equal
                   shapes
-                  (Set.ofList [ "Sequence"; "Assign"; "Call"; "Require"; "Choose"; "Repeat"; "Leaf" ])
-                  "all seven shapes"
+                  (Set.ofList [ "Sequence"; "Assign"; "Call"; "Require"; "Choose"; "Repeat"; "Each"; "Leaf" ])
+                  "all eight shapes"
 
               Expect.isGreaterThanOrEqual (List.length toyCorpus) 21 "the corpus is the one declared above"
 

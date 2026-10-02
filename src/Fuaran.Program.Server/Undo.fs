@@ -162,7 +162,9 @@ module Undo =
     /// The defects of an op sequence, read through the state witness's view to
     /// exhaustion: an edit's class, a guard nothing, a branch BOTH arms — an
     /// untaken arm still counts, because which arm runs is not decided from
-    /// the form — a repeat its body once. The model's `view_defects`.
+    /// the form — a repeat its body once, an `Each` its LOWERED form (every
+    /// element's substituted body, since an op's class may differ once the
+    /// element is in it; Phase 1990). The model's `view_defects`.
     let rec defectsOfOps (state: StateWitness<'Node, 'Op>) (ops: 'Op list) : UndoDefect list =
         ops
         |> List.collect (fun op ->
@@ -174,7 +176,9 @@ module Undo =
                 | UndoClass.OneWay _ -> [ UndoDefect.OneWayOp ]
             | OpView.Require -> []
             | OpView.Choose(_, whenTrue, whenFalse, _) -> defectsOfOps state whenTrue @ defectsOfOps state whenFalse
-            | OpView.Repeat(_, body) -> defectsOfOps state body)
+            | OpView.Repeat(_, body) -> defectsOfOps state body
+            | OpView.Each(collection, placeholder, body) ->
+                defectsOfOps state (StateWitness.lowered state collection placeholder body))
 
     /// The defects of one stage. A compute stage is read through Phase 1976's
     /// reversible fragment; a read lands a table and reaches nothing; the op

@@ -10,20 +10,27 @@ open Fuaran.Core
 open Fuaran.Program.Bounded
 open Fuaran.Program.Runtime
 
-/// An expression over the toy store.
+/// An expression over the toy store. `Hole` reads a PLACEHOLDER by name
+/// (Phase 1990): inside the body of a `ForEach` that binds the name it stands
+/// for the current element, which the toy's `Substitute` writes over it as a
+/// `Const`; resolved unsubstituted it is a typed error naming the placeholder
+/// — the run-time fallback the scope check exists to make unreachable.
 type ToyExpr =
     | Const of JVal
     | Read of key: string
     | Fail of message: string
     | Missing
+    | Hole of placeholder: string
 
-/// The toy's action vocabulary. `Seq`, `Put`, `Ring`, `Need`, `Pick` and
-/// `Times` are its control structure; `Beep` and `Hush` are its domain acts.
-/// `Ring`'s `onAnswer` is a CLOSURE — the core must never invoke it. `Need` is
-/// the halting guard (Phase 1967): its condition resolves against the store,
-/// and a guard that does not hold halts the enclosing sequence. `Pick` is the
-/// two-arm branch and `Times` the bounded repeat (Phase 1976), viewed as the
-/// core's `Choose` and `Repeat`.
+/// The toy's action vocabulary. `Seq`, `Put`, `Ring`, `Need`, `Pick`, `Times`
+/// and `ForEach` are its control structure; `Beep` and `Hush` are its domain
+/// acts. `Ring`'s `onAnswer` is a CLOSURE — the core must never invoke it.
+/// `Need` is the halting guard (Phase 1967): its condition resolves against
+/// the store, and a guard that does not hold halts the enclosing sequence.
+/// `Pick` is the two-arm branch and `Times` the bounded repeat (Phase 1976),
+/// viewed as the core's `Choose` and `Repeat`. `ForEach` is per-element
+/// iteration over a literal collection (Phase 1990), viewed as the core's
+/// `Each`: its body reads the element through `Hole`.
 type ToyAction =
     | Seq of ToyAction list
     | Put of key: string * value: JVal option * from: ToyExpr option
@@ -31,6 +38,7 @@ type ToyAction =
     | Need of condition: ToyExpr
     | Pick of entry: ToyExpr * whenTrue: ToyAction * whenFalse: ToyAction * exit: ToyExpr option
     | Times of bound: Bound<ToyExpr> * body: ToyAction
+    | ForEach of collection: JVal list * placeholder: string * body: ToyAction
     | Beep of volume: int
     | Hush
 
@@ -67,6 +75,64 @@ let resolveWith (lookup: string -> JVal option) (expr: ToyExpr) : ExprResolution
         | None -> ExprResolution.NotResolved
     | Fail message -> ExprResolution.Errored message
     | Missing -> ExprResolution.NotResolved
+    | Hole placeholder -> ExprResolution.Errored(sprintf "placeholder '%s' was not substituted" placeholder)
+
+/// The placeholders an expression reads: a `Hole`'s name, nothing else.
+let holesOf (expr: ToyExpr) : string list =
+    match expr with
+    | Hole placeholder -> [ placeholder ]
+    | Const _
+    | Read _
+    | Fail _
+    | Missing -> []
+
+/// Substitute a value for a placeholder in an expression: the `Hole` of that
+/// name becomes the value, as a literal; every other expression is unchanged.
+let substituteExpr (placeholder: string) (element: JVal) (expr: ToyExpr) : ToyExpr =
+    match expr with
+    | Hole name when name = placeholder -> Const element
+    | other -> other
+
+/// The toy's `Substitute` (Phase 1990): the value written over the placeholder
+/// in every expression of the action and of the actions beneath it — the
+/// shape of the action untouched, so the substituted action views as the
+/// original does (the witness obligation the differential host checks). A
+/// nested `ForEach` keeps its own collection and placeholder; its body is
+/// substituted like any other, because the scope check has already refused a
+/// body that rebinds an enclosing name.
+let rec substitute (placeholder: string) (element: JVal) (action: ToyAction) : ToyAction =
+    let expr = substituteExpr placeholder element
+    let sub = substitute placeholder element
+
+    match action with
+    | Seq actions -> Seq(actions |> List.map sub)
+    | Put(key, value, from) -> Put(key, value, from |> Option.map expr)
+    | Ring _ -> action
+    | Need condition -> Need(expr condition)
+    | Pick(entry, whenTrue, whenFalse, exit) -> Pick(expr entry, sub whenTrue, sub whenFalse, exit |> Option.map expr)
+    | Times(Bound.Parameter(count, lo, hi), body) -> Times(Bound.Parameter(expr count, lo, hi), sub body)
+    | Times(Bound.Literal count, body) -> Times(Bound.Literal count, sub body)
+    | ForEach(collection, name, body) -> ForEach(collection, name, sub body)
+    | Beep _
+    | Hush -> action
+
+/// The placeholders an action's OWN operands read (Phase 1990): the
+/// expressions this level holds — a write's source, a guard's condition, a
+/// branch's entry and exit, a parameter bound — and not those of the actions
+/// beneath it, which the core reaches through the view.
+let placeholders (action: ToyAction) : string list =
+    match action with
+    | Put(_, _, Some from) -> holesOf from
+    | Need condition -> holesOf condition
+    | Pick(entry, _, _, exit) -> holesOf entry @ (exit |> Option.toList |> List.collect holesOf)
+    | Times(Bound.Parameter(count, _, _), _) -> holesOf count
+    | Put(_, _, None)
+    | Times(Bound.Literal _, _)
+    | ForEach _
+    | Seq _
+    | Ring _
+    | Beep _
+    | Hush -> []
 
 /// What a leaf does, through a store lookup. `Beep` above ten is refused, and
 /// `Hush` is a documented decline.
@@ -85,7 +151,8 @@ let lowerWith (lookup: string -> JVal option) (nodeId: string) (action: ToyActio
     | Ring _
     | Need _
     | Pick _
-    | Times _ -> LeafOutcome.Decline
+    | Times _
+    | ForEach _ -> LeafOutcome.Decline
 
 let describe (action: ToyAction) : string =
     match action with
@@ -95,6 +162,7 @@ let describe (action: ToyAction) : string =
     | Need _ -> "Need"
     | Pick _ -> "Pick"
     | Times _ -> "Times"
+    | ForEach(_, placeholder, _) -> sprintf "ForEach(%s)" placeholder
     | Beep volume -> sprintf "Beep(%d)" volume
     | Hush -> "Hush"
 
@@ -106,6 +174,7 @@ let view (action: ToyAction) : ActionView<ToyAction, ToyExpr> =
     | Need condition -> ActionView.Require condition
     | Pick(entry, whenTrue, whenFalse, exit) -> ActionView.Choose(entry, whenTrue, whenFalse, exit)
     | Times(bound, body) -> ActionView.Repeat(bound, body)
+    | ForEach(collection, placeholder, body) -> ActionView.Each(collection, placeholder, body)
     | Beep _ ->
         ActionView.Leaf
             { EffectKinds = [ "Sound" ]
@@ -134,6 +203,12 @@ let rec private encodeAction (action: ToyAction) : JVal =
             | Bound.Parameter(_, lo, hi) -> JArr [ JInt lo; JInt hi ]
 
         Canon.typed "Times" [ "body", encodeAction body; "bound", encodedBound ]
+    | ForEach(collection, placeholder, body) ->
+        Canon.typed
+            "ForEach"
+            [ "body", encodeAction body
+              "collection", JArr collection
+              "placeholder", JStr placeholder ]
     | Beep volume -> Canon.typed "Beep" [ "volume", JInt volume ]
     | Hush -> Canon.typed "Hush" []
 
@@ -201,6 +276,10 @@ let witness: FullWitness<ToyNode, ToyAction, ToyExpr, ToyStore, ToyOp, ToyEffect
                       Destination = EffectDestination.Absent }
           Canonical = canonical
           View = OpView.edits
+          // The toy's one op is never viewed as an `Each` (Phase 1990): the
+          // identity, and no placeholder.
+          Substitute = fun _ _ op -> op
+          Placeholders = fun _ -> []
           // A relabel's exact inverse (Phase 1977): relabel back to the label
           // the pre-state held, read off the node the op addresses.
           Undo =
@@ -233,7 +312,9 @@ let witness: FullWitness<ToyNode, ToyAction, ToyExpr, ToyStore, ToyOp, ToyEffect
                 fun _ ->
                     Error
                         { Class = "malformed-referenced-value"
-                          Detail = "the toy decodes nothing" } }
+                          Detail = "the toy decodes nothing" }
+              Substitute = substitute
+              Placeholders = placeholders }
           Expr =
             { Resolve = fun store expr -> resolveWith (fun k -> Map.tryFind k store) expr
               Uses =

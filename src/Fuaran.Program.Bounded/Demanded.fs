@@ -689,6 +689,19 @@ module Demanded =
             let bE, bH, bN = demandsOfAction fold body
             bE, boundCalls @ bH, boundReads @ bN
 
+        // An `Each` demands what its LOWERED form demands (Phase 1990): the
+        // union, in collection order, over its body with each element
+        // substituted — read exactly as a sequence of those bodies is, so a
+        // name an element's substitution makes reachable is reached. A literal
+        // collection reads nothing of its own; an empty one demands nothing.
+        | ActionView.Each(collection, placeholder, body) ->
+            ActionWitness.lowered fold.Action collection placeholder body
+            |> List.fold
+                (fun (accE, accH, accN) a ->
+                    let e, h, n = demandsOfAction fold a
+                    accE @ e, accH @ h, accN @ n)
+                ([], [], [])
+
         | ActionView.Leaf declaration -> declaration.EffectKinds, declaration.HostCalls, []
 
     /// What an expression demands, through the witness's `Expr.Uses`: a state

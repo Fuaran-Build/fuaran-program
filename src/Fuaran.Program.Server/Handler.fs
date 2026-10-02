@@ -188,6 +188,10 @@ type FlowDecision =
     | Chose of tookTrue: bool
     /// A repeat ran its body this many times.
     | Repeated of count: int
+    /// A per-element iteration (Phase 1990) ran its body over this many
+    /// elements — the ones that RAN, so a halted one reports fewer than its
+    /// collection holds.
+    | Iterated of count: int
 
 module FlowDecision =
     /// The decisions a compute stage's fold took, read off the trace it
@@ -204,6 +208,9 @@ module FlowDecision =
         | Trace.Repeat iterations ->
             FlowDecision.Repeated(List.length iterations)
             :: (iterations |> List.collect ofTrace)
+        | Trace.Each elements ->
+            FlowDecision.Iterated(List.length elements)
+            :: (elements |> List.collect ofTrace)
 
 /// The result of running one handler.
 type HandlerOutcome<'Node, 'Store, 'Op, 'Effect> =
@@ -457,7 +464,13 @@ module Handler =
     /// (`choose_plans_the_taken_arm`, `exit_violation_halts`). Neither
     /// condition is applied for its state, staged or performed. A REPEAT
     /// plans its body that many times, threaded as a sequence
-    /// (`repeat_plans_as_unrolling`); a negative count is refused.
+    /// (`repeat_plans_as_unrolling`); a negative count is refused. A
+    /// PER-ELEMENT ITERATION (Phase 1990) plans its body once per element of
+    /// its literal collection, each op with that element substituted for the
+    /// placeholder through the state witness's `Substitute`, threaded as a
+    /// sequence (`each_plans_as_lowered`); an op sequence that reads a
+    /// placeholder no enclosing `Each` binds is refused BEFORE its first op
+    /// plans, with the placeholder named (`StateWitness.scopeDefects`).
     let private planOps
         (state: StateWitness<'Node, 'Op>)
         (performance: OpPerformance<'Node, 'Op>)
@@ -553,8 +566,33 @@ module Handler =
                             | Ok(tree', staged', trail', flow') -> times (remaining - 1) tree' staged' trail' flow'
 
                     times count tree staged trail (FlowDecision.Repeated count :: flow)
+            // The lowered form, element by element: the body with that
+            // element substituted, planned as a sequence from the state the
+            // element before it left. The decision names the element count.
+            | OpView.Each(collection, placeholder, body) ->
+                let rec elements
+                    (remaining: Fuaran.Core.JVal list)
+                    (tree: 'Node)
+                    (staged: StagedCall list)
+                    (trail: UndoStep<'Node, 'Op, 'Action> list)
+                    (flow: FlowDecision list)
+                    =
+                    match remaining with
+                    | [] -> Ok(tree, staged, trail, flow)
+                    | element :: rest ->
+                        match go (body |> List.map (state.Substitute placeholder element)) tree staged trail flow with
+                        | Error code -> Error code
+                        | Ok(tree', staged', trail', flow') -> elements rest tree' staged' trail' flow'
 
-        go ops tree staged trail flow
+                elements collection tree staged trail (FlowDecision.Iterated(List.length collection) :: flow)
+
+        // Validation first (Phase 1990): a placeholder read where no `Each`
+        // binds it is a defect of the FORM, refused with the placeholder named
+        // before the first op is applied — never met mid-plan as an op the
+        // domain cannot apply.
+        match StateWitness.scopeDefects state ops with
+        | defect :: _ -> Error(ScopeDefect.describe defect)
+        | [] -> go ops tree staged trail flow
 
     /// PLAN one effect against the store. The gate is consulted FIRST — before a
     /// pipeline is evaluated, before an op reaches the apply engine, and before
@@ -593,19 +631,46 @@ module Handler =
             registry.OnDenied denial
             deny denial acc
         else
-            match ServerArgumentPolicy.check state registry effect with
-            // Reported as a HALT rather than as a denial, and the choice is
-            // deliberate. The denial vocabulary is a closed, wire-specified pair
-            // — "this host has no such capability" and "this host's gate refused
-            // it" — and neither is true here: the capability exists and the gate
-            // admitted it. What refused is a bound the host declared about the
-            // arguments, which is what the halt names, through the same
-            // capability-plus-reason shape the landing-slot refusal below
+            // Two plan-time refusals, in this order, both reported as a HALT
+            // rather than as a denial — and the choice is deliberate. The denial
+            // vocabulary is a closed, wire-specified pair — "this host has no
+            // such capability" and "this host's gate refused it" — and neither
+            // is true here: the capability exists and the gate admitted it.
+            //
+            // FIRST, validation of the FORM (Phase 1990): an op sequence that
+            // reads a placeholder no enclosing `Each` binds, or whose `Each`
+            // rebinds an enclosing name, is refused with the placeholder named.
+            // Ahead of the argument policy deliberately — an unsubstituted
+            // placeholder is not an address, and a policy that read it as one
+            // would refuse the effect for the wrong reason (an off-list argument)
+            // or, on an allow-list that happened to spell the token, admit a form
+            // that can never run.
+            //
+            // THEN the argument policy: what refused is a bound the host declared
+            // about the arguments, which is what the halt names, through the
+            // same capability-plus-reason shape the landing-slot refusal below
             // already uses for the same class of check. Nothing is `Performed`,
             // and `Halted` stops every later stage, so the handler reaches no
             // performer and commits nothing.
-            | Error defect -> halt capability (ServerArgumentPolicy.describe defect) acc
-            | Ok() ->
+            let refusal: string option =
+                let scope =
+                    match effect with
+                    | ServerEffect.ApplyOps ops -> StateWitness.scopeDefects state ops
+                    | ServerEffect.RunQuery _
+                    | ServerEffect.HostCall _
+                    | ServerEffect.EmitPatch _
+                    | ServerEffect.Notify _ -> []
+
+                match scope with
+                | defect :: _ -> Some(ScopeDefect.describe defect)
+                | [] ->
+                    match ServerArgumentPolicy.check state registry effect with
+                    | Error defect -> Some(ServerArgumentPolicy.describe defect)
+                    | Ok() -> None
+
+            match refusal with
+            | Some reason -> halt capability reason acc
+            | None ->
                 let performed =
                     { acc with
                         Performed = capability :: acc.Performed }

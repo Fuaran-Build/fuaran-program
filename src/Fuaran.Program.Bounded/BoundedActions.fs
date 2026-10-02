@@ -15,9 +15,9 @@ open Fuaran.Core
 //  re-decide it here.
 //
 //  Since Phase 1896 the fold is DOMAIN-GENERIC (DECISIONS.md D18): it reads an
-//  action only through a witness's VIEW of it — `ActionView`'s seven shapes,
-//  `Sequence` / `Assign` / `Call` / `Require` / `Choose` / `Repeat` / `Leaf`
-//  — and asks the witness what a leaf does. It is written to meet
+//  action only through a witness's VIEW of it — `ActionView`'s eight shapes,
+//  `Sequence` / `Assign` / `Call` / `Require` / `Choose` / `Repeat` / `Each`
+//  / `Leaf` — and asks the witness what a leaf does. It is written to meet
 //  `proofs/BoundedFold.fst`'s `fold`, which was restated over the view and
 //  re-proved before this code (D14, Phase 1898), restated again over the
 //  fifth shape — the halting guard the second witness found missing (Phase
@@ -25,7 +25,11 @@ open Fuaran.Core
 //  the selection and the bounded iteration D1 and D2 charter (Phase 1976: the
 //  second witness's re-run found the core had sequence and abort but neither)
 //  before the port that added those, with the reversible fragment of the view
-//  named and proved to undo itself in the same restatement.
+//  named and proved to undo itself in the same restatement; and a fourth time
+//  over the eighth shape — per-element iteration over a literal collection,
+//  which lowers to the core by substitution (Phase 1990, D29) — before the
+//  port that added it, with `each_is_lowering` the equation that nothing
+//  downstream learns a new shape.
 //
 //  The case this module serves is an **emitted, wire-decoded** tree, where
 //  there is **no hand-authored `update` and no message type**. The "model" is
@@ -51,7 +55,13 @@ open Fuaran.Core
 //  half, enforced by the driver's per-interaction budget; bounded code + bounded
 //  cost = safe to run untrusted on shared infra.)
 //
-//  ── The seven shapes ────────────────────────────────────────────────────────
+//  ── The eight shapes ────────────────────────────────────────────────────────
+//    - `Each(collection, placeholder, body)` → PER-ELEMENT ITERATION over a
+//      literal collection (Phase 1990): the body once per element, with that
+//      element substituted for the placeholder through the witness's
+//      `Substitute`, composed as a sequence — vocabulary that lowers to the
+//      core by substitution (D1). An ill-scoped placeholder is refused at the
+//      fold's entry, before anything runs.
 //    - `Choose(entry, whenTrue, whenFalse, exit)` → SELECTION (Phase 1976):
 //      resolve the entry condition as a guard's; the boolean true takes the
 //      true arm, anything else the false arm, unresolved or errored halts;
@@ -265,7 +275,7 @@ module BoundedActions =
     /// evaluating `match` and makes the trace a flag of it.
     ///
     /// THIS IS THE ONLY PLACE ANYTHING IN THIS DOMAIN INTERPRETS AN ACTION. One
-    /// evaluating `match`, over the seven view shapes, in one file, reachable
+    /// evaluating `match`, over the eight view shapes, in one file, reachable
     /// from every placement — which is D1's "no second evaluator" as a property
     /// a reader can check by grep rather than a claim they have to trust. (Two
     /// other walks read the same view without interpreting it: the resource
@@ -281,6 +291,31 @@ module BoundedActions =
         (s: 'Store)
         (placement: 'Placement)
         : BoundedOutcome<'Store, 'Effect> * 'Placement * Trace =
+        // Compose members in order, threading the store AND the placement's
+        // accumulation, concatenating effects + diagnostics — and stopping at
+        // the first member that halts. Threading the placement here is what
+        // makes a nested call behave exactly as a top-level one — the sequence
+        // is the only structure that could have made them differ. Left to
+        // right and iterative, which is the model's `fold_many` by its own
+        // `sequence_homomorphism`: the store each member sees is the one its
+        // predecessors left, the lists concatenate in order, and a member that
+        // halted is the whole answer. A reversible run records the members
+        // that ran, in order. Shared by the two shapes that ARE sequences — a
+        // `Sequence`, and an `Each` over its lowered elements.
+        let many (members: 'Action list) : BoundedOutcome<'Store, 'Effect> * 'Placement * Trace list =
+            let outcome, p, traces =
+                members
+                |> List.fold
+                    (fun (acc: BoundedOutcome<'Store, 'Effect>, p, traces) a ->
+                        if acc.Halted then
+                            acc, p, traces
+                        else
+                            let next, p', t = runFold fold arm tracing nodeId a acc.Store p
+                            composed acc next, p', (if tracing then t :: traces else traces))
+                    (store s, placement, [])
+
+            outcome, p, List.rev traces
+
         match fold.Action.View action with
         // The one store mutation: write the state channel. The reserved key
         // namespace is closed on the bounded path too. This loop's whole
@@ -548,41 +583,68 @@ module BoundedActions =
             placement,
             Trace.Nothing
 
-        // Compose: fold in order, threading the store AND the placement's
-        // accumulation, concatenating effects + diagnostics — and stopping at
-        // the first member that halts. Threading the placement here is what
-        // makes a nested call behave exactly as a top-level one — the sequence
-        // is the only structure that could have made them differ. Left to
-        // right and iterative, which is the model's `fold_many` by its own
-        // `sequence_homomorphism`: the store each member sees is the one its
-        // predecessors left, the lists concatenate in order, and a member that
-        // halted is the whole answer. A reversible run records the members
-        // that ran, in order.
+        // Compose: the sequence of the members (`many`, above).
         | ActionView.Sequence actions ->
-            let outcome, p, traces =
-                actions
-                |> List.fold
-                    (fun (acc: BoundedOutcome<'Store, 'Effect>, p, traces) a ->
-                        if acc.Halted then
-                            acc, p, traces
-                        else
-                            let next, p', t = runFold fold arm tracing nodeId a acc.Store p
-                            composed acc next, p', (if tracing then t :: traces else traces))
-                    (store s, placement, [])
+            let outcome, p, traces = many actions
+            outcome, p, (if tracing then Trace.Seq traces else Trace.Nothing)
 
-            outcome,
-            p,
-            (if tracing then
-                 Trace.Seq(List.rev traces)
-             else
-                 Trace.Nothing)
+        // PER-ELEMENT ITERATION over a literal collection (Phase 1990, D29).
+        // Vocabulary that lowers to the core by SUBSTITUTION: the witness
+        // substitutes each element for the placeholder in the body — the fold
+        // cannot see inside an action, so the substitution is the witness's
+        // exactly as `View` and `Lower` are — and what runs is the sequence
+        // of the results, member for member as a `Sequence` runs: the store
+        // threaded, the lists concatenated, the first halt the whole answer.
+        // The model's `VEach` carries the elements already lowered and its
+        // `each_is_lowering` is the equation; the differential host runs this
+        // fold (substituting as it goes) beside that model. A placeholder the
+        // body reads outside any `Each` that binds it was refused at `run`'s
+        // entry, before this arm could be reached. An empty collection runs
+        // nothing. A reversible run records the elements that ran, under the
+        // trace's own constructor, so a reader sees how many.
+        | ActionView.Each(collection, placeholder, body) ->
+            let outcome, p, traces =
+                many (ActionWitness.lowered fold.Action collection placeholder body)
+
+            outcome, p, (if tracing then Trace.Each traces else Trace.Nothing)
+
+    /// The SCOPE check at the fold's entry (Phase 1990): a program whose body
+    /// reads a placeholder no enclosing `Each` binds, or rebinds one an
+    /// enclosing `Each` already binds, is REFUSED before its first step — a
+    /// halt naming the placeholder, with nothing run, nothing written and
+    /// nothing emitted. Validation, not run time: the defect is a property
+    /// of the form, decided from the tree alone (`ActionWitness.scopeDefects`),
+    /// and a run that reached the placeholder would meet it as an expression
+    /// the domain cannot resolve, after earlier elements had already run.
+    /// `None` for a well-scoped program, which is every program with no
+    /// `Each` and every program the UI tier produces.
+    let private scopeRefusal
+        (fold: DispatchFold<'Action, 'Expr, 'Store, 'Effect>)
+        (nodeId: string)
+        (action: 'Action)
+        (s: 'Store)
+        : BoundedOutcome<'Store, 'Effect> option =
+        match ActionWitness.scopeDefects fold.Action action with
+        | [] -> None
+        | defect :: _ -> Some(halted nodeId (fold.Action.Describe action) (ScopeDefect.describe defect) s)
+
+    /// The scope defects of an action, decided from the tree (Phase 1990):
+    /// `ActionWitness.scopeDefects` through a composition's dispatch
+    /// position. A host that validates a program before registering it
+    /// reads this; `run` and `runTraced` refuse on it at entry regardless.
+    let scopeDefects
+        (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
+        (action: 'Action)
+        : ScopeDefect list =
+        ActionWitness.scopeDefects (DispatchPosition.fold witness.Dispatch).Action action
 
     /// `runFold` over a composition's dispatch position — the fold every
     /// placement runs (Phase 1974: the fold reads the DISPATCH axis and only
     /// it). Generic over the position, so a path that runs under every
     /// composition (the server handler) can call it; it is only ever handed
     /// an action, and only a composition that fills the dispatch axis has one.
-    /// Records nothing: the model's `run_action`.
+    /// Records nothing: the model's `run_action`. Refuses an ill-scoped
+    /// program at entry (Phase 1990), before its first step.
     let run
         (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (arm: HandlerArm<'Store, 'Effect, 'Placement>)
@@ -591,10 +653,13 @@ module BoundedActions =
         (s: 'Store)
         (placement: 'Placement)
         : BoundedOutcome<'Store, 'Effect> * 'Placement =
-        let outcome, p, _ =
-            runFold (DispatchPosition.fold witness.Dispatch) arm false nodeId action s placement
+        let fold = DispatchPosition.fold witness.Dispatch
 
-        outcome, p
+        match scopeRefusal fold nodeId action s with
+        | Some refused -> refused, placement
+        | None ->
+            let outcome, p, _ = runFold fold arm false nodeId action s placement
+            outcome, p
 
     /// Interpret one bounded action against the store at a placement that runs
     /// NO handlers — the browser client and the server driver, neither of which
@@ -629,7 +694,8 @@ module BoundedActions =
     /// The same fold, RECORDING its trace (Phase 1976): the outcome and the
     /// placement `run` would answer — the model's `traced_agrees` — and the
     /// Bennett trace the inverse is built from. The one path that calls
-    /// `Store.Read`. The model's `run_action_traced`.
+    /// `Store.Read`. The model's `run_action_traced`. Refuses an ill-scoped
+    /// program at entry exactly as `run` does, with an empty trace.
     let runTraced
         (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (arm: HandlerArm<'Store, 'Effect, 'Placement>)
@@ -638,28 +704,36 @@ module BoundedActions =
         (s: 'Store)
         (placement: 'Placement)
         : BoundedOutcome<'Store, 'Effect> * 'Placement * Trace =
-        runFold (DispatchPosition.fold witness.Dispatch) arm true nodeId action s placement
+        let fold = DispatchPosition.fold witness.Dispatch
+
+        match scopeRefusal fold nodeId action s with
+        | Some refused -> refused, placement, Trace.Nothing
+        | None -> runFold fold arm true nodeId action s placement
 
     /// Whether an action is in the REVERSIBLE FRAGMENT, decided from the tree
     /// alone: sequence, assign, the guard, a branch WITH an exit assertion, a
-    /// repeat with a LITERAL bound — never a call or a leaf (effects: a
-    /// property of the op, declared on the state witness, not the flow
-    /// algebra's). A branch without an exit assertion has nothing to say
-    /// which arm to undo; a parameter bound is read from the store the body
-    /// may have overwritten. The model's `reversible`.
+    /// repeat with a LITERAL bound, an `Each` whose lowered elements all are
+    /// — never a call or a leaf (effects: a property of the op, declared on
+    /// the state witness, not the flow algebra's). A branch without an exit
+    /// assertion has nothing to say which arm to undo; a parameter bound is
+    /// read from the store the body may have overwritten. An `Each` is read
+    /// in its lowered form, as everything reads it: an `Each` over nothing
+    /// does nothing and is in. The model's `reversible`.
     let reversible
         (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (action: 'Action)
         : bool =
-        let view = (DispatchPosition.fold witness.Dispatch).Action.View
+        let fold = DispatchPosition.fold witness.Dispatch
 
         let rec go (a: 'Action) : bool =
-            match view a with
+            match fold.Action.View a with
             | ActionView.Sequence members -> members |> List.forall go
             | ActionView.Assign _
             | ActionView.Require _ -> true
             | ActionView.Choose(_, whenTrue, whenFalse, exit) -> Option.isSome exit && go whenTrue && go whenFalse
             | ActionView.Repeat(Bound.Literal _, body) -> go body
+            | ActionView.Each(collection, placeholder, body) ->
+                ActionWitness.lowered fold.Action collection placeholder body |> List.forall go
             | ActionView.Repeat(Bound.Parameter _, _)
             | ActionView.Call _
             | ActionView.Leaf _ -> false
@@ -684,7 +758,10 @@ module BoundedActions =
     ///     takes it;
     ///   - a literal repeat inverts to the SEQUENCE of its iterations'
     ///     inverses in reverse order — not a repeat, because each iteration
-    ///     overwrote different values and so has its own inverse body.
+    ///     overwrote different values and so has its own inverse body;
+    ///   - an `Each` (Phase 1990) inverts to the SEQUENCE of its lowered
+    ///     elements' inverses in reverse order, for the same reason — it IS
+    ///     the sequence of its elements (`each_reverse_is_sequence_reverse`).
     [<RequireQualifiedAccess>]
     type Reversed<'Expr> =
         | Sequence of describe: string * members: Reversed<'Expr> list
@@ -753,6 +830,8 @@ module BoundedActions =
                 Reversed.Choose(d, exit, Reversed.Sequence(d, []), go whenFalse arm, entry)
             | ActionView.Repeat(Bound.Literal count, body), Trace.Repeat iterations ->
                 Reversed.Sequence(d, many (List.replicate (max count 0) body) iterations)
+            | ActionView.Each(collection, placeholder, body), Trace.Each steps ->
+                Reversed.Sequence(d, many (ActionWitness.lowered fold.Action collection placeholder body) steps)
             | _ -> Reversed.Sequence(d, [])
 
         // The members' inverses in REVERSE order: the last member that ran is
@@ -787,7 +866,12 @@ module BoundedActions =
                     fun _ ->
                         Error
                             { Class = "malformed-referenced-value"
-                              Detail = "an inverse program is built from a run, never decoded" } }
+                              Detail = "an inverse program is built from a run, never decoded" }
+                  // An inverse holds no `Each` — a run's inverse is built
+                  // from its lowered elements — so it is never substituted
+                  // into and reads no placeholder.
+                  Substitute = fun _ _ reversed -> reversed
+                  Placeholders = fun _ -> [] }
               Expr = fold.Expr
               Store = fold.Store }
 

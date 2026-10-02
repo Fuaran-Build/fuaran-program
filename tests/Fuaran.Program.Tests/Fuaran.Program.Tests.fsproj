@@ -22,6 +22,8 @@
     <Compile Include="DocWitnessTests.fs" />
     <Compile Include="FlowTests.fs" />
     <Compile Include="FlowDecisionTests.fs" />
+    <!-- Phase 1990: Each over a literal collection, on both axes. -->
+    <Compile Include="EachTests.fs" />
     <Compile Include="HandlerDocumentTests.fs" />
     <Compile Include="AtMostTests.fs" />
     <Compile Include="CoreBoundaryTests.fs" />

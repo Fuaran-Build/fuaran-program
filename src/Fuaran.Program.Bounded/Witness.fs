@@ -153,10 +153,10 @@ type ExprResolution =
 /// non-composition step (`Wrote old` for an assignment that wrote, carrying
 /// the value it overwrote and `None` if the key was absent; `Nothing` for
 /// every other step and for an assignment that was refused), the members
-/// that RAN of a sequence or a repeat (a halted prefix is shorter), and which
-/// arm a branch took. Recorded only by `BoundedActions.runTraced`; the forward
-/// `run` records nothing, so a program that never reverses pays nothing. The
-/// model's `trace`.
+/// that RAN of a sequence, a repeat or a per-element iteration (a halted
+/// prefix is shorter), and which arm a branch took. Recorded only by
+/// `BoundedActions.runTraced`; the forward `run` records nothing, so a
+/// program that never reverses pays nothing. The model's `trace`.
 [<RequireQualifiedAccess>]
 type Trace =
     | Nothing
@@ -164,6 +164,11 @@ type Trace =
     | Seq of steps: Trace list
     | Choose of tookTrue: bool * arm: Trace
     | Repeat of iterations: Trace list
+    /// The elements that RAN of an `Each` (Phase 1990): the lowered form's
+    /// steps — one per element, in collection order — under their own
+    /// constructor, so a reader of the trace sees how many elements ran
+    /// (`FlowDecision.Iterated`); inverted exactly as a sequence is.
+    | Each of elements: Trace list
 
 module Trace =
     /// Whether every write the trace recorded overwrote a PRESENT key, so
@@ -179,6 +184,34 @@ module Trace =
         | Trace.Seq steps -> steps |> List.forall restorable
         | Trace.Choose(_, arm) -> restorable arm
         | Trace.Repeat iterations -> iterations |> List.forall restorable
+        | Trace.Each elements -> elements |> List.forall restorable
+
+/// A PLACEHOLDER read where no `Each` binds it (Phase 1990, DECISIONS.md
+/// D29): the one defect of the construct that is decided from the tree
+/// alone, and refused at validation — before the first step of a run or
+/// the first op of a plan — never discovered mid-run. The binding rule: an
+/// `Each` binds exactly one placeholder, lexically, over its body; an `Each`
+/// nested inside another names its own, and a name already bound by an
+/// enclosing `Each` is refused rather than shadowed, so no body ever reads
+/// a placeholder two binders could mean. The core walks the view; which
+/// placeholders an action's or an op's OWN operands read is the witness's
+/// (`Placeholders`), because only the domain can see inside them.
+[<RequireQualifiedAccess>]
+type ScopeDefect =
+    /// An operand reads this placeholder, and no enclosing `Each` binds it.
+    | UnboundPlaceholder of placeholder: string
+    /// An `Each` binds this placeholder inside another that already binds it.
+    | ShadowedPlaceholder of placeholder: string
+
+module ScopeDefect =
+    /// The log-safe reason a refusal carries. A placeholder is an
+    /// author-declared NAME, never a payload, so it is named in full.
+    let describe (defect: ScopeDefect) : string =
+        match defect with
+        | ScopeDefect.UnboundPlaceholder placeholder ->
+            sprintf "placeholder '%s' is read outside any Each that binds it" placeholder
+        | ScopeDefect.ShadowedPlaceholder placeholder ->
+            sprintf "placeholder '%s' is already bound by an enclosing Each" placeholder
 
 // ═══ THE STATE AXIS — required (§3.1) ═══════════════════════════════════════
 
@@ -212,10 +245,11 @@ module OpReach =
 
 /// What one op IS to the handler (Phase 1974, the third witness's F-GUARD;
 /// Phase 1976, the two flow shapes the second witness's re-run found
-/// missing). Four shapes, and the handler's `ApplyOps` arm names all four.
-/// One level, like `ActionView`: a branch's arms are ops, and the handler
-/// re-views each as it reaches it; the obligation that `View` unfolds a
-/// FINITE tree sits on the witness, as it does for the action view.
+/// missing; Phase 1990, per-element iteration). Five shapes, and the
+/// handler's `ApplyOps` arm names all five. One level, like `ActionView`: a
+/// branch's arms are ops, and the handler re-views each as it reaches it;
+/// the obligation that `View` unfolds a FINITE tree sits on the witness, as
+/// it does for the action view.
 [<RequireQualifiedAccess>]
 type OpView<'Op> =
     /// An op that moves the state. Applied while planning, so a later op and
@@ -256,27 +290,101 @@ type OpView<'Op> =
     /// reach names its count as an argument is bounded there). A negative
     /// count is refused. `repeat_plans_as_unrolling` in `proofs/Staging.fst`.
     | Repeat of count: int * body: 'Op list
+    /// PER-ELEMENT ITERATION over a LITERAL collection (Phase 1990, D29).
+    /// The body plans once per element of `collection`, in order, with that
+    /// element substituted for `placeholder` in each op's operands through
+    /// the state witness's `Substitute` — the lowering D1 asks for: what
+    /// plans is the sequence of the substituted bodies, and nothing
+    /// downstream learns a new shape (`each_plans_as_lowered` in
+    /// `proofs/Staging.fst`). The bound is the collection's length, fixed by
+    /// the tree (D2); the element is a value in the tree and not a cell in
+    /// the state, so it cannot be overwritten, which is the case D21 refused
+    /// an index for. A body reading a placeholder no enclosing `Each` binds
+    /// is refused at validation (`OpView.scopeDefects`), never mid-plan. An
+    /// empty collection plans nothing. The argument policy and the demanded
+    /// projection read the reach of the SUBSTITUTED ops (`beneath`), so a
+    /// deployer's allow-list binds every element's address.
+    | Each of collection: JVal list * placeholder: string * body: 'Op list
 
 module OpView =
     /// A state witness whose ops are all edits — a domain with no op-channel
-    /// guard, branch or repeat fills `View` with this.
+    /// guard, branch, repeat or per-element iteration fills `View` with this.
     let edits (_: 'Op) : OpView<'Op> = OpView.Edit
+
+    /// The LOWERED form of an `Each` over ops (Phase 1990): its body once per
+    /// element of the collection, in collection order, with that element
+    /// substituted for the placeholder through `substitute` — the state
+    /// witness's `Substitute`. One flat op list: what the handler plans, the
+    /// policy bounds and the projections read.
+    let lowered
+        (substitute: string -> JVal -> 'Op -> 'Op)
+        (collection: JVal list)
+        (placeholder: string)
+        (body: 'Op list)
+        : 'Op list =
+        collection
+        |> List.collect (fun element -> body |> List.map (substitute placeholder element))
 
     /// Every op BENEATH an op in its view, to exhaustion: none for an edit or
     /// a guard; a branch's entry, both arms' ops (and theirs), and its exit; a
-    /// repeat's body (and its ops). The argument policy and the demanded
-    /// projection read an op's reach over itself AND these, so a sequence
-    /// that reaches an off-list path in an UNTAKEN arm has reached it: an
-    /// untaken arm's reach is still reach. A condition is applied, never
-    /// viewed, so entry and exit are listed once and not opened.
-    let rec beneath (view: 'Op -> OpView<'Op>) (op: 'Op) : 'Op list =
+    /// repeat's body (and its ops); an `Each`'s LOWERED body — every element's
+    /// substituted ops (and theirs), since a placeholder stands for an
+    /// address and the policy must see each address. The argument policy and
+    /// the demanded projection read an op's reach over itself AND these, so a
+    /// sequence that reaches an off-list path in an UNTAKEN arm has reached
+    /// it: an untaken arm's reach is still reach. A condition is applied,
+    /// never viewed, so entry and exit are listed once and not opened.
+    let rec beneath (view: 'Op -> OpView<'Op>) (substitute: string -> JVal -> 'Op -> 'Op) (op: 'Op) : 'Op list =
         match view op with
         | OpView.Edit
         | OpView.Require -> []
         | OpView.Choose(entry, whenTrue, whenFalse, exit) ->
             let arms = whenTrue @ whenFalse
-            (entry :: arms) @ Option.toList exit @ (arms |> List.collect (beneath view))
-        | OpView.Repeat(_, body) -> body @ (body |> List.collect (beneath view))
+
+            (entry :: arms)
+            @ Option.toList exit
+            @ (arms |> List.collect (beneath view substitute))
+        | OpView.Repeat(_, body) -> body @ (body |> List.collect (beneath view substitute))
+        | OpView.Each(collection, placeholder, body) ->
+            let elements = lowered substitute collection placeholder body
+            elements @ (elements |> List.collect (beneath view substitute))
+
+    /// The SCOPE defects of an op sequence (Phase 1990), decided from the
+    /// tree alone: every placeholder an op's own operands read that no
+    /// enclosing `Each` binds, and every `Each` that rebinds a name an
+    /// enclosing one already binds. `placeholders` is the state witness's
+    /// `Placeholders` — the names an op's OWN operands read, not those of the
+    /// ops beneath it, which this walk reaches through the view. A branch's
+    /// conditions are ops and are asked like any other; an `Each`'s own
+    /// collection is literal and reads nothing. Distinct, in walk order; the
+    /// handler refuses an `ApplyOps` effect that has any, before its first op
+    /// plans, naming the first.
+    let scopeDefects (view: 'Op -> OpView<'Op>) (placeholders: 'Op -> string list) (ops: 'Op list) : ScopeDefect list =
+        let rec go (bound: Set<string>) (op: 'Op) : ScopeDefect list =
+            let own =
+                placeholders op
+                |> List.filter (fun p -> not (Set.contains p bound))
+                |> List.map ScopeDefect.UnboundPlaceholder
+
+            let within =
+                match view op with
+                | OpView.Edit
+                | OpView.Require -> []
+                | OpView.Choose(entry, whenTrue, whenFalse, exit) ->
+                    go bound entry
+                    @ (whenTrue @ whenFalse |> List.collect (go bound))
+                    @ (Option.toList exit |> List.collect (go bound))
+                | OpView.Repeat(_, body) -> body |> List.collect (go bound)
+                | OpView.Each(_, placeholder, body) ->
+                    (if Set.contains placeholder bound then
+                         [ ScopeDefect.ShadowedPlaceholder placeholder ]
+                     else
+                         [])
+                    @ (body |> List.collect (go (Set.add placeholder bound)))
+
+            own @ within
+
+        ops |> List.collect (go Set.empty) |> List.distinct
 
 /// What one op IS to an UNDO (Phase 1977, DECISIONS.md D22): its exact
 /// inverse, a declared compensation, or neither. The CLASS is a function of
@@ -315,7 +423,7 @@ type UndoClass<'Node, 'Op> =
     | OneWay of reason: string
 
 /// The STATE axis: the state the ops apply to, and everything Program reads
-/// of an op. Required — every domain fills it. Seven members; `Stream` is
+/// of an op. Required — every domain fills it. Nine members; `Stream` is
 /// Core's own stream witness, reused.
 type StateWitness<'Node, 'Op> =
     {
@@ -345,7 +453,38 @@ type StateWitness<'Node, 'Op> =
         /// Read by the undo posture before a handler runs and by the undo run
         /// after one committed; never by the forward run.
         Undo: 'Op -> UndoClass<'Node, 'Op>
+        /// Substitute a value for a PLACEHOLDER in an op's operands (Phase
+        /// 1990): `Substitute placeholder element op` is `op` with `element`
+        /// standing wherever the op's operands read `placeholder`, and
+        /// nothing else moved — including in the ops beneath a flow op, so
+        /// the handler can lower an `Each` by substituting into its body and
+        /// re-viewing the result. The obligation: the substituted op VIEWS as
+        /// the original does, shape for shape, with the placeholder replaced
+        /// in every operand; a nested `Each` keeps its own placeholder and
+        /// collection. Called only when an `Each` is met; a domain with none
+        /// answers the op unchanged.
+        Substitute: string -> JVal -> 'Op -> 'Op
+        /// The placeholders an op's OWN operands read (Phase 1990) — not
+        /// those of the ops beneath it, which the core reaches through the
+        /// view. Read by the scope check before anything plans; a domain
+        /// with no placeholders answers `[]`.
+        Placeholders: 'Op -> string list
     }
+
+module StateWitness =
+    /// `OpView.lowered` through the state witness: the lowered form of an
+    /// `Each` over ops — its body once per element, each substituted.
+    let lowered
+        (state: StateWitness<'Node, 'Op>)
+        (collection: JVal list)
+        (placeholder: string)
+        (body: 'Op list)
+        : 'Op list =
+        OpView.lowered state.Substitute collection placeholder body
+
+    /// `OpView.scopeDefects` through the state witness.
+    let scopeDefects (state: StateWitness<'Node, 'Op>) (ops: 'Op list) : ScopeDefect list =
+        OpView.scopeDefects state.View state.Placeholders ops
 
 // ═══ THE WALK AXIS — optional (§3.2) ════════════════════════════════════════
 
@@ -395,12 +534,13 @@ type Bound<'Expr> =
     | Literal of count: int
     | Parameter of count: 'Expr * lo: int * hi: int
 
-/// One level of an action, seen by the core. Seven shapes, and the fold names
-/// all seven: control structure is sequence + assign + call + require +
-/// choose + repeat, and everything else is a leaf (K2, as amended by Phase
-/// 1967 and Phase 1976). Three are COMPOSITION shapes — a sequence, a
-/// selection, a repeat — whose step is their members' steps; the other four
-/// are one step each (`fold_total` in `proofs/BoundedFold.fst`).
+/// One level of an action, seen by the core. Eight shapes, and the fold names
+/// all eight: control structure is sequence + assign + call + require +
+/// choose + repeat + each, and everything else is a leaf (K2, as amended by
+/// Phase 1967, Phase 1976 and Phase 1990). Four are COMPOSITION shapes — a
+/// sequence, a selection, a repeat, a per-element iteration — whose step is
+/// their members' steps; the other four are one step each (`fold_total` in
+/// `proofs/BoundedFold.fst`).
 [<RequireQualifiedAccess>]
 type ActionView<'Action, 'Expr> =
     /// The composition arm.
@@ -447,6 +587,22 @@ type ActionView<'Action, 'Expr> =
     /// unrolling (`repeat_is_unrolling`), so every sequence law covers it.
     /// A negative literal bound is refused. The model's `VRepeat`.
     | Repeat of bound: Bound<'Expr> * body: 'Action
+    /// PER-ELEMENT ITERATION over a LITERAL collection (Phase 1990, D29). The
+    /// body runs once per element of `collection`, in order, with that
+    /// element substituted for `placeholder` — an expression of the domain's
+    /// that reads the placeholder by name — through the action witness's
+    /// `Substitute`. The lowering D1 asks for: what runs is the SEQUENCE of
+    /// the substituted bodies (`each_is_lowering`), so nothing downstream
+    /// learns a new shape — the budget prices the lowered form, the demanded
+    /// projection reads it, the trace records it (`Trace.Each`) and the
+    /// inverse is a sequence's. The bound is the collection's length, fixed
+    /// by the tree (D2); the element is a value in the tree and not a cell
+    /// in the store, so the body cannot overwrite it, which is the case D21
+    /// refused an index for. A body reading a placeholder no enclosing
+    /// `Each` binds is refused at validation (`BoundedActions.scopeDefects`),
+    /// never mid-run. An empty collection runs nothing. The model's `VEach`,
+    /// which carries the elements already lowered.
+    | Each of collection: JVal list * placeholder: string * body: 'Action
     /// Every other domain act.
     | Leaf of LeafDeclaration
 
@@ -472,7 +628,72 @@ type ActionWitness<'Action, 'Expr, 'Store, 'Effect> =
         /// Its decoder. The core applies the program's own refusals (D9's
         /// declared result target) before it asks.
         Decode: JVal -> Result<'Action, WireRefusal>
+        /// Substitute a value for a PLACEHOLDER throughout an action (Phase
+        /// 1990): `Substitute placeholder element action` is `action` with
+        /// `element` standing wherever its expressions — its own and those of
+        /// the actions beneath it — read `placeholder`, and nothing else
+        /// moved. The fold lowers an `Each` with it, once per element, and
+        /// folds the results as a sequence. The obligation: the substituted
+        /// action VIEWS as the original does, shape for shape, with the
+        /// placeholder replaced in every expression; a nested `Each` keeps
+        /// its own placeholder and collection. Called only when an `Each` is
+        /// met; a domain with none answers the action unchanged.
+        Substitute: string -> JVal -> 'Action -> 'Action
+        /// The placeholders an action's OWN operands read (Phase 1990) — the
+        /// expressions this level of the view holds, a leaf's operands — and
+        /// not those of the actions beneath it, which the core reaches
+        /// through the view. Read by the scope check before anything runs; a
+        /// domain with no placeholders answers `[]`.
+        Placeholders: 'Action -> string list
     }
+
+module ActionWitness =
+    /// The LOWERED form of an `Each` over actions (Phase 1990): its body once
+    /// per element of the collection, in collection order, with that element
+    /// substituted for the placeholder. What the fold runs, the budget
+    /// prices and the projections read; the model's `elements`.
+    let lowered
+        (witness: ActionWitness<'Action, 'Expr, 'Store, 'Effect>)
+        (collection: JVal list)
+        (placeholder: string)
+        (body: 'Action)
+        : 'Action list =
+        collection
+        |> List.map (fun element -> witness.Substitute placeholder element body)
+
+    /// The SCOPE defects of an action (Phase 1990), decided from the tree
+    /// alone: every placeholder an action's own operands read that no
+    /// enclosing `Each` binds, and every `Each` that rebinds a name an
+    /// enclosing one already binds. Distinct, in walk order. The fold's entry
+    /// refuses an action that has any, before its first step, naming the
+    /// first; the body of an `Each` is walked ONCE, unsubstituted, because
+    /// scope is a property of the form and not of any element.
+    let scopeDefects (witness: ActionWitness<'Action, 'Expr, 'Store, 'Effect>) (action: 'Action) : ScopeDefect list =
+        let rec go (bound: Set<string>) (a: 'Action) : ScopeDefect list =
+            let own =
+                witness.Placeholders a
+                |> List.filter (fun p -> not (Set.contains p bound))
+                |> List.map ScopeDefect.UnboundPlaceholder
+
+            let within =
+                match witness.View a with
+                | ActionView.Sequence members -> members |> List.collect (go bound)
+                | ActionView.Choose(_, whenTrue, whenFalse, _) -> go bound whenTrue @ go bound whenFalse
+                | ActionView.Repeat(_, body) -> go bound body
+                | ActionView.Each(_, placeholder, body) ->
+                    (if Set.contains placeholder bound then
+                         [ ScopeDefect.ShadowedPlaceholder placeholder ]
+                     else
+                         [])
+                    @ go (Set.add placeholder bound) body
+                | ActionView.Assign _
+                | ActionView.Call _
+                | ActionView.Require _
+                | ActionView.Leaf _ -> []
+
+            own @ within
+
+        go Set.empty action |> List.distinct
 
 type ExprWitness<'Expr, 'Store> =
     {

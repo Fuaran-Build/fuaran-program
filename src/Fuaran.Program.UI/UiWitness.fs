@@ -538,6 +538,12 @@ let state: StateWitness<Node<obj>, TreeOp<obj>> =
               Destination = EffectDestination.Absent }
       Canonical = Fuaran.UI.OpStream.Abstractions.CanonicalJson.encodeNode
       View = OpView.edits
+      // No UI op is viewed as an `Each` (Phase 1990), so no UI op is ever
+      // substituted into and none reads a placeholder: the identity, and
+      // nothing — the honest answers for a tier whose iteration is data
+      // binding in the tree.
+      Substitute = fun _ _ op -> op
+      Placeholders = fun _ -> []
       // Every tree op has an EXACT inverse through the tier's own diff
       // (Phase 1977): apply the op to the pre-state and diff the result back
       // to the pre-state, which answers the ops that restore it — the same
@@ -703,7 +709,13 @@ let dispatch: DispatchWitness<Node<obj>, Action<obj>, Binding<JVal>, BindingSour
           Lower = lower
           Describe = Validation.describeAction
           Encode = encodeAction
-          Decode = decodeAction }
+          Decode = decodeAction
+          // No UI arm views as an `Each` (Phase 1990; `ui_view_no_flow`), so
+          // the fold never substitutes into a UI action and none reads a
+          // placeholder — the UI tier repeats through data binding, in the
+          // tree. The identity, and nothing.
+          Substitute = fun _ _ action -> action
+          Placeholders = fun _ -> [] }
       Expr =
         { Resolve = resolveExpr
           Uses = usesOfExpr }

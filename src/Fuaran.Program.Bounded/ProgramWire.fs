@@ -417,6 +417,9 @@ module ProgramWire =
     ///               times, so its defects are the body's; a parameter bound
     ///               is resolved at dispatch, which is undecidable, beside the
     ///               body's (Phase 1976).
+    ///   Each      — a literal collection re-runs the same lowered elements,
+    ///               so its defects are the distinct union of theirs — the
+    ///               body with each element substituted (Phase 1990).
     ///   Leaf      — undecidable, and reported as such.
     ///
     /// `replayDefectsOfActionIn` is the same walk over the action witness alone
@@ -439,6 +442,10 @@ module ProgramWire =
         | ActionView.Repeat(Bound.Literal _, body) -> replayDefectsOfActionIn witness body
         | ActionView.Repeat(Bound.Parameter _, body) ->
             ReplayDefect.UndecidableAction :: replayDefectsOfActionIn witness body
+            |> List.distinct
+        | ActionView.Each(collection, placeholder, body) ->
+            ActionWitness.lowered witness collection placeholder body
+            |> List.collect (replayDefectsOfActionIn witness)
             |> List.distinct
         | ActionView.Leaf _ -> [ ReplayDefect.UndecidableAction ]
 
@@ -464,16 +471,19 @@ module ProgramWire =
         match witness.State.View op with
         | OpView.Edit
         | OpView.Require -> ofOne op
-        // A branch or a repeat (Phase 1976) re-runs through the ops beneath
-        // it, so its defects are the distinct union of theirs — both arms, an
-        // untaken arm included, since which arm re-runs is decided against a
-        // state that has moved — beside whether the op itself encodes.
+        // A branch, a repeat (Phase 1976) or a per-element iteration (Phase
+        // 1990) re-runs through the ops beneath it, so its defects are the
+        // distinct union of theirs — both arms, an untaken arm included, since
+        // which arm re-runs is decided against a state that has moved; an
+        // `Each`'s lowered elements — beside whether the op itself encodes.
         | OpView.Choose _
-        | OpView.Repeat _ ->
+        | OpView.Repeat _
+        | OpView.Each _ ->
             (match encodeOp witness op with
              | Error _ -> [ ReplayDefect.UnencodableOp ]
              | Ok _ -> [])
-            @ (OpView.beneath witness.State.View op |> List.collect ofOne)
+            @ (OpView.beneath witness.State.View witness.State.Substitute op
+               |> List.collect ofOne)
             |> List.distinct
 
     let replaySafetyOfAction

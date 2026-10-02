@@ -79,6 +79,92 @@ type FileOp =
     | Check of FileCheck
     | Branch of entry: FileCheck * whenTrue: FileOp list * whenFalse: FileOp list * exit: FileCheck option
     | Times of count: int * body: FileOp list
+    /// Per-element iteration over a literal collection (Phase 1990), viewed
+    /// as the core's `Each`: the body's paths and targets carry the
+    /// placeholder as a `{name}` token, and the element is substituted into
+    /// them — the address-dependent body D21's index-free repeat could not
+    /// express, written as the loop a spreadsheet's automation actually
+    /// writes: one fixed array of addresses, one body.
+    | ForEach of collection: JVal list * placeholder: string * body: FileOp list
+
+// ─── placeholders in operands (Phase 1990) ──────────────────────────────────
+
+/// A placeholder in an operand: a path, a target or a write's content carrying
+/// `{name}` reads the placeholder `name`. The domain's own spelling — the core
+/// never sees it; it asks `Placeholders` which names an op reads and
+/// `Substitute` to write an element over them.
+module Placeholder =
+    let private pattern =
+        System.Text.RegularExpressions.Regex(@"\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+    /// The placeholder names a string reads, in order of appearance.
+    let names (text: string) : string list =
+        pattern.Matches text |> Seq.map (fun m -> m.Groups.[1].Value) |> List.ofSeq
+
+    /// The string with the element written over every `{placeholder}`: a
+    /// string element verbatim, any other element in its canonical rendering.
+    let fill (placeholder: string) (element: JVal) (text: string) : string =
+        let value =
+            match element with
+            | JStr s -> s
+            | other -> Canon.render other
+
+        text.Replace("{" + placeholder + "}", value)
+
+/// The placeholders a CHECK's operand reads.
+let private checkPlaceholders (check: FileCheck) : string list =
+    match check with
+    | Exists path
+    | Missing path -> Placeholder.names path
+    | Refused _ -> []
+
+let private substituteCheck (placeholder: string) (element: JVal) (check: FileCheck) : FileCheck =
+    match check with
+    | Exists path -> Exists(Placeholder.fill placeholder element path)
+    | Missing path -> Missing(Placeholder.fill placeholder element path)
+    | Refused _ -> check
+
+/// The verb's `Substitute` (Phase 1990): the element written over the
+/// placeholder in every operand of the op and of the ops beneath it, the shape
+/// of the op untouched — so the substituted op views as the original does,
+/// which is the witness obligation. A nested `ForEach` keeps its own
+/// collection and placeholder.
+let rec substituteOp (placeholder: string) (element: JVal) (op: FileOp) : FileOp =
+    let fill = Placeholder.fill placeholder element
+    let sub = substituteOp placeholder element
+
+    match op with
+    | Read path -> Read(fill path)
+    | Write(path, content) -> Write(fill path, fill content)
+    | Delete path -> Delete(fill path)
+    | Publish target -> Publish(fill target)
+    | Retract target -> Retract(fill target)
+    | Check check -> Check(substituteCheck placeholder element check)
+    | Branch(entry, whenTrue, whenFalse, exit) ->
+        Branch(
+            substituteCheck placeholder element entry,
+            whenTrue |> List.map sub,
+            whenFalse |> List.map sub,
+            exit |> Option.map (substituteCheck placeholder element)
+        )
+    | Times(count, body) -> Times(count, body |> List.map sub)
+    | ForEach(collection, name, body) -> ForEach(collection, name, body |> List.map sub)
+
+/// The verb's `Placeholders` (Phase 1990): the names an op's OWN operands read
+/// — its path, target or content — and not those of the ops beneath a flow
+/// op, which the core reaches through the view (a branch's conditions are ops
+/// and are asked like any other).
+let placeholdersOf (op: FileOp) : string list =
+    match op with
+    | Read path
+    | Delete path -> Placeholder.names path
+    | Write(path, content) -> Placeholder.names path @ Placeholder.names content
+    | Publish target
+    | Retract target -> Placeholder.names target
+    | Check check -> checkPlaceholders check
+    | Branch _
+    | Times _
+    | ForEach _ -> []
 
 // ─── the state witness ──────────────────────────────────────────────────────
 
@@ -113,6 +199,14 @@ let rec encodeOp (op: FileOp) : string =
         )
     | Times(count, body) ->
         Canon.render (Canon.typed "Times" [ "body", JArr(body |> List.map (encodeOp >> JStr)); "count", JInt count ])
+    | ForEach(collection, placeholder, body) ->
+        Canon.render (
+            Canon.typed
+                "ForEach"
+                [ "body", JArr(body |> List.map (encodeOp >> JStr))
+                  "collection", JArr collection
+                  "placeholder", JStr placeholder ]
+        )
 
 /// The op decoder (Phase 1982, H1): `encodeOp`'s inverse, so the verb's
 /// handlers round-trip as Program documents. Total: anything `encodeOp` did not
@@ -183,6 +277,14 @@ let rec decodeOp (text: string) : Result<FileOp, string> =
             match field "count" members with
             | Some(JInt count) -> ops "body" members |> Result.map (fun body -> Times(int count, body))
             | _ -> Error "member 'count' is not an integer"
+        | Some(JStr "ForEach") ->
+            match field "collection" members with
+            | Some(JArr collection) ->
+                str "placeholder" members
+                |> Result.bind (fun placeholder ->
+                    ops "body" members
+                    |> Result.map (fun body -> ForEach(collection, placeholder, body)))
+            | _ -> Error "member 'collection' is not an array"
         | Some(JStr other) -> Error(sprintf "'%s' is not a verb op" other)
         | _ -> Error "the op carries no '$type'"
     | _ -> Error "the op is not a JSON object"
@@ -232,7 +334,8 @@ let apply (op: FileOp) (tree: FileMap) : Result<FileMap, string> =
     // A flow op is planned through its VIEW — its conditions and its arms are
     // what the handler applies — and is never applied itself.
     | Branch _
-    | Times _ -> Error "a flow op is planned through its view and never applied"
+    | Times _
+    | ForEach _ -> Error "a flow op is planned through its view and never applied"
 
 /// What an op REACHES (W3, W4): a path under `path`, local; a publish target
 /// under `target`, and REMOTE — the class a policy can bound without knowing
@@ -262,6 +365,10 @@ let reach (op: FileOp) : OpReach =
     | Times(count, _) ->
         { Arguments = [ "count", string count ]
           Destination = EffectDestination.Absent }
+    // A per-element iteration reaches nothing of its own: the policy reads
+    // its LOWERED body beneath it — every element's substituted paths — so a
+    // placeholder cannot hide an address from an allow-list.
+    | ForEach _ -> OpReach.nothing
 
 let canonical (tree: FileMap) : string =
     Canon.render (
@@ -302,7 +409,8 @@ let undo (op: FileOp) : UndoClass<FileMap, FileOp> =
     // Never an edit, so never asked; refused if ever it were.
     | Check _
     | Branch _
-    | Times _ -> UndoClass.OneWay "a guard or a flow op is not an edit"
+    | Times _
+    | ForEach _ -> UndoClass.OneWay "a guard or a flow op is not an edit"
 
 /// The verb witness: the state axis, and nothing else.
 let witness: ProgramWitness<FileMap, FileOp, Unfilled, Unfilled> =
@@ -324,7 +432,8 @@ let witness: ProgramWitness<FileMap, FileOp, Unfilled, Unfilled> =
                 | Retract target -> Some target
                 | Check(Refused _)
                 | Branch _
-                | Times _ -> None
+                | Times _
+                | ForEach _ -> None
           Canonical = canonical
           Diff = fun _ _ -> []
           View =
@@ -334,12 +443,15 @@ let witness: ProgramWitness<FileMap, FileOp, Unfilled, Unfilled> =
                 | Branch(entry, whenTrue, whenFalse, exit) ->
                     OpView.Choose(Check entry, whenTrue, whenFalse, exit |> Option.map Check)
                 | Times(count, body) -> OpView.Repeat(count, body)
+                | ForEach(collection, placeholder, body) -> OpView.Each(collection, placeholder, body)
                 | Read _
                 | Write _
                 | Delete _
                 | Publish _
                 | Retract _ -> OpView.Edit
-          Undo = undo }
+          Undo = undo
+          Substitute = substituteOp
+          Placeholders = placeholdersOf }
       Walk = Unfilled
       Dispatch = Unfilled }
 
@@ -451,7 +563,8 @@ type World() =
                     Ok(Receipt.targets [ target ])
                 | Check _ -> Error "a guard reached the performer"
                 | Branch _
-                | Times _ -> Error "a flow op reached the performer"
+                | Times _
+                | ForEach _ -> Error "a flow op reached the performer"
 
     /// The ADVERSARY (Phase 1981): performs every op as `Performer` does, and
     /// on every write ALSO writes `escape` — a path the op's reach does not

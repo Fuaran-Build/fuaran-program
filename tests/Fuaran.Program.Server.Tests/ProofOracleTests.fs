@@ -172,7 +172,9 @@ let private modelWitness
       w_apply = fun op tree -> witness.State.Stream.Apply op tree |> modelRes
       // The production `View`, taken to exhaustion — the model's `w_op_view`
       // (Phase 1976): an edit and a guard carry the op the handler holds, a
-      // branch's arms and a repeat's body are viewed in turn.
+      // branch's arms and a repeat's body are viewed in turn; an `Each`
+      // (Phase 1990) reaches the model LOWERED — its body once per element,
+      // substituted through the production `Substitute`, each body viewed.
       w_op_view =
         let rec view (op: TreeOp<obj>) : Staging.op_view<TreeOp<obj>> =
             match witness.State.View op with
@@ -181,6 +183,11 @@ let private modelWitness
             | OpView.Choose(entry, whenTrue, whenFalse, exit) ->
                 Staging.OChoose(entry, whenTrue |> List.map view, whenFalse |> List.map view, modelOpt exit)
             | OpView.Repeat(count, body) -> Staging.ORepeat(bigint count, body |> List.map view)
+            | OpView.Each(collection, placeholder, body) ->
+                Staging.OEach(
+                    collection
+                    |> List.map (fun element -> body |> List.map (witness.State.Substitute placeholder element >> view))
+                )
 
         view
       w_assign = witness.Dispatch.Store.Assign

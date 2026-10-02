@@ -305,6 +305,10 @@ let witness: ProgramWitness<Document, DocStep, WalkWitness<Document>, Unfilled> 
                 match step with
                 | DocStep.RequirePack _ -> OpView.Require
                 | _ -> OpView.Edit
+          // No step is viewed as an `Each` (Phase 1990): the identity, and no
+          // placeholder.
+          Substitute = fun _ _ step -> step
+          Placeholders = fun _ -> []
           // What undoes each step (Phase 1977): an edit the write of the text
           // the pre-state held; a bind the bind of the value it overwrote, or
           // the unbind of a field it first bound; a render its DISCARD,

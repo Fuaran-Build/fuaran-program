@@ -367,7 +367,9 @@ module ServerArgumentPolicy =
     /// What one op reaches, as `(argument, value)` pairs: its declared
     /// arguments, then its destination class where it names one — for the op
     /// itself AND every op beneath it in its view (Phase 1976: a branch's
-    /// entry, both arms and exit, a repeat's body), because an untaken arm's
+    /// entry, both arms and exit, a repeat's body; Phase 1990: an `Each`'s
+    /// lowered elements, each with its element substituted, so the policy
+    /// sees every address a placeholder stands for), because an untaken arm's
     /// reach is still reach, and a sequence that reaches an off-list path in
     /// either arm has reached it. The one place an op's reach is read into
     /// the policy's vocabulary, so the demanded projection reads it here too
@@ -382,7 +384,8 @@ module ServerArgumentPolicy =
                 reach.Arguments
                 @ [ DestinationArgument, Fuaran.Program.Runtime.EffectDestination.describe destination ]
 
-        op :: Fuaran.Program.Bounded.OpView.beneath ops.View op |> List.collect ofOne
+        op :: Fuaran.Program.Bounded.OpView.beneath ops.View ops.Substitute op
+        |> List.collect ofOne
 
     /// The by-reference source names a data source reads. An embedded table
     /// carries its own rows and asks the host for nothing.

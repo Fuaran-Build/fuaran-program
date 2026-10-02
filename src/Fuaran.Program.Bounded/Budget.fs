@@ -75,25 +75,34 @@ module Budget =
     /// arm, because the price must bound the run whichever arm it takes; a
     /// `Repeat` is one step (its bound) plus its body times the bound, a
     /// parameter bound priced at the TOP of its range so the price needs no
-    /// store; every other shape costs 1. Read through the witness's view, so
-    /// what counts as composition is the fold's own notion of it, and in
-    /// saturating arithmetic. `fold_steps_within_cost` in
+    /// store; an `Each` is its LOWERED form — the body's cost once per element
+    /// of its literal collection, each element substituted, summed, with no
+    /// step for a bound because a literal collection is not read (Phase
+    /// 1990) — so an `Each` whose lowered size exceeds the ceiling is refused
+    /// by the driver's gate before its first element, exactly as an
+    /// over-bound repeat is; every other shape costs 1. Read through the
+    /// witness's view, so what counts as composition is the fold's own notion
+    /// of it, and in saturating arithmetic. `fold_steps_within_cost` in
     /// `proofs/BoundedFold.fst` is the statement that a run never takes more
-    /// steps than this prices (Phase 1976).
+    /// steps than this prices (Phase 1976; over the lowered elements, Phase
+    /// 1990).
     ///
     /// Reads the DISPATCH axis (the action view) and nothing else.
     let actionCascadeCost
         (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (a: 'Action)
         : int =
-        let view = (DispatchPosition.fold witness.Dispatch).Action.View
+        let fold = DispatchPosition.fold witness.Dispatch
 
         let rec cost (a: 'Action) : int =
-            match view a with
+            match fold.Action.View a with
             | ActionView.Sequence xs -> xs |> List.fold (fun acc x -> satAdd acc (cost x)) 0
             | ActionView.Choose(_, whenTrue, whenFalse, _) -> satAdd 1 (max (cost whenTrue) (cost whenFalse))
             | ActionView.Repeat(Bound.Literal count, body) -> satAdd 1 (satMul (max count 0) (cost body))
             | ActionView.Repeat(Bound.Parameter(_, _, hi), body) -> satAdd 1 (satMul (max hi 0) (cost body))
+            | ActionView.Each(collection, placeholder, body) ->
+                ActionWitness.lowered fold.Action collection placeholder body
+                |> List.fold (fun acc x -> satAdd acc (cost x)) 0
             | ActionView.Assign _
             | ActionView.Call _
             | ActionView.Require _
