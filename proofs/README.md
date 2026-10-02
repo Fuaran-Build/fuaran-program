@@ -66,6 +66,7 @@ anything about that witness.
 | `Staging.fst` | `plan_pure`, `residual_is_prefix`, `performed_in_order`, `commit_is_total_prefix`, `plan_halt_performs_nothing` | `w_apply` → `Stream.Apply`, `w_op_view` → `View` (**state**); `w_compute` → the fold over `Action` / `Expr` / `Store`, `w_query` → `Store.LandQuery`, `w_assign` → `Store.Assign`, `w_slot_refused` → `Store.IsReserved` / `ReservedPrefix` (**dispatch**) | **state**, with the dispatch members as hypotheses a dispatch-less witness discharges (below) |
 | `Staging.fst` | `guard_holds_moves_nothing`, `guard_refusal_halts` (the op-channel guard, F-GUARD) | `w_apply`, `w_op_view` | **state** only |
 | `Staging.fst` | `performer_handed_the_plan` (F-PERFORM) | `w_apply`, `w_op_view`, and the registry's `r_op_perform` | **state** only |
+| `Staging.fst` | `replay_unrun_is_perform`, `replay_serves_completed`, `resume_performs_only_the_rest`, `indeterminate_refused_by_default`, `indeterminate_reinvoked_only_by_name`, `divergence_refused`, `durable_resume`, `empty_journal_is_direct` (the durable discipline, Phase 1980) | `d_subject` → `Stream.Encode`, the op's canonical form content-addressed as an op stage's journal SUBJECT (**state**); `w_assign` → `Store.Assign`, for a served landing slot (**dispatch**); the journal snapshot and the declarations are `DurableServices`, not witness members | **state**, with `w_assign` as the hypothesis a dispatch-less witness discharges (nothing lands, so it is never asked) |
 | `EffectGate.fst` | `gate_before_perform`, `gate_refusal_halts_run`, `policy_sufficient`, `return_contract` | the staging witness, quantified over every one, plus the registry | **state**, on the staging theorem's terms |
 
 **A witness filling ONLY the state axis satisfies every theorem that names no dispatch member.**
@@ -662,6 +663,21 @@ reads one arrow, `w_slot_refused`, so a composition with no binding channel refu
 through the clause a reserved slot is refused through. The four theorems below are restated over
 the arm as it now is and keep their statements; three more sit beside them (5–7).
 
+**Since Phase 1980 the DURABLE DISCIPLINE is in the model, beside the handler it wraps** (D12,
+restated by D23). `Durable.runWith` wraps every performer the perform phase reaches — a host call's
+and, under a registered op performer, the op's — through one wrapper and one ordinal cursor, so an
+op stage's ordinal is its position in the one staged list, and what the wrapper does there is
+decided by a journal SNAPSHOT read once at entry. The model has that snapshot (`journal`: the
+three-state reading per ordinal, and the identity recorded there — the capability with, for an op
+stage, the op's content address as its SUBJECT), the wrapper's decision (`decide`: serve, invoke,
+diverged, undecided), the perform phase run through it (`replay`, with the cursor threaded where
+production keeps it in a cell the fold does not know about) and `durable_run`. The subject is read
+off the STATE axis — `d_subject` is `StateWitness.Stream.Encode`, content-addressed — and never the
+state handed beside the op, which is the planned state, recomputed. Eight theorems (12–19 in the
+ladder) say what a resumed run serves, performs and refuses; the plan phase is untouched, which is
+`plan_pure` once more, and every earlier theorem re-proves unchanged over the same staged list. The
+journal's WRITES and its storage stay the host's port and out of the theorem.
+
 ### 1. `plan_pure` — nothing external runs in the plan phase
 
 The plan phase's output is a function of the entry state, the program, the witness and the
@@ -729,6 +745,73 @@ alone) and `last_edit` (ghost) support them; `plan_ops_nil` / `plan_ops_cons` st
 fold as equations the recursive lemmas call, because the solver does not unfold `plan_ops` itself
 inside a recursive lemma (the same query succeeds outside one).
 
+### 12–19. The durable discipline — what a resumed run serves, performs and refuses (Phase 1980)
+
+Stated over one staged list from one ordinal `k`, with the journal snapshot `dur` and the
+performer's behaviour `reg.r_perf` abstract, and read as a caller reads `DurableOutcome`: the
+accumulator the perform phase left, and the four ordinal lists (`Replayed`, `Invoked`,
+`Indeterminate`, `Overrides`).
+
+- **`replay_unrun_is_perform`** — over calls the journal has NOTHING for, the replay IS the perform
+  phase: the same accumulator as `perform`, nothing served, nothing refused, no override, and the
+  performer invoked at exactly the ordinals the perform phase asks — the prefix it answers plus the
+  one it refuses (`asked`, which counts a refused call as invoked, because it was). This is
+  `Journal.none` degrading the durable interpreter to the direct one, as an equation.
+- **`replay_serves_completed`** — a prefix the journal records as completed, under the identity the
+  replay holds at each ordinal, is SERVED: the replay of `served @ rest` from `k` is the replay of
+  `rest` from `k + |served|` over the accumulator serving left — each recorded value landed exactly
+  as a performed one is, no performer asked — with the served ordinals reported as replayed in front.
+- **`resume_performs_only_the_rest`** — the two together: a completed prefix is served and only the
+  rest is performed, exactly as the perform phase would perform it from the served accumulator;
+  nothing refused, nothing overridden.
+- **`indeterminate_refused_by_default`** — a step the journal shows attempted and undecided, under a
+  performer NOT declared idempotent and with the opt-in off, is refused: the prefix before it is
+  served, no performer is invoked at it or after it, the handler halts under the call's capability
+  with `durable-indeterminate-step`, and the ordinal is reported as indeterminate. D12's "refuse by
+  default", as an equation — and the rule `DurableInterpreterTests` says must never quietly relax.
+- **`indeterminate_reinvoked_only_by_name`** — the same step is re-invoked in exactly two cases and
+  nowhere else: a performer declared idempotent (no override recorded — its own shape closes the
+  window) or the opt-in (the override RECORDED at that ordinal); either way the replay from there is
+  the perform phase over the step and what follows.
+- **`divergence_refused`** — an ordinal whose recorded identity is not this call's — another
+  capability, or the same capability over another op — is refused before anything is served or
+  invoked at it, under `durable-replay-divergence`, and nothing after it is reached. The subject is
+  what makes this true of an op stage: two ops at one ordinal share a capability, and only their
+  content addresses tell them apart.
+- **`durable_resume`** — the discipline at the HANDLER: when the plan completed and its staged list
+  is a completed prefix the journal holds followed by calls it has nothing for — the journal a run
+  interrupted between two steps leaves — the durable run reports the prefix as replayed, invokes the
+  performer at exactly the ordinals after it the perform phase asks, refuses and overrides nothing,
+  and commits exactly when every call after the prefix ran.
+- **`empty_journal_is_direct`** — with nothing recorded for any staged call the durable run's outcome
+  IS the direct run's, and it reports nothing served, nothing refused, no override.
+
+`land` (the perform phase's `ROk` clause, named so a served answer lands as a performed one does),
+`serve` (ghost: what serving a completed prefix does to the accumulator), `completed_at` /
+`unrun_from` (ghost: the journal shapes the theorems are stated over), `ordinals` and `asked` support
+them; `serve_keeps_halted` is the one helper lemma.
+
+**The spec-strength check, per theorem.** Each says what the code COMPUTES — the four lists and the
+accumulator, not a shape; is tied to the implementation by the differential host, which runs the
+extraction of `replay` beside `Durable.runWith` and compares exactly those outputs plus the
+diagnostics; states the whole guarantee (served AND invoked AND refused AND overridden, and the
+verdict, in one statement rather than one list at a time); is usable by a caller, who reads the same
+members off `DurableOutcome`; and is visible — here, in the ladder and in `proofs.json`.
+`indeterminate_reinvoked_only_by_name` is the one stated stronger than the shard asked: the shard
+asks that an indeterminate step be refused by default; the theorem also pins the ONLY two ways it is
+not, so a third route in would be a proof failure rather than a quiet widening.
+
+**Model parameters, and what the theorems assume of them.** The journal snapshot `j_step` /
+`j_recorded` is an arbitrary pair of arrows — the theorems assume only the shape their hypotheses
+name (`completed_at`, `unrun_from`, a recorded identity at one ordinal) and nothing about how it got
+that way; production reads it once at entry, which is the ONE fact the model fixes and the
+differential checks. `d_subject` is an arbitrary arrow: the theorems are conditional on the replay
+holding the same subject at an ordinal that the recorded run held (production: the content address
+of the op's canonical form, deterministic in the op). `d_idempotent` and `d_reinvoke` are read as
+booleans; the theorems about the undecided step are conditional on them. `w_assign` is reached only
+by a served or performed landing slot, and the theorems say nothing about what it does. The
+performer's behaviour is a pure function of the call, on the staging theorem's existing terms.
+
 ### The supporting clause — `plan_halt_performs_nothing`
 
 A handler that halted while planning rolls back to the entry store and reports nothing
@@ -749,7 +832,13 @@ records of arrows, and both are the assumed rung:
   reaches the model already reduced to its discriminator, as `Handler.evalErrorKind` reduces it;
 - **the registry** — the gate, the argument policy (with its defect already described), the
   lookup, the performer's behaviour, and — since Phase 1967 — the op performer's registration and
-  what it stages for an op (`r_op_perform`), the token and argument the perform phase will apply.
+  what it stages for an op (`r_op_perform`), the token and argument the perform phase will apply;
+- **the journal snapshot and the declarations** (since Phase 1980) — what the journal says at each
+  ordinal and what was recorded there, the subject arrow, the op performer's and host performers'
+  declared idempotency, and the opt-in: `Durable.runWith` reads them once and the model takes them
+  as arrows. The journal's WRITES (the attempt before, the decision after) and its storage are the
+  host's port (`EffectJournal`) and are not modelled: the theorems are about what a replay does with
+  a snapshot, never about how the snapshot came to be.
 
 The denial sink (`OnDenied`) is a unit-returning observer and is not modelled.
 
@@ -777,6 +866,22 @@ The denial sink (`OnDenied`) is a unit-returning observer and is not modelled.
 11. **Whatever the shapes, the head of the staged list was staged from the final planned state** —
     `staged_from_the_final_state` (Phase 1976): F-PERFORM over branches and repeats, whose last
     edit is the run's rather than the tree's.
+12. **Over calls the journal has nothing for, the replay is the perform phase** —
+    `replay_unrun_is_perform` (Phase 1980).
+13. **A completed prefix is served: landed from the record, no performer asked, reported as
+    replayed** — `replay_serves_completed` (Phase 1980).
+14. **A resumed run serves the completed prefix and performs only the rest** —
+    `resume_performs_only_the_rest` (Phase 1980).
+15. **An undecided step under an undeclared performer with the opt-in off is refused, before it and
+    everything after it** — `indeterminate_refused_by_default` (Phase 1980).
+16. **It is re-invoked in exactly two cases — a declared-idempotent performer, or the opt-in with its
+    override recorded — and nowhere else** — `indeterminate_reinvoked_only_by_name` (Phase 1980).
+17. **A recorded ordinal holding another identity is refused as divergence; the subject tells two
+    ops apart** — `divergence_refused` (Phase 1980).
+18. **At the handler: served prefix, invoked rest, committed exactly when the rest ran** —
+    `durable_resume` (Phase 1980).
+19. **With nothing recorded, the durable run's outcome is the direct run's** —
+    `empty_journal_is_direct` (Phase 1980).
 
 Since Phase 1976 the op view is taken to EXHAUSTION (`op_view o`, `views`), as the action view has
 been since Phase 1898: `plan_ops` plans the views (`plan_views` / `plan_view` / `plan_repeat`), so
@@ -814,6 +919,18 @@ a call it did not run. Production and the model still agree with each other — 
 it — and the check that catches it is the claim against the log, which is the ground truth
 every green case rests on. A comparison that could not lose would not be evidence.
 
+**The durable replay has its own differential** (Phase 1980; `DurableInterpreterTests`, "the proved
+durable replay as oracle"): the extraction of `replay` is run beside `Durable.runWith` over every
+journal shape the crash fixtures leave behind — nothing recorded, interrupted between two op stages,
+a crash inside the second op stage under each of the three policies, a host call refusing on the
+resume, a recorded refusal served, and a recorded ordinal holding another op — with the staged list
+built by hand in the shape the plan phase stages (two op stages carrying their subjects, one host
+call) and the snapshot built from the production journal's own entries through `stepOf`,
+`capabilityOf` and `subjectOf`. Seven things are compared: the four ordinal lists, the verdict, the
+audit trail and the diagnostics. It went red before it went green: a list comprehension had
+shortened the model's staged list to two calls, and every case that reached the host call lost on
+`invoked`.
+
 #### Assumed, and stated
 
 - **The performer is a function of the call.** The model's `r_perf` is pure, so a stateful
@@ -829,13 +946,16 @@ every green case rests on. A comparison that could not lose would not be evidenc
 
 #### Not claimed
 
-- **The durable journal.** D12's interpreter journals the one arm that reaches outside and
-  replays over the journal; it CALLS `Handler.run` and does not fork it, so it sits above this
-  theorem and is out of it, as it is out of the fold theorem's.
+- **The durable journal's writes and storage.** Since Phase 1980 the journal's READ side is in the
+  theorem — what a replay does with a snapshot (12–19) — and the interpreter still CALLS
+  `Handler.runWith` rather than forking it, which is why the plan-phase theorems are untouched. What
+  stays out is how the snapshot came to be: the attempt record written before a performer and the
+  decision after, and whether the storage survives a restart. Those are the host's port
+  (`EffectJournal`), and the facet derivation carries the restart claim as the host's own.
 - **The indeterminate window D12 declines to close.** A step journaled as attempted and never
-  decided may have happened and may not; the theorem says what `Performed` reports when the
-  performer ANSWERS, and nothing about a performer that never does. That window is declared,
-  not closed, and no proof here narrows it.
+  decided may have happened and may not. What is proved (15, 16) is what the replay DOES with such a
+  step — refuses it by default, re-invokes it only by name — never whether the effect happened: the
+  effect commits in a system this host does not own, and no proof here narrows that window.
 - **The performer's own effect.** What a host function does when invoked is the host's. The
   theorem bounds what the handler reports and when it stops asking; it cannot bound what an
   invocation did.

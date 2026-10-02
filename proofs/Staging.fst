@@ -76,6 +76,22 @@
 /// unrolling (`repeat_plans_as_unrolling`), and the earlier theorems
 /// keep their statements over the widened arm.
 ///
+/// Since Phase 1980 the DURABLE DISCIPLINE (DECISIONS.md D12, restated
+/// by D23) is modelled beside the handler, at the foot of this module:
+/// `Durable.runWith` wraps every performer the perform phase reaches —
+/// a host call's and, under a registered op performer, the op's — so a
+/// staged call's ordinal is its position in the one staged list, and
+/// what the wrapper does at an ordinal is decided by a journal SNAPSHOT
+/// read once at entry (`journal`, `decide`): serve a recorded answer,
+/// invoke the performer, or refuse. `replay` is the perform phase run
+/// through that wrapper and `durable_run` is `run` with it; an op
+/// stage's entry carries the op's content address as its SUBJECT, read
+/// off the state axis, so two ops at one ordinal are told apart by the
+/// divergence check. The plan phase is untouched by all of it, which is
+/// `plan_pure` once more: the wrapper changes `r_perf`'s behaviour and
+/// nothing the plan phase reads, so every theorem above re-proves
+/// unchanged over the same staged list.
+///
 /// DECISIONS.md D8 states the law in prose: nothing external runs in the
 /// plan phase; an uncommitted outcome equals the entry state EXCEPT that
 /// `Performed` names exactly the prefix of staged host calls that ran;
@@ -119,8 +135,10 @@
 /// case the pure model cannot state.
 ///
 /// The denial sink (`OnDenied`) is a unit-returning observer and is not
-/// modelled; the durable journal (D12) sits above `Handler.run` and is
-/// out of the theorem, as `proofs.json` records.
+/// modelled. The durable journal's READ side (D12) is modelled since
+/// Phase 1980 — a snapshot of decided ordinals, below — and its WRITES
+/// and its storage are the host's port and out of the theorem, as
+/// `proofs.json` records.
 ///
 /// # The theorems
 ///
@@ -179,6 +197,31 @@
 ///     theorem is stated through, answers `ONone` on a sequence with a
 ///     branch or a repeat in it, so that theorem is vacuous there and this
 ///     one is not.)
+///
+/// And at the foot of the module (Phase 1980, the durable discipline,
+/// over the staged list with a journal snapshot `dur` and an ordinal `k`):
+///
+///   * `replay_unrun_is_perform` — over calls the journal has nothing
+///     for, the replay IS the perform phase, and the performer is invoked
+///     at exactly the ordinals the perform phase asks.
+///   * `replay_serves_completed` — a prefix the journal records as
+///     completed is served: landed from the record, no performer asked,
+///     its ordinals reported as replayed.
+///   * `resume_performs_only_the_rest` — the two together: a completed
+///     prefix is served and only the rest is performed.
+///   * `indeterminate_refused_by_default` — an undecided step under an
+///     undeclared performer with the opt-in off is refused, before it
+///     and everything after it, under `durable-indeterminate-step`.
+///   * `indeterminate_reinvoked_only_by_name` — it is re-invoked in
+///     exactly two cases, a declared-idempotent performer (no override)
+///     or the opt-in (an override recorded), and nowhere else.
+///   * `divergence_refused` — an ordinal whose recorded identity is not
+///     this call's is refused under `durable-replay-divergence`; the
+///     subject is what tells two ops at one ordinal apart.
+///   * `durable_resume` — the discipline at the handler: served prefix,
+///     invoked rest, committed exactly when the rest ran.
+///   * `empty_journal_is_direct` — with nothing recorded, the durable
+///     run's outcome is the direct run's.
 
 module Staging
 
@@ -1826,3 +1869,513 @@ let staged_from_the_final_state (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) 
           (staged' == staged /\ tree' == tree) \/
           (Cons? staged' /\ (exists (op: o). Cons?.hd staged' == staged_from cap f tree' op))))) =
   handed_views w cap f (views w ops) tree staged
+
+(* ───────────────────────────────────────────────────────────────────
+   THE DURABLE DISCIPLINE (Phase 1980) — `Durable.runWith`
+   (`src/Fuaran.Program.Server/Durable.fs`), modelled BESIDE the handler
+   it wraps and over the same staged list.
+
+   Not ghost: the definitions down to `durable_run` are extracted, and
+   the differential host in `DurableInterpreterTests` runs them beside
+   production. The lemmas after them are erased, as every lemma above is.
+
+   What is modelled is the READ side of D12's discipline: the journal as
+   a snapshot taken once at entry (production reads
+   `services.Journal.Read invocation` once and lets that snapshot
+   decide), and what the wrapped performer does at each ordinal of the
+   perform phase — serve a recorded answer, invoke the performer, or
+   refuse. Since Phase 1980 a staged call may be an OP STAGE as well as
+   a host call, and the discipline is the same for both: the ordinal is
+   the position in the one staged list, and the identity a replay
+   checks is the capability with, for an op stage, the op's content
+   address (`d_subject`). The journal's WRITES — the attempt before the
+   performer and the decision after — and its storage are the host's
+   port and stay out of the theorem, as the ladder records.
+   ─────────────────────────────────────────────────────────────────── *)
+
+/// F#: `JournaledStep` — what the snapshot says about one ordinal once
+/// its records are read together (`Journal.stepOf`).
+type journaled (v: Type0) =
+  | JUnrun : journaled v
+  | JValue : value: v -> journaled v
+  | JRefusal : reason: string -> journaled v
+  | JIndeterminate : journaled v
+
+/// F#: the snapshot `services.Journal.Read invocation`, decided per
+/// ordinal — `Journal.stepOf`, and what was RECORDED there
+/// (`Journal.capabilityOf` with, since Phase 1980, `Journal.subjectOf`):
+/// the capability and, for an op stage, the op's content address.
+noeq type journal (v: Type0) = {
+  j_step: nat -> journaled v;
+  j_recorded: nat -> opt (string & opt string);
+}
+
+/// F#: what `Durable.runWith`'s wrapper reads of `DurableServices` and of
+/// the call in front of it. `d_subject` is the entry's SUBJECT — `ONone`
+/// for a host call; for an op stage the content address of the op's
+/// canonical form, read off the state axis (`StateWitness.Stream.Encode`,
+/// K6) and never the state handed beside it. `d_idempotent` is
+/// `PerformerFacets.facetOf fn = Idempotent` for a host call and the
+/// op performer's own declaration for an op stage; `d_reinvoke` is
+/// `ReinvokeIndeterminate`, the named opt-in.
+noeq type durable (v: Type0) (p: Type0) = {
+  d_journal: journal v;
+  d_subject: staged_call v p -> opt string;
+  d_idempotent: staged_call v p -> bool;
+  d_reinvoke: bool;
+}
+
+/// F#: `DurableCode.IndeterminateStep`.
+let indeterminate_step : string = "durable-indeterminate-step"
+
+/// F#: `DurableCode.ReplayDivergence`.
+let replay_divergence : string = "durable-replay-divergence"
+
+/// What the wrapper decides for one ordinal BEFORE anything runs.
+/// `Invoke overridden` says the performer is called, and whether an
+/// override record is written for it (an undeclared performer re-invoked
+/// under the opt-in); `Diverged` and `Undecided` are the two refusals.
+type decision (v: Type0) =
+  | Serve : answer: res v -> decision v
+  | Invoke : overridden: bool -> decision v
+  | Diverged : decision v
+  | Undecided : decision v
+
+/// F#: the body of `wrap` in `Durable.runWith`, clause for clause: the
+/// divergence check first (a recorded identity that is not this call's),
+/// then the three-state reading of the step.
+let decide (#v: Type0) (#p: Type0) (dur: durable v p) (k: nat) (call: staged_call v p) : decision v =
+  let identity = (call.sc_capability, dur.d_subject call) in
+  let diverged =
+    (match dur.d_journal.j_recorded k with
+     | OSome recorded -> not (recorded = identity)
+     | ONone -> false) in
+  if diverged then Diverged
+  else
+    (match dur.d_journal.j_step k with
+     | JValue x -> Serve (ROk x)
+     | JRefusal r -> Serve (RErr r)
+     | JUnrun -> Invoke false
+     | JIndeterminate ->
+       if dur.d_idempotent call then Invoke false
+       else if dur.d_reinvoke then Invoke true
+       else Undecided)
+
+/// One staged call's success, recorded and landed — the `ROk` clause of
+/// `perform`, named so the replay below can reuse it for a SERVED answer
+/// as well as an invoked one.
+let land (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+         (w: witness t b v o q a eff d) (call: staged_call v p) (result: v)
+         (acc: accumulator t b v o eff d p)
+  : accumulator t b v o eff d p =
+  let recorded = { acc with ac_externally = call.sc_capability :: acc.ac_externally } in
+  match call.sc_into with
+  | ONone -> recorded
+  | OSome key ->
+    { recorded with
+      ac_store =
+        { recorded.ac_store with
+          st_bindings = w.w_assign key result recorded.ac_store.st_bindings } }
+
+/// F#: `DurableOutcome` less the handler outcome — the four ordinal lists
+/// a durable run reports, beside the accumulator the perform phase left.
+noeq type replay_result (t: Type0) (b: Type0) (v: Type0) (o: Type0) (eff: Type0) (d: Type0) (p: Type0) = {
+  rp_acc: accumulator t b v o eff d p;
+  /// `Replayed`: ordinals SERVED from the journal; no performer ran.
+  rp_replayed: list nat;
+  /// `Invoked`: ordinals whose performer this run called.
+  rp_invoked: list nat;
+  /// `Indeterminate`: ordinals refused because the journal could not decide.
+  rp_indeterminate: list nat;
+  /// `Overrides`: ordinals re-invoked under the opt-in, by step.
+  rp_overrides: list nat;
+}
+
+/// F#: `Handler.perform` run through `Durable.runWith`'s wrapper — the
+/// perform phase with the cursor as `k`. Production keeps the cursor in a
+/// mutable cell the fold does not know about; the model threads it, and
+/// the differential host is what says the two agree. Each arm is the
+/// production wrapper's: a served value or refusal is landed or halts
+/// exactly as a performed one would, an invoked performer's answer is
+/// recorded as invoked whether it answered or refused, and a refusal of
+/// the wrapper's own halts the handler under the call's capability with
+/// the code as the reason.
+let rec replay (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+               (w: witness t b v o q a eff d) (reg: registry t v o q p) (dur: durable v p)
+               (k: nat) (staged: list (staged_call v p)) (acc: accumulator t b v o eff d p)
+  : Tot (replay_result t b v o eff d p) (decreases staged) =
+  match staged with
+  | [] -> { rp_acc = acc; rp_replayed = []; rp_invoked = []; rp_indeterminate = []; rp_overrides = [] }
+  | call :: rest ->
+    let failed (reason: string) : accumulator t b v o eff d p =
+      { acc with
+        ac_halted = true;
+        ac_diagnostics = PerformFailed call.sc_capability reason :: acc.ac_diagnostics } in
+    (match decide dur k call with
+     | Diverged ->
+       { rp_acc = failed replay_divergence; rp_replayed = []; rp_invoked = []; rp_indeterminate = []; rp_overrides = [] }
+     | Undecided ->
+       { rp_acc = failed indeterminate_step; rp_replayed = []; rp_invoked = []; rp_indeterminate = [k]; rp_overrides = [] }
+     | Serve (RErr reason) ->
+       { rp_acc = failed reason; rp_replayed = [k]; rp_invoked = []; rp_indeterminate = []; rp_overrides = [] }
+     | Serve (ROk result) ->
+       let r = replay w reg dur (k + 1) rest (land w call result acc) in
+       { r with rp_replayed = k :: r.rp_replayed }
+     | Invoke overridden ->
+       let overrides = if overridden then [k] else [] in
+       (match reg.r_perf call.sc_performer call.sc_args with
+        | RErr reason ->
+          { rp_acc = failed reason; rp_replayed = []; rp_invoked = [k]; rp_indeterminate = []; rp_overrides = overrides }
+        | ROk result ->
+          let r = replay w reg dur (k + 1) rest (land w call result acc) in
+          { r with rp_invoked = k :: r.rp_invoked; rp_overrides = app overrides r.rp_overrides }))
+
+/// F#: the two outcome constructors of `Handler.runWith`, as `run` writes
+/// them, over whatever accumulator the perform phase left.
+let finish (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+           (s: store t b) (final: accumulator t b v o eff d p)
+  : outcome t b v o eff d =
+  if final.ac_halted then
+    { oc_store = s;
+      oc_committed = false;
+      oc_performed = rev final.ac_externally;
+      oc_patches = [];
+      oc_notifications = [];
+      oc_client_effects = [];
+      oc_diagnostics = rev final.ac_diagnostics }
+  else
+    { oc_store = final.ac_store;
+      oc_committed = true;
+      oc_performed = app (rev final.ac_performed) (rev final.ac_externally);
+      oc_patches = rev final.ac_patches;
+      oc_notifications = rev final.ac_notifications;
+      oc_client_effects = rev final.ac_client_effects;
+      oc_diagnostics = rev final.ac_diagnostics }
+
+/// F#: `DurableOutcome`.
+type durable_outcome (t: Type0) (b: Type0) (v: Type0) (o: Type0) (eff: Type0) (d: Type0) = {
+  do_outcome: outcome t b v o eff d;
+  do_replayed: list nat;
+  do_invoked: list nat;
+  do_indeterminate: list nat;
+  do_overrides: list nat;
+}
+
+/// F#: `Durable.runWith`. The plan phase is `run`'s, unchanged and
+/// reached the same way; the perform phase is `replay` from ordinal 0.
+/// That the plan phase is the same under the wrapped performers as under
+/// the bare ones is `plan_pure` — the wrapper changes only `r_perf`'s
+/// behaviour, which the plan phase never reads.
+let durable_run (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                (w: witness t b v o q a eff d) (reg: registry t v o q p) (dur: durable v p)
+                (node_id: string) (stages: list (stage a v o q)) (s: store t b)
+  : durable_outcome t b v o eff d =
+  let planned = plan w reg node_id stages (start s) in
+  if planned.ac_halted then
+    { do_outcome = finish s planned; do_replayed = []; do_invoked = []; do_indeterminate = []; do_overrides = [] }
+  else
+    let r = replay w reg dur 0 (rev planned.ac_staged) planned in
+    { do_outcome = finish s r.rp_acc;
+      do_replayed = r.rp_replayed;
+      do_invoked = r.rp_invoked;
+      do_indeterminate = r.rp_indeterminate;
+      do_overrides = r.rp_overrides }
+
+// ─── the durable theorems (ghost from here) ──────────────────────────
+
+/// The ordinals `k`, `k+1`, … `k+n-1`.
+[@@ noextract_to "FSharp"]
+let rec ordinals (k: nat) (n: nat) : Tot (list nat) (decreases n) =
+  if n = 0 then [] else k :: ordinals (k + 1) (n - 1)
+
+/// How many staged calls the performer is ASKED before the perform phase
+/// stops: `ran` plus the one it refused, when it refused one. The measure
+/// `Invoked` is stated in, because a performer that refused was invoked.
+[@@ noextract_to "FSharp"]
+let rec asked (#v: Type0) (#p: Type0) (perf: p -> v -> res v) (calls: list (staged_call v p))
+  : Tot nat (decreases calls) =
+  match calls with
+  | [] -> 0
+  | c :: rest ->
+    (match perf c.sc_performer c.sc_args with
+     | RErr _ -> 1
+     | ROk _ -> 1 + asked perf rest)
+
+/// "The journal records each of these calls as COMPLETED, under the
+/// identity the replay will hold at its ordinal", counting from `k` — the
+/// journal a run leaves behind the steps it decided.
+[@@ noextract_to "FSharp"]
+let rec completed_at (#v: Type0) (#p: Type0) (dur: durable v p) (k: nat) (calls: list (staged_call v p))
+  : Tot bool (decreases calls) =
+  match calls with
+  | [] -> true
+  | c :: rest ->
+    (match dur.d_journal.j_step k, dur.d_journal.j_recorded k with
+     | JValue _, OSome recorded ->
+       recorded = (c.sc_capability, dur.d_subject c) && completed_at dur (k + 1) rest
+     | _, _ -> false)
+
+/// "The journal has NOTHING at these calls' ordinals", counting from `k`
+/// — the steps a run never reached, or the whole list under `Journal.none`.
+[@@ noextract_to "FSharp"]
+let rec unrun_from (#v: Type0) (#p: Type0) (dur: durable v p) (k: nat) (calls: list (staged_call v p))
+  : Tot bool (decreases calls) =
+  match calls with
+  | [] -> true
+  | _ :: rest ->
+    (match dur.d_journal.j_recorded k, dur.d_journal.j_step k with
+     | ONone, JUnrun -> unrun_from dur (k + 1) rest
+     | _, _ -> false)
+
+/// What SERVING a completed prefix does to the accumulator: each recorded
+/// value is landed exactly as a performed one would be, and nothing is
+/// asked of any performer.
+[@@ noextract_to "FSharp"]
+let rec serve (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+              (w: witness t b v o q a eff d) (dur: durable v p)
+              (k: nat) (calls: list (staged_call v p)) (acc: accumulator t b v o eff d p)
+  : Tot (accumulator t b v o eff d p) (decreases calls) =
+  match calls with
+  | [] -> acc
+  | c :: rest ->
+    (match dur.d_journal.j_step k with
+     | JValue x -> serve w dur (k + 1) rest (land w c x acc)
+     | _ -> acc)
+
+let rec serve_keeps_halted (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                           (w: witness t b v o q a eff d) (dur: durable v p)
+                           (k: nat) (calls: list (staged_call v p)) (acc: accumulator t b v o eff d p)
+  : Lemma (ensures (serve w dur k calls acc).ac_halted == acc.ac_halted) (decreases calls) =
+  match calls with
+  | [] -> ()
+  | c :: rest ->
+    (match dur.d_journal.j_step k with
+     | JValue x -> serve_keeps_halted w dur (k + 1) rest (land w c x acc)
+     | _ -> ())
+
+/// **`replay_unrun_is_perform`.** Over calls the journal has nothing for,
+/// the replay IS the perform phase: the same accumulator as `perform`,
+/// nothing served, nothing refused, no override, and the performer
+/// invoked at exactly the ordinals the perform phase asks — the prefix it
+/// answers plus the one it refuses. This is `Journal.none` degrading the
+/// durable interpreter to the direct one, as an equation; and it is the
+/// tail of every resume.
+let rec replay_unrun_is_perform (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                                (w: witness t b v o q a eff d) (reg: registry t v o q p) (dur: durable v p)
+                                (k: nat) (calls: list (staged_call v p)) (acc: accumulator t b v o eff d p)
+  : Lemma
+      (requires unrun_from dur k calls)
+      (ensures
+        (let r = replay w reg dur k calls acc in
+         r.rp_acc == perform w reg calls acc /\
+         r.rp_replayed == [] /\
+         r.rp_invoked == ordinals k (asked reg.r_perf calls) /\
+         r.rp_indeterminate == [] /\
+         r.rp_overrides == []))
+      (decreases calls) =
+  match calls with
+  | [] -> ()
+  | c :: rest ->
+    (match reg.r_perf c.sc_performer c.sc_args with
+     | RErr _ -> ()
+     | ROk result -> replay_unrun_is_perform w reg dur (k + 1) rest (land w c result acc))
+
+/// **`replay_serves_completed`.** A prefix the journal records as
+/// completed is SERVED: the replay of `served @ rest` from `k` is the
+/// replay of `rest` from `k + |served|`, over the accumulator serving left
+/// — the recorded values landed, no performer asked — with the served
+/// ordinals reported as replayed in front of whatever the rest reports.
+let rec replay_serves_completed (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                                (w: witness t b v o q a eff d) (reg: registry t v o q p) (dur: durable v p)
+                                (k: nat) (served: list (staged_call v p)) (rest: list (staged_call v p))
+                                (acc: accumulator t b v o eff d p)
+  : Lemma
+      (requires completed_at dur k served)
+      (ensures
+        (let r = replay w reg dur k (app served rest) acc in
+         let r' = replay w reg dur (k + length served) rest (serve w dur k served acc) in
+         r.rp_acc == r'.rp_acc /\
+         r.rp_replayed == app (ordinals k (length served)) r'.rp_replayed /\
+         r.rp_invoked == r'.rp_invoked /\
+         r.rp_indeterminate == r'.rp_indeterminate /\
+         r.rp_overrides == r'.rp_overrides))
+      (decreases served) =
+  match served with
+  | [] -> ()
+  | c :: served' ->
+    (match dur.d_journal.j_step k with
+     | JValue x -> replay_serves_completed w reg dur (k + 1) served' rest (land w c x acc)
+     | _ -> ())
+
+/// **`resume_performs_only_the_rest`.** THE DISCIPLINE, over one staged
+/// list from one ordinal: with a completed prefix recorded and nothing
+/// recorded after it, a replay serves the prefix — every one of its
+/// ordinals reported as replayed, none invoked — and performs only the
+/// rest, exactly as the perform phase would from the served
+/// accumulator; nothing is refused and nothing is overridden.
+let resume_performs_only_the_rest (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                                  (w: witness t b v o q a eff d) (reg: registry t v o q p) (dur: durable v p)
+                                  (k: nat) (served: list (staged_call v p)) (rest: list (staged_call v p))
+                                  (acc: accumulator t b v o eff d p)
+  : Lemma
+      (requires completed_at dur k served /\ unrun_from dur (k + length served) rest)
+      (ensures
+        (let r = replay w reg dur k (app served rest) acc in
+         r.rp_acc == perform w reg rest (serve w dur k served acc) /\
+         r.rp_replayed == ordinals k (length served) /\
+         r.rp_invoked == ordinals (k + length served) (asked reg.r_perf rest) /\
+         r.rp_indeterminate == [] /\
+         r.rp_overrides == [])) =
+  replay_serves_completed w reg dur k served rest acc;
+  replay_unrun_is_perform w reg dur (k + length served) rest (serve w dur k served acc);
+  app_nil (ordinals k (length served))
+
+/// **`indeterminate_refused_by_default`.** A step the journal shows as
+/// attempted and undecided, under a performer the host has NOT declared
+/// idempotent and with the opt-in off, is REFUSED: the completed prefix
+/// before it is served, no performer is invoked at it or after it, the
+/// handler halts under the call's capability with
+/// `durable-indeterminate-step` as the reason, and the ordinal is
+/// reported as indeterminate. D12's "refuse by default", as an equation.
+let indeterminate_refused_by_default (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                                     (w: witness t b v o q a eff d) (reg: registry t v o q p) (dur: durable v p)
+                                     (k: nat) (served: list (staged_call v p)) (c: staged_call v p) (rest: list (staged_call v p))
+                                     (acc: accumulator t b v o eff d p)
+  : Lemma
+      (requires
+        completed_at dur k served /\
+        dur.d_journal.j_recorded (k + length served) == OSome (c.sc_capability, dur.d_subject c) /\
+        dur.d_journal.j_step (k + length served) == JIndeterminate /\
+        not (dur.d_idempotent c) /\
+        not dur.d_reinvoke)
+      (ensures
+        (let r = replay w reg dur k (app served (c :: rest)) acc in
+         let base = serve w dur k served acc in
+         r.rp_acc ==
+           { base with
+             ac_halted = true;
+             ac_diagnostics = PerformFailed c.sc_capability indeterminate_step :: base.ac_diagnostics } /\
+         r.rp_replayed == ordinals k (length served) /\
+         r.rp_invoked == [] /\
+         r.rp_indeterminate == [k + length served] /\
+         r.rp_overrides == [])) =
+  replay_serves_completed w reg dur k served (c :: rest) acc;
+  app_nil (ordinals k (length served))
+
+/// **`indeterminate_reinvoked_only_by_name`.** The same undecided step is
+/// re-invoked in exactly two cases, and nowhere else: the performer is
+/// declared idempotent (no override to record — its own shape closes the
+/// window), or the opt-in is on (the override is RECORDED at that
+/// ordinal). Either way the replay from there is the perform phase over
+/// the step and what follows it.
+let indeterminate_reinvoked_only_by_name (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                                         (w: witness t b v o q a eff d) (reg: registry t v o q p) (dur: durable v p)
+                                         (k: nat) (served: list (staged_call v p)) (c: staged_call v p) (rest: list (staged_call v p))
+                                         (acc: accumulator t b v o eff d p)
+  : Lemma
+      (requires
+        completed_at dur k served /\
+        dur.d_journal.j_recorded (k + length served) == OSome (c.sc_capability, dur.d_subject c) /\
+        dur.d_journal.j_step (k + length served) == JIndeterminate /\
+        (dur.d_idempotent c || dur.d_reinvoke) /\
+        unrun_from dur (k + length served + 1) rest)
+      (ensures
+        (let r = replay w reg dur k (app served (c :: rest)) acc in
+         let base = serve w dur k served acc in
+         r.rp_acc == perform w reg (c :: rest) base /\
+         r.rp_replayed == ordinals k (length served) /\
+         r.rp_invoked == ordinals (k + length served) (asked reg.r_perf (c :: rest)) /\
+         r.rp_indeterminate == [] /\
+         r.rp_overrides == (if dur.d_idempotent c then [] else [k + length served]))) =
+  replay_serves_completed w reg dur k served (c :: rest) acc;
+  app_nil (ordinals k (length served));
+  let base = serve w dur k served acc in
+  (match reg.r_perf c.sc_performer c.sc_args with
+   | RErr _ -> ()
+   | ROk result -> replay_unrun_is_perform w reg dur (k + length served + 1) rest (land w c result base))
+
+/// **`divergence_refused`.** An ordinal whose recorded identity is not the
+/// one the replay holds there — a different capability, or the same
+/// capability over a different op — is refused before anything is served
+/// or invoked at it: the completed prefix is served, the handler halts
+/// under the call's capability with `durable-replay-divergence`, and
+/// nothing after it is reached. The subject is what makes this
+/// statement true of an op stage: two ops at one ordinal share a
+/// capability, and only their content addresses tell them apart.
+let divergence_refused (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                       (w: witness t b v o q a eff d) (reg: registry t v o q p) (dur: durable v p)
+                       (k: nat) (served: list (staged_call v p)) (c: staged_call v p) (rest: list (staged_call v p))
+                       (recorded: string & opt string) (acc: accumulator t b v o eff d p)
+  : Lemma
+      (requires
+        completed_at dur k served /\
+        dur.d_journal.j_recorded (k + length served) == OSome recorded /\
+        recorded =!= (c.sc_capability, dur.d_subject c))
+      (ensures
+        (let r = replay w reg dur k (app served (c :: rest)) acc in
+         let base = serve w dur k served acc in
+         r.rp_acc ==
+           { base with
+             ac_halted = true;
+             ac_diagnostics = PerformFailed c.sc_capability replay_divergence :: base.ac_diagnostics } /\
+         r.rp_replayed == ordinals k (length served) /\
+         r.rp_invoked == [] /\
+         r.rp_indeterminate == [] /\
+         r.rp_overrides == [])) =
+  replay_serves_completed w reg dur k served (c :: rest) acc;
+  app_nil (ordinals k (length served))
+
+/// **`durable_resume`.** The discipline at the HANDLER: when the plan
+/// completed and its staged list is a completed prefix the journal holds
+/// followed by calls it has nothing for — the journal a run interrupted
+/// between two steps leaves — the durable run reports the prefix as
+/// replayed, invokes the performer at exactly the ordinals after it that
+/// the perform phase asks, refuses and overrides nothing, and commits
+/// exactly when every call after the prefix ran. The resumed run performs
+/// only what the recorded run did not.
+let durable_resume (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                   (w: witness t b v o q a eff d) (reg: registry t v o q p) (dur: durable v p)
+                   (node_id: string) (stages: list (stage a v o q)) (s: store t b)
+                   (served: list (staged_call v p)) (rest: list (staged_call v p))
+  : Lemma
+      (requires
+        (let planned = plan w reg node_id stages (start s) in
+         not planned.ac_halted /\
+         rev planned.ac_staged == app served rest /\
+         completed_at dur 0 served /\
+         unrun_from dur (length served) rest))
+      (ensures
+        (let r = durable_run w reg dur node_id stages s in
+         r.do_replayed == ordinals 0 (length served) /\
+         r.do_invoked == ordinals (length served) (asked reg.r_perf rest) /\
+         r.do_indeterminate == [] /\
+         r.do_overrides == [] /\
+         r.do_outcome.oc_committed == (ran reg.r_perf rest = length rest))) =
+  let planned = plan w reg node_id stages (start s) in
+  let base = serve w dur 0 served planned in
+  resume_performs_only_the_rest w reg dur 0 served rest planned;
+  perform_spec w reg rest base;
+  serve_keeps_halted w dur 0 served planned;
+  ran_le_length reg.r_perf rest
+
+/// **`empty_journal_is_direct`.** With nothing recorded for any staged
+/// call — `Journal.none`, or a first run — the durable run's outcome IS
+/// the direct run's, and it reports nothing served, nothing refused and
+/// no override: the durable interpreter with its durability switched off
+/// is the direct interpreter, as an equation rather than a parity test.
+let empty_journal_is_direct (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                            (w: witness t b v o q a eff d) (reg: registry t v o q p) (dur: durable v p)
+                            (node_id: string) (stages: list (stage a v o q)) (s: store t b)
+  : Lemma
+      (requires
+        (let planned = plan w reg node_id stages (start s) in
+         planned.ac_halted \/ unrun_from dur 0 (rev planned.ac_staged)))
+      (ensures
+        (let r = durable_run w reg dur node_id stages s in
+         r.do_outcome == run w reg node_id stages s /\
+         r.do_replayed == [] /\
+         r.do_indeterminate == [] /\
+         r.do_overrides == [])) =
+  let planned = plan w reg node_id stages (start s) in
+  if planned.ac_halted then ()
+  else replay_unrun_is_perform w reg dur 0 (rev planned.ac_staged) planned

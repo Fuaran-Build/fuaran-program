@@ -1214,6 +1214,350 @@ let exit_violation_reason = (fun ( took_true  :  Prims.bool ) ( answer  :  res<'
      (Prims.strcat "the exit assertion did not hold after the true arm: " reason)
      end))
 
+type journaled<'v> =
+| JUnrun
+| JValue of 'v
+| JRefusal of Prims.string
+| JIndeterminate
+
+
+let uu___is_JUnrun = (fun ( projectee  :  journaled<'v> ) -> (match (projectee) with
+| JUnrun -> begin
+     true
+     end
+| uu___ -> begin
+     false
+     end))
+
+
+let uu___is_JValue = (fun ( projectee  :  journaled<'v> ) -> (match (projectee) with
+| JValue (value) -> begin
+     true
+     end
+| uu___ -> begin
+     false
+     end))
+
+
+let __proj__JValue__item__value = (fun ( projectee  :  journaled<'v> ) -> (match (projectee) with
+| JValue (value) -> begin
+     value
+     end))
+
+
+let uu___is_JRefusal = (fun ( projectee  :  journaled<'v> ) -> (match (projectee) with
+| JRefusal (reason) -> begin
+     true
+     end
+| uu___ -> begin
+     false
+     end))
+
+
+let __proj__JRefusal__item__reason = (fun ( projectee  :  journaled<'v> ) -> (match (projectee) with
+| JRefusal (reason) -> begin
+     reason
+     end))
+
+
+let uu___is_JIndeterminate = (fun ( projectee  :  journaled<'v> ) -> (match (projectee) with
+| JIndeterminate -> begin
+     true
+     end
+| uu___ -> begin
+     false
+     end))
+
+type journal<'v> = {j_step : Prims.nat  ->  journaled<'v>; j_recorded : Prims.nat  ->  opt<(Prims.string * opt<Prims.string>)>}
+
+
+let __proj__Mkjournal__item__j_step = (fun ( projectee  :  journal<'v> ) -> (match (projectee) with
+| {j_step = j_step; j_recorded = j_recorded} -> begin
+     j_step
+     end))
+
+
+let __proj__Mkjournal__item__j_recorded = (fun ( projectee  :  journal<'v> ) -> (match (projectee) with
+| {j_step = j_step; j_recorded = j_recorded} -> begin
+     j_recorded
+     end))
+
+type durable<'v, 'p> = {d_journal : journal<'v>; d_subject : staged_call<'v, 'p>  ->  opt<Prims.string>; d_idempotent : staged_call<'v, 'p>  ->  Prims.bool; d_reinvoke : Prims.bool}
+
+
+let __proj__Mkdurable__item__d_journal = (fun ( projectee  :  durable<'v, 'p> ) -> (match (projectee) with
+| {d_journal = d_journal; d_subject = d_subject; d_idempotent = d_idempotent; d_reinvoke = d_reinvoke} -> begin
+     d_journal
+     end))
+
+
+let __proj__Mkdurable__item__d_subject = (fun ( projectee  :  durable<'v, 'p> ) -> (match (projectee) with
+| {d_journal = d_journal; d_subject = d_subject; d_idempotent = d_idempotent; d_reinvoke = d_reinvoke} -> begin
+     d_subject
+     end))
+
+
+let __proj__Mkdurable__item__d_idempotent = (fun ( projectee  :  durable<'v, 'p> ) -> (match (projectee) with
+| {d_journal = d_journal; d_subject = d_subject; d_idempotent = d_idempotent; d_reinvoke = d_reinvoke} -> begin
+     d_idempotent
+     end))
+
+
+let __proj__Mkdurable__item__d_reinvoke = (fun ( projectee  :  durable<'v, 'p> ) -> (match (projectee) with
+| {d_journal = d_journal; d_subject = d_subject; d_idempotent = d_idempotent; d_reinvoke = d_reinvoke} -> begin
+     d_reinvoke
+     end))
+
+
+let indeterminate_step : Prims.string = "durable-indeterminate-step"
+
+
+let replay_divergence : Prims.string = "durable-replay-divergence"
+
+type decision<'v> =
+| Serve of res<'v>
+| Invoke of Prims.bool
+| Diverged
+| Undecided
+
+
+let uu___is_Serve = (fun ( projectee  :  decision<'v> ) -> (match (projectee) with
+| Serve (answer) -> begin
+     true
+     end
+| uu___ -> begin
+     false
+     end))
+
+
+let __proj__Serve__item__answer = (fun ( projectee  :  decision<'v> ) -> (match (projectee) with
+| Serve (answer) -> begin
+     answer
+     end))
+
+
+let uu___is_Invoke = (fun ( projectee  :  decision<'v> ) -> (match (projectee) with
+| Invoke (overridden) -> begin
+     true
+     end
+| uu___ -> begin
+     false
+     end))
+
+
+let __proj__Invoke__item__overridden = (fun ( projectee  :  decision<'v> ) -> (match (projectee) with
+| Invoke (overridden) -> begin
+     overridden
+     end))
+
+
+let uu___is_Diverged = (fun ( projectee  :  decision<'v> ) -> (match (projectee) with
+| Diverged -> begin
+     true
+     end
+| uu___ -> begin
+     false
+     end))
+
+
+let uu___is_Undecided = (fun ( projectee  :  decision<'v> ) -> (match (projectee) with
+| Undecided -> begin
+     true
+     end
+| uu___ -> begin
+     false
+     end))
+
+
+let decide = (fun ( dur  :  durable<'v, 'p> ) ( k  :  Prims.nat ) ( call  :  staged_call<'v, 'p> ) -> (
+
+let identity = ((call.sc_capability), ((dur.d_subject call)))
+in (
+
+let diverged = (match ((dur.d_journal.j_recorded k)) with
+| OSome (recorded) -> begin
+     (not ((Prims.op_Equals recorded identity)))
+     end
+| ONone -> begin
+     false
+     end)
+in  
+if diverged then begin
+     Diverged
+     end else begin
+     (match ((dur.d_journal.j_step k)) with
+| JValue (x) -> begin
+     Serve (ROk (x))
+     end
+| JRefusal (r) -> begin
+     Serve (RErr (r))
+     end
+| JUnrun -> begin
+     Invoke (false)
+     end
+| JIndeterminate -> begin
+      
+if (dur.d_idempotent call) then begin
+     Invoke (false)
+     end else begin
+      
+if dur.d_reinvoke then begin
+     Invoke (true)
+     end else begin
+     Undecided
+     end
+     end
+     end)
+     end)))
+
+
+let land1 = (fun ( w  :  witness<'t, 'b, 'v, 'o, 'q, 'a, 'eff, 'd> ) ( call  :  staged_call<'v, 'p> ) ( result  :  'v ) ( acc  :  accumulator<'t, 'b, 'v, 'o, 'eff, 'd, 'p> ) -> (
+
+let recorded = {ac_store = acc.ac_store; ac_halted = acc.ac_halted; ac_performed = acc.ac_performed; ac_externally = (call.sc_capability)::acc.ac_externally; ac_staged = acc.ac_staged; ac_patches = acc.ac_patches; ac_notifications = acc.ac_notifications; ac_client_effects = acc.ac_client_effects; ac_diagnostics = acc.ac_diagnostics; ac_trail = acc.ac_trail}
+in (match (call.sc_into) with
+| ONone -> begin
+     recorded
+     end
+| OSome (key) -> begin
+     {ac_store = (
+
+let uu___ = recorded.ac_store
+in {st_tree = uu___.st_tree; st_bindings = (w.w_assign key result recorded.ac_store.st_bindings)}); ac_halted = recorded.ac_halted; ac_performed = recorded.ac_performed; ac_externally = recorded.ac_externally; ac_staged = recorded.ac_staged; ac_patches = recorded.ac_patches; ac_notifications = recorded.ac_notifications; ac_client_effects = recorded.ac_client_effects; ac_diagnostics = recorded.ac_diagnostics; ac_trail = recorded.ac_trail}
+     end)))
+
+type replay_result<'t, 'b, 'v, 'o, 'eff, 'd, 'p> = {rp_acc : accumulator<'t, 'b, 'v, 'o, 'eff, 'd, 'p>; rp_replayed : Prims.list<Prims.nat>; rp_invoked : Prims.list<Prims.nat>; rp_indeterminate : Prims.list<Prims.nat>; rp_overrides : Prims.list<Prims.nat>}
+
+
+let __proj__Mkreplay_result__item__rp_acc = (fun ( projectee  :  replay_result<'t, 'b, 'v, 'o, 'eff, 'd, 'p> ) -> (match (projectee) with
+| {rp_acc = rp_acc; rp_replayed = rp_replayed; rp_invoked = rp_invoked; rp_indeterminate = rp_indeterminate; rp_overrides = rp_overrides} -> begin
+     rp_acc
+     end))
+
+
+let __proj__Mkreplay_result__item__rp_replayed = (fun ( projectee  :  replay_result<'t, 'b, 'v, 'o, 'eff, 'd, 'p> ) -> (match (projectee) with
+| {rp_acc = rp_acc; rp_replayed = rp_replayed; rp_invoked = rp_invoked; rp_indeterminate = rp_indeterminate; rp_overrides = rp_overrides} -> begin
+     rp_replayed
+     end))
+
+
+let __proj__Mkreplay_result__item__rp_invoked = (fun ( projectee  :  replay_result<'t, 'b, 'v, 'o, 'eff, 'd, 'p> ) -> (match (projectee) with
+| {rp_acc = rp_acc; rp_replayed = rp_replayed; rp_invoked = rp_invoked; rp_indeterminate = rp_indeterminate; rp_overrides = rp_overrides} -> begin
+     rp_invoked
+     end))
+
+
+let __proj__Mkreplay_result__item__rp_indeterminate = (fun ( projectee  :  replay_result<'t, 'b, 'v, 'o, 'eff, 'd, 'p> ) -> (match (projectee) with
+| {rp_acc = rp_acc; rp_replayed = rp_replayed; rp_invoked = rp_invoked; rp_indeterminate = rp_indeterminate; rp_overrides = rp_overrides} -> begin
+     rp_indeterminate
+     end))
+
+
+let __proj__Mkreplay_result__item__rp_overrides = (fun ( projectee  :  replay_result<'t, 'b, 'v, 'o, 'eff, 'd, 'p> ) -> (match (projectee) with
+| {rp_acc = rp_acc; rp_replayed = rp_replayed; rp_invoked = rp_invoked; rp_indeterminate = rp_indeterminate; rp_overrides = rp_overrides} -> begin
+     rp_overrides
+     end))
+
+
+let rec replay = (fun ( w  :  witness<'t, 'b, 'v, 'o, 'q, 'a, 'eff, 'd> ) ( reg  :  registry<'t, 'v, 'o, 'q, 'p> ) ( dur  :  durable<'v, 'p> ) ( k  :  Prims.nat ) ( staged  :  Prims.list<staged_call<'v, 'p>> ) ( acc  :  accumulator<'t, 'b, 'v, 'o, 'eff, 'd, 'p> ) -> (match (staged) with
+| [] -> begin
+     {rp_acc = acc; rp_replayed = []; rp_invoked = []; rp_indeterminate = []; rp_overrides = []}
+     end
+| (call)::rest -> begin
+     (
+
+let failed = (fun ( reason  :  Prims.string ) -> {ac_store = acc.ac_store; ac_halted = true; ac_performed = acc.ac_performed; ac_externally = acc.ac_externally; ac_staged = acc.ac_staged; ac_patches = acc.ac_patches; ac_notifications = acc.ac_notifications; ac_client_effects = acc.ac_client_effects; ac_diagnostics = (PerformFailed (call.sc_capability, reason))::acc.ac_diagnostics; ac_trail = acc.ac_trail})
+in (match ((decide dur k call)) with
+| Diverged -> begin
+     {rp_acc = (failed replay_divergence); rp_replayed = []; rp_invoked = []; rp_indeterminate = []; rp_overrides = []}
+     end
+| Undecided -> begin
+     {rp_acc = (failed indeterminate_step); rp_replayed = []; rp_invoked = []; rp_indeterminate = (k)::[]; rp_overrides = []}
+     end
+| Serve (RErr (reason)) -> begin
+     {rp_acc = (failed reason); rp_replayed = (k)::[]; rp_invoked = []; rp_indeterminate = []; rp_overrides = []}
+     end
+| Serve (ROk (result)) -> begin
+     (
+
+let r = (replay w reg dur (k + (Prims.parse_int "1")) rest (land1 w call result acc))
+in {rp_acc = r.rp_acc; rp_replayed = (k)::r.rp_replayed; rp_invoked = r.rp_invoked; rp_indeterminate = r.rp_indeterminate; rp_overrides = r.rp_overrides})
+     end
+| Invoke (overridden) -> begin
+     (
+
+let overrides =  
+if overridden then begin
+     (k)::[]
+     end else begin
+     []
+     end
+in (match ((reg.r_perf call.sc_performer call.sc_args)) with
+| RErr (reason) -> begin
+     {rp_acc = (failed reason); rp_replayed = []; rp_invoked = (k)::[]; rp_indeterminate = []; rp_overrides = overrides}
+     end
+| ROk (result) -> begin
+     (
+
+let r = (replay w reg dur (k + (Prims.parse_int "1")) rest (land1 w call result acc))
+in {rp_acc = r.rp_acc; rp_replayed = r.rp_replayed; rp_invoked = (k)::r.rp_invoked; rp_indeterminate = r.rp_indeterminate; rp_overrides = (app overrides r.rp_overrides)})
+     end))
+     end))
+     end))
+
+
+let finish = (fun ( s  :  store<'t, 'b> ) ( final  :  accumulator<'t, 'b, 'v, 'o, 'eff, 'd, 'p> ) ->  
+if final.ac_halted then begin
+     {oc_store = s; oc_committed = false; oc_performed = (rev final.ac_externally); oc_patches = []; oc_notifications = []; oc_client_effects = []; oc_diagnostics = (rev final.ac_diagnostics)}
+     end else begin
+     {oc_store = final.ac_store; oc_committed = true; oc_performed = (app (rev final.ac_performed) (rev final.ac_externally)); oc_patches = (rev final.ac_patches); oc_notifications = (rev final.ac_notifications); oc_client_effects = (rev final.ac_client_effects); oc_diagnostics = (rev final.ac_diagnostics)}
+     end)
+
+type durable_outcome<'t, 'b, 'v, 'o, 'eff, 'd> = {do_outcome : outcome<'t, 'b, 'v, 'o, 'eff, 'd>; do_replayed : Prims.list<Prims.nat>; do_invoked : Prims.list<Prims.nat>; do_indeterminate : Prims.list<Prims.nat>; do_overrides : Prims.list<Prims.nat>}
+
+
+let __proj__Mkdurable_outcome__item__do_outcome = (fun ( projectee  :  durable_outcome<'t, 'b, 'v, 'o, 'eff, 'd> ) -> (match (projectee) with
+| {do_outcome = do_outcome; do_replayed = do_replayed; do_invoked = do_invoked; do_indeterminate = do_indeterminate; do_overrides = do_overrides} -> begin
+     do_outcome
+     end))
+
+
+let __proj__Mkdurable_outcome__item__do_replayed = (fun ( projectee  :  durable_outcome<'t, 'b, 'v, 'o, 'eff, 'd> ) -> (match (projectee) with
+| {do_outcome = do_outcome; do_replayed = do_replayed; do_invoked = do_invoked; do_indeterminate = do_indeterminate; do_overrides = do_overrides} -> begin
+     do_replayed
+     end))
+
+
+let __proj__Mkdurable_outcome__item__do_invoked = (fun ( projectee  :  durable_outcome<'t, 'b, 'v, 'o, 'eff, 'd> ) -> (match (projectee) with
+| {do_outcome = do_outcome; do_replayed = do_replayed; do_invoked = do_invoked; do_indeterminate = do_indeterminate; do_overrides = do_overrides} -> begin
+     do_invoked
+     end))
+
+
+let __proj__Mkdurable_outcome__item__do_indeterminate = (fun ( projectee  :  durable_outcome<'t, 'b, 'v, 'o, 'eff, 'd> ) -> (match (projectee) with
+| {do_outcome = do_outcome; do_replayed = do_replayed; do_invoked = do_invoked; do_indeterminate = do_indeterminate; do_overrides = do_overrides} -> begin
+     do_indeterminate
+     end))
+
+
+let __proj__Mkdurable_outcome__item__do_overrides = (fun ( projectee  :  durable_outcome<'t, 'b, 'v, 'o, 'eff, 'd> ) -> (match (projectee) with
+| {do_outcome = do_outcome; do_replayed = do_replayed; do_invoked = do_invoked; do_indeterminate = do_indeterminate; do_overrides = do_overrides} -> begin
+     do_overrides
+     end))
+
+
+let durable_run = (fun ( w  :  witness<'t, 'b, 'v, 'o, 'q, 'a, 'eff, 'd> ) ( reg  :  registry<'t, 'v, 'o, 'q, 'p> ) ( dur  :  durable<'v, 'p> ) ( node_id  :  Prims.string ) ( stages  :  Prims.list<stage<'a, 'v, 'o, 'q>> ) ( s  :  store<'t, 'b> ) -> (
+
+let planned = (plan w reg node_id stages (start s))
+in  
+if planned.ac_halted then begin
+     {do_outcome = (finish s planned); do_replayed = []; do_invoked = []; do_indeterminate = []; do_overrides = []}
+     end else begin
+     (
+
+let r = (replay w reg dur (Prims.parse_int "0") (rev planned.ac_staged) planned)
+in {do_outcome = (finish s r.rp_acc); do_replayed = r.rp_replayed; do_invoked = r.rp_invoked; do_indeterminate = r.rp_indeterminate; do_overrides = r.rp_overrides})
+     end))
+
 
 
 

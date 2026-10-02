@@ -26,7 +26,7 @@
   "kind": "proofs",
   "version": 1,
   "subject": "Fuaran-Program",
-  "$scope": "the proved models under proofs/: the shared bounded fold — BoundedActions.runBoundedActionWith, the one interpreter every placement runs, over the closed Action union, its State store, its closure-free client effects and its diagnostics (Phase 1715), restated over the generic tier's ActionView and the fold-read members of the ProgramWitness contract (DECISIONS.md D18) and re-proved there before the generic core is written, with the fourteen-arm union kept as the UI witness seen through the view (Phase 1898), and restated over the view's fifth shape — the halting guard Require the second witness needed — before the port that added it, with a fifth theorem that only a guard halts and the UI tier never does (Phase 1967); and the interaction budget — Budget.satAdd/satMul, Budget.actionCascadeCost, Budget.treeCost and the G2 stage of BoundedDriver.step that refuses on them (Phase 1716); and two-phase staging — Handler.run's plan phase, phase boundary and perform phase with the performer abstract, DECISIONS.md D8's law that the residual of a failed handler is exactly the prefix of staged calls that ran (Phase 1717), over a staged list that since Phase 1967 holds ops as well as host calls under a registered op performer, and since Phase 1974 over an ApplyOps arm that carries the op-channel guard and hands the performer the planned state. and the effect gate — ServerEffectRegistry.Gate consulted before any performer, the policy an operator declares over the trace of performed effects, and the return contract ServerEffectRegistry.registerChecked composes with a performer, proved over the staging model with the performer abstract (Phase 1759). Bounded code and bounded cost, the two halves of running an untrusted generated tree on shared infrastructure; bounded residue, what a handler that reaches outside can leave behind; and a constrained boundary, what reaches a performer and what it can hand back.",
+  "$scope": "the proved models under proofs/: the shared bounded fold — BoundedActions.runBoundedActionWith, the one interpreter every placement runs, over the closed Action union, its State store, its closure-free client effects and its diagnostics (Phase 1715), restated over the generic tier's ActionView and the fold-read members of the ProgramWitness contract (DECISIONS.md D18) and re-proved there before the generic core is written, with the fourteen-arm union kept as the UI witness seen through the view (Phase 1898), and restated over the view's fifth shape — the halting guard Require the second witness needed — before the port that added it, with a fifth theorem that only a guard halts and the UI tier never does (Phase 1967); and the interaction budget — Budget.satAdd/satMul, Budget.actionCascadeCost, Budget.treeCost and the G2 stage of BoundedDriver.step that refuses on them (Phase 1716); and two-phase staging — Handler.run's plan phase, phase boundary and perform phase with the performer abstract, DECISIONS.md D8's law that the residual of a failed handler is exactly the prefix of staged calls that ran (Phase 1717), over a staged list that since Phase 1967 holds ops as well as host calls under a registered op performer, and since Phase 1974 over an ApplyOps arm that carries the op-channel guard and hands the performer the planned state, and since Phase 1980 beside the durable discipline — Durable.runWith's replay over a journal snapshot, which serves a completed prefix, performs only the rest, refuses an undecided step by default and re-invokes it only by name, for an op stage exactly as for a host call (DECISIONS.md D12, restated by D23); and the effect gate — ServerEffectRegistry.Gate consulted before any performer, the policy an operator declares over the trace of performed effects, and the return contract ServerEffectRegistry.registerChecked composes with a performer, proved over the staging model with the performer abstract (Phase 1759). Bounded code and bounded cost, the two halves of running an untrusted generated tree on shared infrastructure; bounded residue, what a handler that reaches outside can leave behind; and a constrained boundary, what reaches a performer and what it can hand back.",
   "claims": [
     {
       "id": "fold-totality",
@@ -802,11 +802,11 @@
       "id": "indeterminate-window-not-closed",
       "level": "policy",
       "phase": "Phase 1717",
-      "claim": "The indeterminate window D12 declares — a step journaled as attempted and never decided — is OUT of the theorem, as the durable journal itself is (the `durable-journal` entry above).",
+      "claim": "The indeterminate window D12 declares — a step journaled as attempted and never decided — is OUT of the theorem: whether the effect happened is never claimed. Since Phase 1980 what the replay DOES with such a step is IN it (durable-indeterminate-refused-by-default, durable-indeterminate-reinvoked-only-by-name).",
       "evidence": {
         "document": "proofs/README.md"
       },
-      "reason": "the theorem says what Performed reports when the performer ANSWERS, and nothing about a performer that never does; the durable interpreter CALLS Handler.run and does not fork it, so it sits above the model. The window is declared rather than closed by D12 on its own argument — the effect commits in a system this host does not own — and no proof here narrows it. Stated rather than left absent, because an unstated exclusion reads, to whoever finds it later, as a claim that failed."
+      "reason": "the staging theorem says what Performed reports when the performer ANSWERS, and nothing about a performer that never does; the durable interpreter CALLS Handler.runWith and does not fork it, so its plan phase is the model's unchanged, and since Phase 1980 its perform phase is modelled beside it over a journal SNAPSHOT. The window is declared rather than closed by D12 on its own argument — the effect commits in a system this host does not own — and no proof here narrows it: the Phase 1980 theorems pin the refusal and the two named re-invocations, never the effect. Stated rather than left absent, because an unstated exclusion reads, to whoever finds it later, as a claim that failed."
     },
     {
       "id": "performer-effect-not-claimed",
@@ -1314,6 +1314,178 @@
         "document": "proofs/README.md"
       },
       "reason": "what a perform-phase failure left run is residual_is_prefix's to report in the forward outcome; undoing that prefix is a separate act over a separate record and is not claimed here."
+    },
+    {
+      "id": "durable-replay-unrun-is-perform",
+      "level": "proved",
+      "phase": "Phase 1980",
+      "claim": "Over staged calls the journal has nothing for, the durable replay IS the perform phase: the same accumulator as perform, nothing served, nothing refused, no override, and the performer invoked at exactly the ordinals the perform phase asks — the prefix it answers plus the one it refuses. Journal.none degrading the durable interpreter to the direct one, as an equation. Conditional on the journal snapshot being unrun at those ordinals (unrun_from), a parameter of the model.",
+      "evidence": {
+        "theorem": "replay_unrun_is_perform",
+        "model": "proofs/Staging.fst",
+        "prover": "proofs/fstar-pin.json",
+        "definitions": [
+          "replay",
+          "decide",
+          "land",
+          "journal",
+          "durable",
+          "asked",
+          "ordinals",
+          "unrun_from"
+        ],
+        "note": "the model of Durable.runWith's wrapper (DECISIONS.md D12, restated by D23): the journal is a SNAPSHOT read once at entry, as production reads it; a staged call is a host call or, under a registered op performer, an op stage, and the discipline is the same for both"
+      }
+    },
+    {
+      "id": "durable-replay-serves-completed",
+      "level": "proved",
+      "phase": "Phase 1980",
+      "claim": "A prefix the journal records as COMPLETED, under the identity the replay holds at each ordinal — the capability with, for an op stage, the op's content address as its subject — is served: the replay of served @ rest from ordinal k is the replay of rest from k + |served| over the accumulator serving left (each recorded value landed exactly as a performed one is, no performer asked), with the served ordinals reported as replayed in front of whatever the rest reports.",
+      "evidence": {
+        "theorem": "replay_serves_completed",
+        "model": "proofs/Staging.fst",
+        "prover": "proofs/fstar-pin.json",
+        "definitions": [
+          "serve",
+          "completed_at"
+        ]
+      }
+    },
+    {
+      "id": "durable-resume-performs-only-the-rest",
+      "level": "proved",
+      "phase": "Phase 1980",
+      "claim": "With a completed prefix recorded and nothing recorded after it, a replay serves the prefix — every one of its ordinals reported as replayed, none invoked — and performs only the rest, exactly as the perform phase would from the served accumulator; nothing is refused and nothing overridden. The durable discipline over one staged list from one ordinal.",
+      "evidence": {
+        "theorem": "resume_performs_only_the_rest",
+        "model": "proofs/Staging.fst",
+        "prover": "proofs/fstar-pin.json",
+        "supporting": [
+          "replay_serves_completed",
+          "replay_unrun_is_perform"
+        ]
+      }
+    },
+    {
+      "id": "durable-indeterminate-refused-by-default",
+      "level": "proved",
+      "phase": "Phase 1980",
+      "claim": "A step the journal shows attempted and undecided, under a performer the host has NOT declared idempotent and with the opt-in off, is REFUSED: the completed prefix before it is served, no performer is invoked at it or after it, the handler halts under the call's capability with durable-indeterminate-step as the reason, and the ordinal is reported as indeterminate. D12's refuse-by-default as an equation, for an op stage exactly as for a host call.",
+      "evidence": {
+        "theorem": "indeterminate_refused_by_default",
+        "model": "proofs/Staging.fst",
+        "prover": "proofs/fstar-pin.json",
+        "supporting": [
+          "replay_serves_completed"
+        ]
+      }
+    },
+    {
+      "id": "durable-indeterminate-reinvoked-only-by-name",
+      "level": "proved",
+      "phase": "Phase 1980",
+      "claim": "The same undecided step is re-invoked in exactly two cases and nowhere else: the performer is declared idempotent (no override recorded — its own shape closes the window) or the opt-in is on (the override RECORDED at that ordinal); either way the replay from there is the perform phase over the step and what follows it. Stated stronger than the shard asked: it pins the ONLY two routes in, so a third would be a proof failure rather than a quiet widening.",
+      "evidence": {
+        "theorem": "indeterminate_reinvoked_only_by_name",
+        "model": "proofs/Staging.fst",
+        "prover": "proofs/fstar-pin.json",
+        "supporting": [
+          "replay_serves_completed",
+          "replay_unrun_is_perform"
+        ]
+      }
+    },
+    {
+      "id": "durable-divergence-refused",
+      "level": "proved",
+      "phase": "Phase 1980",
+      "claim": "An ordinal whose recorded identity is not the one the replay holds there — another capability, or the same capability over another op — is refused before anything is served or invoked at it, under durable-replay-divergence, and nothing after it is reached. The subject is what makes this true of an op stage: two ops at one ordinal share a capability, and only their content addresses tell them apart.",
+      "evidence": {
+        "theorem": "divergence_refused",
+        "model": "proofs/Staging.fst",
+        "prover": "proofs/fstar-pin.json",
+        "supporting": [
+          "replay_serves_completed"
+        ],
+        "note": "the entry's subject is read off the STATE axis — StateWitness.Stream.Encode, content-addressed — and never the state handed beside the op (D23 item 2)"
+      }
+    },
+    {
+      "id": "durable-resume-at-the-handler",
+      "level": "proved",
+      "phase": "Phase 1980",
+      "claim": "When the plan completed and its staged list is a completed prefix the journal holds followed by calls it has nothing for — the journal a run interrupted between two steps leaves — the durable run reports the prefix as replayed, invokes the performer at exactly the ordinals after it that the perform phase asks, refuses and overrides nothing, and commits exactly when every call after the prefix ran: a resumed run performs only what the recorded run did not.",
+      "evidence": {
+        "theorem": "durable_resume",
+        "model": "proofs/Staging.fst",
+        "prover": "proofs/fstar-pin.json",
+        "supporting": [
+          "resume_performs_only_the_rest",
+          "perform_spec",
+          "serve_keeps_halted",
+          "ran_le_length"
+        ],
+        "definitions": [
+          "durable_run",
+          "finish"
+        ]
+      }
+    },
+    {
+      "id": "durable-empty-journal-is-direct",
+      "level": "proved",
+      "phase": "Phase 1980",
+      "claim": "With nothing recorded for any staged call — Journal.none, or a first run — the durable run's outcome IS the direct run's, and it reports nothing served, nothing refused and no override: the durable interpreter with its durability switched off is the direct interpreter, as an equation rather than a parity test.",
+      "evidence": {
+        "theorem": "empty_journal_is_direct",
+        "model": "proofs/Staging.fst",
+        "prover": "proofs/fstar-pin.json",
+        "supporting": [
+          "replay_unrun_is_perform"
+        ]
+      }
+    },
+    {
+      "id": "durable-replay-model-agrees-with-shipped-code",
+      "level": "tested",
+      "phase": "Phase 1980",
+      "claim": "The extracted replay and Durable.runWith agree — the four ordinal lists (replayed, invoked, indeterminate, overrides), the verdict, the audit trail and the diagnostics — over every journal shape the crash fixtures leave behind: nothing recorded, interrupted between two op stages, a crash inside the second op stage under each of the three policies, a host call refusing on the resume, a recorded refusal served, and a recorded ordinal holding another op.",
+      "evidence": {
+        "family": "Phase 1980 - the proved durable replay as oracle",
+        "host": "tests/Fuaran.Program.Server.Tests/DurableInterpreterTests.fs",
+        "cases": [
+          "a first run: nothing recorded, everything invoked",
+          "interrupted between two op stages: the prefix served, the rest performed",
+          "interrupted, and the host call refuses on the resume",
+          "a recorded refusal is served, and halts where it halted",
+          "a crash inside the second op stage, under each policy (strict, accepting, declared idempotent)",
+          "a recorded ordinal holding another op: refused as divergence"
+        ],
+        "runner": "run.ps1 (the Server test project), and proofs/check.ps1 step 6 through the Staging module's host project",
+        "note": "the staged list is built by hand in the shape the plan phase stages for the fixture handler — two op stages carrying their subjects, one host call — and the snapshot from the production journal's own entries through stepOf, capabilityOf and subjectOf. It went red before it went green: a list comprehension had shortened the model's staged list to two calls, and every case that reached the host call lost on invoked"
+      }
+    },
+    {
+      "id": "durable-journal-read-once",
+      "level": "assumed",
+      "phase": "Phase 1980",
+      "claim": "The journal the replay decides by is a SNAPSHOT read once at entry, and nothing a replay writes during the run changes what it decides: production reads services.Journal.Read invocation once, and the model takes the snapshot as two arrows.",
+      "class": "model-bridge",
+      "evidence": {
+        "assumption": "Durable.runWith reads the journal exactly once, before the plan phase, and every decision in the run is over that value"
+      },
+      "mitigation": "the differential host builds the model's snapshot from the production journal's entries BEFORE the resume and compares every decision the resume took; a production wrapper that re-read the journal mid-run would decide a step the model served differently on the first case that writes before it reads"
+    },
+    {
+      "id": "durable-journal-writes-and-storage",
+      "level": "policy",
+      "phase": "Phase 1980",
+      "claim": "The journal's WRITES — the attempt record before a performer, the decision after — and whether its storage survives a restart are OUT of the theorem.",
+      "evidence": {
+        "document": "proofs/README.md"
+      },
+      "reason": "they are the host's port (EffectJournal): two acts to two systems, which is why the indeterminate window exists and cannot be closed here, and a restart claim nothing in this repository can check. The theorems are about what a replay does with a snapshot, never about how the snapshot came to be; the facet derivation carries the restart claim as the host's own, and DurableInterpreterTests pins the attempt-before / decide-after order against the journal's rendering."
     }
   ]
 }
