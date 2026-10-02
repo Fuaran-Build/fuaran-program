@@ -1,7 +1,9 @@
 # Tests
 
 Five suites, each its own Expecto assembly runner, plus the Fable parity leg.
-`pwsh ./run.ps1` runs them all; `-SkipFable` drops the last one.
+`pwsh ./run.ps1` runs them all; `-SkipFable` drops the last one. `-Lane fast` runs every runner
+but skips the Fable leg, and `-Lane pure` runs only the two suites that need neither the corpus nor
+the filesystem — see [Gate lanes](../README.md#gate-lanes).
 
 | Suite | What it pins |
 |---|---|

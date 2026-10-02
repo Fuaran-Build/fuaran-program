@@ -108,10 +108,39 @@ raises.
 ```powershell
 pwsh ./run.ps1              # tool restore -> format -> pin preflight -> build -> test
 pwsh ./run.ps1 -SkipFormat  # fast iteration
+pwsh ./run.ps1 -Lane fast   # before you merge: everything but the Fable parity leg
+pwsh ./run.ps1 -Lane pure   # the inner loop: the suites that need no corpus and no filesystem
 ```
 
 Requires the .NET 10 SDK (pinned in `global.json`), and node for the Fable parity leg
 (`-SkipFable` drops it).
+
+### Gate lanes
+
+`-Lane` selects which checks run after the build. Every lane runs tool restore, format, the pin
+preflight and the build; the `-Skip*` switches compose with any lane. Whatever a lane or a switch
+leaves out is printed as a `SKIPPED` line naming the reason, never dropped quietly.
+
+| Lane | Runs | Use it for |
+|---|---|---|
+| `full` (default) | every Expecto runner under `tests/`, then the Fable parity leg | the gate. `pwsh ./run.ps1` with no lane is this, and it is the only lane a release or a recorded gate run may cite |
+| `fast` | every Expecto runner; the Fable parity leg is skipped | checking your own change before you merge |
+| `pure` | `Fuaran.Program.Bounded.Tests` and `Fuaran.Program.Runtime.Tests` only | a tight loop on the interpreter and the client placement; needs no corpus |
+
+The split comes from a measurement (2026-10-02, warm tree, `full` lane): tool restore 1.0s, format
+6.2s, pin preflight 4.5s, build 104.7s; per runner, wall-clock including `dotnet run`'s
+up-to-date check — `Bench` 23.9s, `Bounded.Tests` 24.0s, `Parity.Tests` 29.7s, `Runtime.Tests`
+26.1s, `Server.Tests` 28.9s, `Tests` 20.9s; the Fable parity leg 258.1s (compile 247.8s, node
+10.3s). Each runner's own tests take 1–6s and the rest is the per-project check every runner pays
+alike, so no test project is slow — the proof oracle's differential included — and the Fable leg,
+about half of the whole gate, is the one thing `fast` drops. Measured end to end on the same
+machine: `full` 453s, `fast` 239s, `pure` 103s (the last two build-dominated on an incremental tree). The test counts
+were 567 Expecto tests plus 11 Fable parity scenarios under `full`, 567 under `fast` and 182 under
+`pure`.
+
+`pure` names its runners explicitly in `run.ps1`; a name there that matches no runner fails the
+lane rather than shrinking it. A new test project joins `full` and `fast` automatically, and joins
+`pure` only when someone has checked that it reads neither the filesystem nor the corpus.
 
 **The gate needs the program wire conformance corpus, and fails without it.** The handler declared
 form, both effect vocabularies, the invocation record and the outcome report are specified by a
