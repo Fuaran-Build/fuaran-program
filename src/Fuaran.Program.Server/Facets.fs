@@ -124,7 +124,9 @@ type DerivedGuarantees =
 /// content-addressed write may declare it `Idempotent` and reach exactly-once;
 /// one whose op is a push cannot claim it without saying so. Read only where
 /// ops are actually performed — in memory the arm is recomputed, and a
-/// declaration about a performer that is not registered changes nothing.
+/// declaration about a performer that is not registered changes nothing. The
+/// slot's identity is `OpPerformance.RegistrationKey` (Phase 1983): what a
+/// finding about it names, and what an operator's revoke withdraws it by.
 type PerformerFacets =
     { Declared: Map<string, IdempotencyFacet>
       OpPerformer: IdempotencyFacet option }
@@ -750,12 +752,18 @@ module Facets =
         // The op performer, on the same terms (Phase 1980): reported under the
         // capability its stages are journaled under, so a host reading
         // "at-most-once" over a handler of nothing but ops finds the line.
+        // That capability IS the op performer's registration key (Phase 1983,
+        // D26) — the name an operator's revoke withdraws it by — so a finding
+        // names every performer by the key a revoke would use: `host:<key>`
+        // for a host function, the key itself for the op performer.
         let undeclaredOp =
             if undeclaredOpPerformer performers performance handlers then
                 [ { Code = FacetCode.UndeclaredPerformer
-                    Capability = Some "ApplyOps"
+                    Capability = Some OpPerformance.RegistrationKey
                     Detail =
-                      "no idempotency declared for the registered op performer, so the derivation used "
+                      "no idempotency declared for the registered op performer (registration key '"
+                      + OpPerformance.RegistrationKey
+                      + "'), so the derivation used "
                       + IdempotencyFacet.tag IdempotencyFacet.NonIdempotent } ]
             else
                 []
