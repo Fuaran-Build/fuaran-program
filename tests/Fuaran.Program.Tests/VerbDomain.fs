@@ -114,6 +114,79 @@ let rec encodeOp (op: FileOp) : string =
     | Times(count, body) ->
         Canon.render (Canon.typed "Times" [ "body", JArr(body |> List.map (encodeOp >> JStr)); "count", JInt count ])
 
+/// The op decoder (Phase 1982, H1): `encodeOp`'s inverse, so the verb's
+/// handlers round-trip as Program documents. Total: anything `encodeOp` did not
+/// produce is a refusal naming what it is not.
+let rec decodeOp (text: string) : Result<FileOp, string> =
+    let field (name: string) (members: (string * JVal) list) =
+        members |> List.tryFind (fun (k, _) -> k = name) |> Option.map snd
+
+    let str name members =
+        match field name members with
+        | Some(JStr s) -> Ok s
+        | _ -> Error(sprintf "member '%s' is not a string" name)
+
+    let check (text: string) =
+        match decodeOp text with
+        | Ok(Check c) -> Ok c
+        | Ok _ -> Error "a branch condition is not a check"
+        | Error e -> Error e
+
+    let ops (name: string) members =
+        match field name members with
+        | Some(JArr items) ->
+            items
+            |> List.fold
+                (fun acc item ->
+                    match acc, item with
+                    | Ok decoded, JStr t -> decodeOp t |> Result.map (fun op -> decoded @ [ op ])
+                    | Ok _, _ -> Error(sprintf "member '%s' holds a non-string op" name)
+                    | Error e, _ -> Error e)
+                (Ok [])
+        | _ -> Error(sprintf "member '%s' is not an array" name)
+
+    match Json.parse text with
+    | Ok(JObj members) ->
+        match field "$type" members with
+        | Some(JStr "Read") -> str "path" members |> Result.map Read
+        | Some(JStr "Write") ->
+            str "path" members
+            |> Result.bind (fun path -> str "content" members |> Result.map (fun c -> Write(path, c)))
+        | Some(JStr "Delete") -> str "path" members |> Result.map Delete
+        | Some(JStr "Publish") -> str "target" members |> Result.map Publish
+        | Some(JStr "Retract") -> str "target" members |> Result.map Retract
+        | Some(JStr "Exists") -> str "path" members |> Result.map (Exists >> Check)
+        | Some(JStr "Missing") -> str "path" members |> Result.map (Missing >> Check)
+        | Some(JStr "Refused") ->
+            str "refusal" members
+            |> Result.bind (fun r ->
+                match VerbRefusal.parse r with
+                | Some refusal -> Ok(Check(Refused refusal))
+                | None -> Error "member 'refusal' is not a refusal")
+        | Some(JStr "Branch") ->
+            str "entry" members
+            |> Result.bind check
+            |> Result.bind (fun entry ->
+                let exit =
+                    match field "exit" members with
+                    | Some(JBool false) -> Ok None
+                    | Some(JStr t) -> check t |> Result.map Some
+                    | _ -> Error "member 'exit' is neither a check nor false"
+
+                exit
+                |> Result.bind (fun exit ->
+                    ops "whenTrue" members
+                    |> Result.bind (fun whenTrue ->
+                        ops "whenFalse" members
+                        |> Result.map (fun whenFalse -> Branch(entry, whenTrue, whenFalse, exit)))))
+        | Some(JStr "Times") ->
+            match field "count" members with
+            | Some(JInt count) -> ops "body" members |> Result.map (fun body -> Times(int count, body))
+            | _ -> Error "member 'count' is not an integer"
+        | Some(JStr other) -> Error(sprintf "'%s' is not a verb op" other)
+        | _ -> Error "the op carries no '$type'"
+    | _ -> Error "the op is not a JSON object"
+
 /// Apply one op to the PLAN. A read reads the plan; a delete of a file the
 /// plan does not hold is an apply refusal, which halts the handler as every
 /// apply refusal does. A check answers whether the plan holds what it names,
@@ -237,7 +310,7 @@ let witness: ProgramWitness<FileMap, FileOp, Unfilled, Unfilled> =
         { Stream =
             { Apply = apply
               Encode = encodeOp
-              Decode = fun _ -> Error "the verb decodes no op" }
+              Decode = decodeOp }
           Reach = reach
           AbsoluteTarget =
             fun op ->

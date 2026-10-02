@@ -274,7 +274,11 @@ let private productionShaped (outcome: ModelOutcome) : HandlerOutcome =
       Patches = outcome.oc_patches
       Notifications = outcome.oc_notifications
       ClientEffects = outcome.oc_client_effects
-      Diagnostics = outcome.oc_diagnostics |> List.map productionDiagnostic }
+      Diagnostics = outcome.oc_diagnostics |> List.map productionDiagnostic
+      // The model carries no flow decisions (DECISIONS.md D25): the flow is an
+      // observation threaded beside the plan, not part of what the model
+      // proves, and `projectionOf` below does not compare it.
+      Flow = [] }
 
 /// The comparable projection — the same one the durable parity leg uses,
 /// for the same reason: a resolved tree's nodes carry handler slots, so the

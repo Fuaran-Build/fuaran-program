@@ -198,6 +198,16 @@ stage (there is nothing to put in one), and its one reachable consequence is tha
 binding channel: a landing slot (`RunQuery`, a `HostCall`'s `into`) is refused while planning as
 `no-binding-channel`.
 
+**Since Phase 1982 (H1) the handler codecs join that list.** `HandlerWire` (encode, decode,
+`contentAddress`, the replay walk), `Replay` and `Harvest.ofRegistration` read the dispatch position
+the same way, so a domain that fills only the state axis encodes its handlers as Program documents,
+harvests its registration's full demanded document (reach, replay and undo postures), and signs the
+pair of the two (`SignedEnvelope.signAddressed` over `HandlerWire.contentAddress`, verified by
+recomputation through `verifyAddressed`). At such a composition a document carrying a compute stage is
+refused on `malformed-referenced-value`: the action is a referenced value, and there is no action
+vocabulary to decode it with. A landing slot decodes, and the handler refuses it while planning, as
+above.
+
 | Axis | Who fills it | Read by |
 |---|---|---|
 | **state** (required) | every domain | the handler's op arm, the argument policy, the server demanded projection's reach, the signed envelope's tree hash (`Canonical`), replay's op classification, the session diff |
@@ -733,7 +743,8 @@ the sink holds no copy of the document and its rendering is of the document it w
 0.7.0 asked it for thirty-two.
 
 **What a fourth domain reads first.** Fill `StateWitness` — seven members since Phase 1977, every one meaningful for any
-domain with ops. Fill `WalkWitness` if the state is a tree you want priced, walked or projected
+domain with ops; a `Stream.Decode` that inverts `Stream.Encode` is what lets your handlers travel as
+Program documents and be signed (Phase 1982). Fill `WalkWitness` if the state is a tree you want priced, walked or projected
 client-side. Fill `DispatchWitness` only if nodes carry handlers that events dispatch; if they do not,
 your guards are ops (`OpView.Require`), your reads are ops, and your tail is a performer handed the
 plan. The signatures tell you, before a line is written, which Program functions your composition
@@ -940,5 +951,15 @@ package dependency. The specification does not spell the demanded document, so i
 does not reach these vectors, and regenerating them changes this repository alone. They were stale for
 two versions because the script that wrote them ran in no gate. The corpus is now
 `DemandedCorpus.emit` in the server suite, and `tools/emit-demanded-conformance.fsx` wraps it.
+
+**Phase 1982 moved neither the specification nor the document's version.** The handler outcome's
+flow decisions (B3) are a host-side member of `HandlerOutcome` that `HandlerReport` does not carry,
+so the outcome document is byte-identical; carrying the arm trace onto the wire would be a
+specification act across all five artefacts, taken only when a consumer across a process boundary
+needs it (D25). The handler codecs now run at a composition with no dispatch axis (H1), and refuse a
+compute stage there on a refusal class the specification already names. The `atMost` policy clause
+(R2) rides the demanded document's version 6 on the argument `denyList` rode version 5: no producer
+of a version-6 document before it could declare one, and a reader built before it refuses a document
+that carries one at the clause.
 `DemandedCorpusTests` fails, naming the stale vector's line, whenever the committed file differs from
 what the codec emits.

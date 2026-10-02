@@ -309,12 +309,20 @@ module ProgramWire =
         : JVal =
         witness.Dispatch.Action.Encode action
 
+    /// `decodeAction` over the action witness alone (Phase 1982, H1), for a
+    /// path that reads its dispatch position through `IDispatchPosition` and
+    /// holds the fold's action witness rather than the whole dispatch axis.
+    let decodeActionIn
+        (action: ActionWitness<'Action, 'Expr, 'Store, 'Effect>)
+        (value: JVal)
+        : Result<'Action, WireRefusal> =
+        refuseResultTarget value |> Result.bind (fun () -> action.Decode value)
+
     let decodeAction
         (witness: ProgramWitness<'Node, 'Op, 'Walk, DispatchWitness<'Node, 'Action, 'Expr, 'Store, 'Effect>>)
         (value: JVal)
         : Result<'Action, WireRefusal> =
-        refuseResultTarget value
-        |> Result.bind (fun () -> witness.Dispatch.Action.Decode value)
+        decodeActionIn witness.Dispatch.Action value
 
     let encodeOp (witness: ProgramWitness<'Node, 'Op, 'Walk, 'Dispatch>) (op: 'Op) : Result<JVal, WireRefusal> =
         match Json.parse (witness.State.Stream.Encode op) with
@@ -410,25 +418,35 @@ module ProgramWire =
     ///               is resolved at dispatch, which is undecidable, beside the
     ///               body's (Phase 1976).
     ///   Leaf      — undecidable, and reported as such.
-    let rec replayDefectsOfAction
-        (witness: ProgramWitness<'Node, 'Op, 'Walk, DispatchWitness<'Node, 'Action, 'Expr, 'Store, 'Effect>>)
+    ///
+    /// `replayDefectsOfActionIn` is the same walk over the action witness alone
+    /// (Phase 1982, H1); `replayDefectsOfAction` is it at a full dispatch axis.
+    let rec replayDefectsOfActionIn
+        (witness: ActionWitness<'Action, 'Expr, 'Store, 'Effect>)
         (action: 'Action)
         : ReplayDefect list =
-        match witness.Dispatch.Action.View action with
+        match witness.View action with
         | ActionView.Call _ -> []
-        | ActionView.Sequence items -> items |> List.collect (replayDefectsOfAction witness) |> List.distinct
+        | ActionView.Sequence items -> items |> List.collect (replayDefectsOfActionIn witness) |> List.distinct
         | ActionView.Assign(_, _, Some _) -> [ ReplayDefect.NonLiteralWrite ]
         | ActionView.Assign(_, _, None) -> []
         | ActionView.Require _ -> [ ReplayDefect.UndecidableAction ]
         | ActionView.Choose(_, whenTrue, whenFalse, _) ->
             ReplayDefect.UndecidableAction
-            :: (replayDefectsOfAction witness whenTrue @ replayDefectsOfAction witness whenFalse)
+            :: (replayDefectsOfActionIn witness whenTrue
+                @ replayDefectsOfActionIn witness whenFalse)
             |> List.distinct
-        | ActionView.Repeat(Bound.Literal _, body) -> replayDefectsOfAction witness body
+        | ActionView.Repeat(Bound.Literal _, body) -> replayDefectsOfActionIn witness body
         | ActionView.Repeat(Bound.Parameter _, body) ->
-            ReplayDefect.UndecidableAction :: replayDefectsOfAction witness body
+            ReplayDefect.UndecidableAction :: replayDefectsOfActionIn witness body
             |> List.distinct
         | ActionView.Leaf _ -> [ ReplayDefect.UndecidableAction ]
+
+    let replayDefectsOfAction
+        (witness: ProgramWitness<'Node, 'Op, 'Walk, DispatchWitness<'Node, 'Action, 'Expr, 'Store, 'Effect>>)
+        (action: 'Action)
+        : ReplayDefect list =
+        replayDefectsOfActionIn witness.Dispatch.Action action
 
     /// The defects of an op: one that names its target absolutely re-runs
     /// against the same node; one addressed relative to where a previous op

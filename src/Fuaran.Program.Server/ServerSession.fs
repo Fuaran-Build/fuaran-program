@@ -480,6 +480,7 @@ module ServerSession =
                               Performed = tally.Performed @ outcome.Performed
                               Patches = tally.Patches @ outcome.Patches
                               Notifications = tally.Notifications @ outcome.Notifications
+                              Flow = tally.Flow @ outcome.Flow
                               Diagnostics = tally.Diagnostics @ outcome.Diagnostics } } }
 
     /// Run one ALREADY-CHOSEN action through this placement's loop, with a
@@ -529,7 +530,8 @@ module ServerSession =
                   Patches = tally.Patches
                   Notifications = tally.Notifications
                   ClientEffects = bounded.Effects
-                  Diagnostics = (bounded.Diagnostics |> List.map ServerDiagnostic.Bounded) @ tally.Diagnostics }
+                  Diagnostics = (bounded.Diagnostics |> List.map ServerDiagnostic.Bounded) @ tally.Diagnostics
+                  Flow = tally.Flow }
 
             commit session tally.Tree bounded.Store outcome
 

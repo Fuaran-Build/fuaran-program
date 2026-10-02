@@ -184,6 +184,31 @@ module SignedEnvelope =
     let preimage (treeHash: string) (envelope: string) : string =
         "{" + signedMembers treeHash envelope + "}"
 
+    /// Sign a CONTENT ADDRESS paired with a demanded projection (Phase 1982,
+    /// H1): `sign` without the tree, for a program whose identity is a
+    /// document rather than a tree — a handler registration under a domain
+    /// that fills only the state axis, addressed by
+    /// `HandlerWire.contentAddress`. The preimage, the record and the sink's
+    /// obligations are `sign`'s exactly; only where the address comes from
+    /// differs, and `sign` is this with the tree's hash.
+    let signAddressed
+        (sink: Fuaran.Core.IAttestationSink)
+        (address: string)
+        (projection: DemandedProjection)
+        : Result<SignedEnvelope, SignRefusal> =
+        let envelope = Demanded.encode projection
+        let head = preimage address envelope
+
+        match sink.Sign head with
+        | None -> Error SignRefusal.SinkDeclined
+        | Some attestation when attestation.Head <> head -> Error SignRefusal.SinkAnsweredForAnotherHead
+        | Some attestation ->
+            Ok
+                { TreeHash = address
+                  Envelope = envelope
+                  KeyId = attestation.KeyId
+                  Signature = attestation.Signature }
+
     /// Sign a tree paired with its demanded envelope, through a host-supplied
     /// sink. `project` is the walk that produces the envelope — `Demanded.ofTree`
     /// for the client tier, or a placement's own two-tier walk — so the same
@@ -194,19 +219,7 @@ module SignedEnvelope =
         (project: 'Node -> DemandedProjection)
         (root: 'Node)
         : Result<SignedEnvelope, SignRefusal> =
-        let hash = treeHash state root
-        let envelope = Demanded.encode (project root)
-        let head = preimage hash envelope
-
-        match sink.Sign head with
-        | None -> Error SignRefusal.SinkDeclined
-        | Some attestation when attestation.Head <> head -> Error SignRefusal.SinkAnsweredForAnotherHead
-        | Some attestation ->
-            Ok
-                { TreeHash = hash
-                  Envelope = envelope
-                  KeyId = attestation.KeyId
-                  Signature = attestation.Signature }
+        signAddressed sink (treeHash state root) (project root)
 
     // ─── drift ───────────────────────────────────────────────────────────────
 
@@ -265,22 +278,16 @@ module SignedEnvelope =
                   Shortfall = Demanded.empty
                   Unreadable = Some failure }
 
-    /// Verify a signed pair by recomputation, under a public key.
-    ///
-    /// COLD: no host, no performer, no model — the tree, the walk, the key and
-    /// the crypto are everything it reads. `project` must be the walk the
-    /// signer used; a client-tier walk over a server-signed record reports the
-    /// server tier as shortfall, which is the honest answer rather than a
-    /// defect. `key` is optional only so that its absence can be REFUSED: there
-    /// is no path through this function that checks the envelope and not the
-    /// signature. Asynchronous because the crypto seam is — browser crypto is —
-    /// and a synchronous host adapts trivially.
-    let verify
-        (state: StateWitness<'Node, 'Op>)
+    /// Verify a record signed over a CONTENT ADDRESS (Phase 1982, H1), by
+    /// recomputation: the caller hands the address and the projection it
+    /// RECOMPUTED from the registration it holds — never the carried bytes —
+    /// and the record is checked against them exactly as `verify` checks a
+    /// tree's. `verify` is this with the tree's hash and its walk.
+    let verifyAddressed
         (crypto: ClaimVerifier<'Key>)
         (key: 'Key option)
-        (project: 'Node -> DemandedProjection)
-        (root: 'Node)
+        (address: string)
+        (projection: DemandedProjection)
         (signed: SignedEnvelope)
         : Async<Result<VerifiedEnvelope, VerifyRefusal>> =
         async {
@@ -289,8 +296,7 @@ module SignedEnvelope =
             | Some key when crypto.KeyId key <> signed.KeyId ->
                 return Error(VerifyRefusal.ForeignKey(signed.KeyId, crypto.KeyId key))
             | Some key ->
-                let hash = treeHash state root
-                let projection = project root
+                let hash = address
 
                 match driftOf projection signed.Envelope with
                 | Some drift -> return Error(VerifyRefusal.EnvelopeDrift drift)
@@ -309,6 +315,26 @@ module SignedEnvelope =
                     else
                         return Error(VerifyRefusal.BadSignature(signed.TreeHash, hash))
         }
+
+    /// Verify a signed pair by recomputation, under a public key.
+    ///
+    /// COLD: no host, no performer, no model — the tree, the walk, the key and
+    /// the crypto are everything it reads. `project` must be the walk the
+    /// signer used; a client-tier walk over a server-signed record reports the
+    /// server tier as shortfall, which is the honest answer rather than a
+    /// defect. `key` is optional only so that its absence can be REFUSED: there
+    /// is no path through this function that checks the envelope and not the
+    /// signature. Asynchronous because the crypto seam is — browser crypto is —
+    /// and a synchronous host adapts trivially.
+    let verify
+        (state: StateWitness<'Node, 'Op>)
+        (crypto: ClaimVerifier<'Key>)
+        (key: 'Key option)
+        (project: 'Node -> DemandedProjection)
+        (root: 'Node)
+        (signed: SignedEnvelope)
+        : Async<Result<VerifiedEnvelope, VerifyRefusal>> =
+        verifyAddressed crypto key (treeHash state root) (project root) signed
 
     // ─── the record as a wire document ───────────────────────────────────────
 

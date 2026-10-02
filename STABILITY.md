@@ -351,6 +351,46 @@ against reach has its performer answer what it touched and registers through `pe
 a contract that reads the receipt against the op's reach (the in-repo verb witness's
 `Receipt.withinReach` is the pattern); a UI-tier consumer changes nothing.
 
+### Rides the draft: the outcome names its arms, a state-only handler document, and a numeric ceiling (Phase 1982)
+
+**Class: breaking**, the class this slot already carries, so it rides rather than advancing: `v0.6.0`
+is the newest tag and nothing public pins `0.7.0`. `DECISIONS.md` D25 records what was decided and
+why neither the specification nor any theorem statement moves.
+
+- **`HandlerOutcome` gains `Flow: FlowDecision list`**, and `HandlerTally` gains the same member, so
+  every full-literal construction of either needs it (FS0764). `[]` is the honest value for a
+  handler that uses no branch and no repeat. `FlowDecision` (`Chose of bool` | `Repeated of int`) and
+  `FlowDecision.ofTrace` are new.
+- **`ServerConstraintClause` gains `AtMost of argument: string * limit: int`**, so every exhaustive
+  match over the clause stops compiling until it names the case. The demanded document carries it as
+  `{"clause":"atMost","argument":…,"limit":…}` at version 6 (no version move).
+- **`ServerArgumentPolicy.arguments` reads a host call's integer members** as decimal text, beside its
+  string members. An allow-list or deny-list declared on such a name now binds where it passed
+  vacuously before.
+- **`HandlerWire`'s codecs, `Replay`'s functions and `Harvest.ofRegistration` take the dispatch
+  position at any composition** (`#IDispatchPosition`) where they took `DispatchWitness`. Every
+  existing caller compiles unchanged.
+- **New public members:**
+  - `HandlerWire.contentAddress`;
+  - `SignedEnvelope.signAddressed` / `verifyAddressed`;
+  - `ProgramWire.decodeActionIn` / `replayDefectsOfActionIn`.
+- **`SignedEnvelope.sign` / `verify`** keep their signatures and their bytes. `verify` now
+  evaluates the walk before the key checks rather than after, which a pure walk cannot observe.
+
+**What did NOT change:**
+- no wire member, no fixture byte, and no outcome-document byte (`HandlerReport` does not carry
+  `Flow`);
+- no demanded-document byte for any registry that declares no `AtMost`;
+- no envelope needs re-signing, and no proof statement moves;
+- the UI tier, byte for byte through the parity suite and the Fable leg.
+
+**What a consumer does about it:**
+- A full-literal `HandlerOutcome` or `HandlerTally` gains `Flow = []`.
+- An exhaustive match over `ServerConstraintClause` gains the `AtMost` arm.
+- A domain that fills only the state axis can now encode, address and sign its handlers. It gives
+  its `Stream.Decode` the inverse of `Stream.Encode` if it had none.
+- A UI-tier consumer changes nothing.
+
 ## 0.6.0 — RELEASED (tagged `v0.6.0`, 2026-09-28) — the core becomes domain-generic (Phase 1896)
 
 **Class: breaking**, for `Fuaran.Program.Bounded`, `Fuaran.Program.Runtime` and

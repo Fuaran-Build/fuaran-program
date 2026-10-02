@@ -170,12 +170,14 @@ type UndoPosture =
 /// One clause of a capability's declared argument policy — the vocabulary a
 /// host writes a bound in, and the one this document carries it in.
 ///
-/// **A closed set of four, and the closure is the point**: this is what a
+/// **A closed set of five, and the closure is the point**: this is what a
 /// policy gate can decide about an effect's ARGUMENTS without interpreting a
 /// payload, so a further kind is a deliberate widening of what the gate reasons
 /// over rather than a new option on a record. The fourth, `DenyList`, was such a
 /// widening (Phase 1975): "everything except these" has no allow-list spelling
-/// that survives a run which creates the names it later addresses.
+/// that survives a run which creates the names it later addresses. The fifth,
+/// `AtMost`, was another (Phase 1982): "at most N" has an allow-list spelling
+/// only as the N+1 literals it permits.
 ///
 /// **A clause is PRESENT or it is not; there is no "unconstrained" clause.** An
 /// argument nobody allow-listed, a payload nobody bounded and a capability
@@ -207,6 +209,15 @@ type ServerConstraintClause =
     /// name on both is refused. An EMPTY refused list is a real declaration that
     /// refuses nothing, never an absent one.
     | DenyList of argument: string * refused: string list
+    /// A ceiling on one named argument's INTEGER value (Phase 1982, the second
+    /// witness's R2): every value under the argument must be an integer no
+    /// greater than `limit`. A value that is not an integer is refused rather
+    /// than ignored, because a bound a host declared on a number is not met by
+    /// a value the gate cannot read as one. Vacuously true where the effect
+    /// names nothing under the argument, on the allow-list's reading. A
+    /// repeat's `count` is the case that motivated it: "at most 90 polls" used
+    /// to be an allow-list of the 91 literals `0`..`90`.
+    | AtMost of argument: string * limit: int
 
 /// One capability's declared argument policy, as the document carries it.
 ///
@@ -743,6 +754,7 @@ module Demanded =
         | ServerConstraintClause.Ceiling _ -> 1, ""
         | ServerConstraintClause.Label _ -> 2, ""
         | ServerConstraintClause.DenyList(argument, _) -> 3, argument
+        | ServerConstraintClause.AtMost(argument, _) -> 4, argument
 
     /// Put a projection's every list into the canonical form the document
     /// promises: distinct, sorted, one entry per namespace. The single place
@@ -992,6 +1004,9 @@ module Demanded =
     [<Literal>]
     let ClauseDenyList = "denyList"
 
+    [<Literal>]
+    let ClauseAtMost = "atMost"
+
     /// The three common control characters keep their short escapes; every other
     /// control character (U+0000–U+001F) is escaped as `\u00XX`. A raw control
     /// byte inside a JSON string is invalid JSON, so this is a validity
@@ -1088,6 +1103,11 @@ module Demanded =
     /// reader a truer answer and would cost every envelope signed under the
     /// draft a re-sign.
     ///
+    /// **The `atMost` clause rides version 6 on exactly that argument** (Phase
+    /// 1982): no producer of a version-6 document before it could declare one,
+    /// a reader built before it refuses a document that carries one at the
+    /// clause, and version 6 belongs to the same unreleased draft slot.
+    ///
     /// **Version 6 adds the undo posture** (Phase 1977), the fifth time on the
     /// argument version 3 made for the replay posture, and for the same
     /// member shape. The `undo` key is present on EVERY server tier from here
@@ -1181,7 +1201,9 @@ module Demanded =
                                 | ServerConstraintClause.DenyList(argument, refused) ->
                                     let values = refused |> List.map q |> arr
 
-                                    $"""{{"clause":{q ClauseDenyList},"argument":{q argument},"refused":{values}}}""")
+                                    $"""{{"clause":{q ClauseDenyList},"argument":{q argument},"refused":{values}}}"""
+                                | ServerConstraintClause.AtMost(argument, limit) ->
+                                    $"""{{"clause":{q ClauseAtMost},"argument":{q argument},"limit":{limit}}}""")
                             |> arr
 
                         $"""{{"capability":{q c.Capability},"clauses":{clauses}}}""")
@@ -1641,6 +1663,12 @@ module Demanded =
                 |> Result.bind (fun argument ->
                     requireStrings version (child path "refused") "refused" value
                     |> Result.map (fun refused -> ServerConstraintClause.DenyList(argument, refused)))
+            | ClauseAtMost ->
+                declaredOnly version path [ "clause"; "argument"; "limit" ] value
+                |> Result.bind (fun () -> requireString version (child path "argument") "argument" value)
+                |> Result.bind (fun argument ->
+                    requireInt version (child path "limit") "limit" value
+                    |> Result.map (fun limit -> ServerConstraintClause.AtMost(argument, limit)))
             | other ->
                 failWith
                     DemandedDefect.WrongType

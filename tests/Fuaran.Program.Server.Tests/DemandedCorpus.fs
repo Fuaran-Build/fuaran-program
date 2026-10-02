@@ -104,7 +104,8 @@ let private policy =
     + "{\"clause\":\"allowList\",\"argument\":\"url\",\"permitted\":[\"api.example.com\"]},"
     + "{\"clause\":\"ceiling\",\"bytes\":65536},"
     + "{\"clause\":\"label\",\"label\":\"pii\"},"
-    + "{\"clause\":\"denyList\",\"argument\":\"path\",\"refused\":[\"/etc\"]}]}]"
+    + "{\"clause\":\"denyList\",\"argument\":\"path\",\"refused\":[\"/etc\"]},"
+    + "{\"clause\":\"atMost\",\"argument\":\"count\",\"limit\":90}]}]"
 
 /// Every vector: an id, the document, and what it is for.
 let vectors: (string * string * string) list =
@@ -282,6 +283,12 @@ let private renderTier (tier: ServerDemand option) =
                             + q argument
                             + ",\"refused\":"
                             + arr (refused |> List.map q)
+                            + "}"
+                        | ServerConstraintClause.AtMost(argument, limit) ->
+                            "{\"clause\":\"atMost\",\"argument\":"
+                            + q argument
+                            + ",\"limit\":"
+                            + string limit
                             + "}"
                         | ServerConstraintClause.Ceiling bytes ->
                             "{\"clause\":\"ceiling\",\"bytes\":" + string bytes + "}"

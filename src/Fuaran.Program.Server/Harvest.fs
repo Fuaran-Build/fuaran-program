@@ -121,7 +121,7 @@ module Harvest =
     /// tier is therefore empty — there is no tree — and the server tier is
     /// present, because a walk did run.
     let ofRegistration
-        (witness: ProgramWitness<'Node, 'Op, 'Walk, DispatchWitness<'Node, 'Action, 'Expr, 'Store, 'Effect>>)
+        (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (handlers: Handler<'Action, 'Op> seq)
         : HarvestedDemand =
         publish (
