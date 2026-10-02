@@ -172,6 +172,39 @@ type ServerDiagnostic =
     /// already has.
     | HandlerUnregistered
 
+/// One flow decision a handler's plan took (Phase 1982, the second witness's
+/// B3): which arm a branch took, or how many times a repeat ran its body.
+///
+/// A placement that maps an outcome onto its own codes (a verb's arm onto an
+/// exit code, say) used to have to read the branch conditions again to learn
+/// which arm ran, which is sound only while no arm writes what a condition
+/// reads. The outcome now says, and it is the audit record a reviewer of a
+/// signed act wants beside `Performed`: not only what was done, but which way
+/// the program went to do it.
+[<RequireQualifiedAccess>]
+type FlowDecision =
+    /// A branch (`OpView.Choose` on the op axis, `ActionView.Choose` in a
+    /// compute stage) decided: `true` took the true arm.
+    | Chose of tookTrue: bool
+    /// A repeat ran its body this many times.
+    | Repeated of count: int
+
+module FlowDecision =
+    /// The decisions a compute stage's fold took, read off the trace it
+    /// recorded (`BoundedActions.runTraced`), in PRE-ORDER: a branch's or a
+    /// repeat's own decision before the decisions inside it, which is the
+    /// order the fold took them in. A repeat reports the iterations that RAN,
+    /// so a halted repeat reports fewer than its bound.
+    let rec ofTrace (trace: Trace) : FlowDecision list =
+        match trace with
+        | Trace.Nothing
+        | Trace.Wrote _ -> []
+        | Trace.Seq steps -> steps |> List.collect ofTrace
+        | Trace.Choose(tookTrue, arm) -> FlowDecision.Chose tookTrue :: ofTrace arm
+        | Trace.Repeat iterations ->
+            FlowDecision.Repeated(List.length iterations)
+            :: (iterations |> List.collect ofTrace)
+
 /// The result of running one handler.
 type HandlerOutcome<'Node, 'Store, 'Op, 'Effect> =
     {
@@ -206,6 +239,22 @@ type HandlerOutcome<'Node, 'Store, 'Op, 'Effect> =
         /// other placements.
         ClientEffects: 'Effect list
         Diagnostics: ServerDiagnostic list
+        /// The flow decisions the plan took (Phase 1982), in plan order and
+        /// pre-order: each branch's arm and each repeat's count, from the op
+        /// stages' `OpView.Choose` / `OpView.Repeat` and from the compute
+        /// stages' folds alike. Empty for a handler that uses neither shape,
+        /// which is every handler the UI tier registers.
+        ///
+        /// On an uncommitted outcome it names the decisions taken BEFORE the
+        /// effect that halted, so the record of which way the program went
+        /// survives the rollback exactly as `Diagnostics` does. An op effect
+        /// whose plan was refused contributes none of its own, because its plan
+        /// was refused whole.
+        ///
+        /// HOST-SIDE ONLY: `HandlerReport` does not carry it, so the outcome
+        /// document the program wire specification describes is byte-identical
+        /// (DECISIONS.md D25).
+        Flow: FlowDecision list
     }
 
 /// One step of the PLAN an undo reads (Phase 1977, DECISIONS.md D22),
@@ -265,6 +314,10 @@ type HandlerTally<'Node, 'Op> =
         Patches: 'Op list
         Notifications: (string * Fuaran.Core.JVal) list
         Diagnostics: ServerDiagnostic list
+        /// The flow decisions of every handler the event invoked (Phase 1982),
+        /// each handler's in its own plan order, the handlers in invocation
+        /// order.
+        Flow: FlowDecision list
     }
 
 module HandlerTally =
@@ -277,7 +330,8 @@ module HandlerTally =
           Performed = []
           Patches = []
           Notifications = []
-          Diagnostics = [] }
+          Diagnostics = []
+          Flow = [] }
 
 module Handler =
 
@@ -315,6 +369,8 @@ module Handler =
             /// traces, and every step that reached or emitted. The model's
             /// `ac_trail`.
             Trail: UndoStep<'Node, 'Op, 'Action> list
+            /// The flow decisions (Phase 1982), reversed like every list here.
+            Flow: FlowDecision list
         }
 
     /// The discriminator of a pipeline-evaluation failure. Deliberately not the
@@ -410,27 +466,43 @@ module Handler =
         (tree: 'Node)
         (staged: StagedCall list)
         (trail: UndoStep<'Node, 'Op, 'Action> list)
-        : Result<'Node * StagedCall list * UndoStep<'Node, 'Op, 'Action> list, string> =
+        (flow: FlowDecision list)
+        : Result<'Node * StagedCall list * UndoStep<'Node, 'Op, 'Action> list * FlowDecision list, string> =
         // The trail (Phase 1977) threads beside the staged list, reversed as
         // it is: every EDIT the plan applies is recorded with the state it was
         // applied to — in memory and performed alike, because an undo in
         // memory applies the inverses in memory. The model walks it a second
         // time over the same views (`trail_views`); `trail_agrees` is what
         // says one fold and two walks reach one answer.
-        let rec go (ops: 'Op list) (tree: 'Node) (staged: StagedCall list) (trail: UndoStep<'Node, 'Op, 'Action> list) =
+        // The flow (Phase 1982) threads the same way, reversed: a branch's
+        // decision is pushed before its arm is planned and a repeat's count
+        // before its body, so the reversed list reads in pre-order.
+        let rec go
+            (ops: 'Op list)
+            (tree: 'Node)
+            (staged: StagedCall list)
+            (trail: UndoStep<'Node, 'Op, 'Action> list)
+            (flow: FlowDecision list)
+            =
             match ops with
-            | [] -> Ok(tree, staged, trail)
+            | [] -> Ok(tree, staged, trail, flow)
             | op :: rest ->
-                match one op tree staged trail with
+                match one op tree staged trail flow with
                 | Error code -> Error code
-                | Ok(tree', staged', trail') -> go rest tree' staged' trail'
+                | Ok(tree', staged', trail', flow') -> go rest tree' staged' trail' flow'
 
-        and one (op: 'Op) (tree: 'Node) (staged: StagedCall list) (trail: UndoStep<'Node, 'Op, 'Action> list) =
+        and one
+            (op: 'Op)
+            (tree: 'Node)
+            (staged: StagedCall list)
+            (trail: UndoStep<'Node, 'Op, 'Action> list)
+            (flow: FlowDecision list)
+            =
             match state.View op with
             | OpView.Require ->
                 match state.Stream.Apply op tree with
                 | Error code -> Error code
-                | Ok _ -> Ok(tree, staged, trail)
+                | Ok _ -> Ok(tree, staged, trail, flow)
             | OpView.Edit ->
                 match state.Stream.Apply op tree with
                 | Error code -> Error code
@@ -438,29 +510,30 @@ module Handler =
                     let trail' = UndoStep.Edit(tree, op) :: trail
 
                     match performance with
-                    | OpPerformance.InMemory -> Ok(tree', staged, trail')
+                    | OpPerformance.InMemory -> Ok(tree', staged, trail', flow)
                     | OpPerformance.Performed perform ->
-                        Ok(tree', stagedOp perform capability tree' op :: staged, trail')
+                        Ok(tree', stagedOp perform capability tree' op :: staged, trail', flow)
             | OpView.Choose(entry, whenTrue, whenFalse, exit) ->
                 let tookTrue = Result.isOk (state.Stream.Apply entry tree)
+                let arm = if tookTrue then whenTrue else whenFalse
 
-                match go (if tookTrue then whenTrue else whenFalse) tree staged trail with
+                match go arm tree staged trail (FlowDecision.Chose tookTrue :: flow) with
                 | Error code -> Error code
-                | Ok(tree', staged', trail') ->
+                | Ok(tree', staged', trail', flow') ->
                     match exit with
-                    | None -> Ok(tree', staged', trail')
+                    | None -> Ok(tree', staged', trail', flow')
                     | Some assertion ->
                         match state.Stream.Apply assertion tree' with
                         | Ok _ ->
                             if tookTrue then
-                                Ok(tree', staged', trail')
+                                Ok(tree', staged', trail', flow')
                             else
                                 Error "the exit assertion held after the false arm"
                         | Error reason ->
                             if tookTrue then
                                 Error(sprintf "the exit assertion did not hold after the true arm: %s" reason)
                             else
-                                Ok(tree', staged', trail')
+                                Ok(tree', staged', trail', flow')
             | OpView.Repeat(count, body) ->
                 if count < 0 then
                     Error "the repeat's count is negative"
@@ -470,17 +543,18 @@ module Handler =
                         (tree: 'Node)
                         (staged: StagedCall list)
                         (trail: UndoStep<'Node, 'Op, 'Action> list)
+                        (flow: FlowDecision list)
                         =
                         if remaining = 0 then
-                            Ok(tree, staged, trail)
+                            Ok(tree, staged, trail, flow)
                         else
-                            match go body tree staged trail with
+                            match go body tree staged trail flow with
                             | Error code -> Error code
-                            | Ok(tree', staged', trail') -> times (remaining - 1) tree' staged' trail'
+                            | Ok(tree', staged', trail', flow') -> times (remaining - 1) tree' staged' trail' flow'
 
-                    times count tree staged trail
+                    times count tree staged trail (FlowDecision.Repeated count :: flow)
 
-        go ops tree staged trail
+        go ops tree staged trail flow
 
     /// PLAN one effect against the store. The gate is consulted FIRST — before a
     /// pipeline is evaluated, before an op reaches the apply engine, and before
@@ -561,9 +635,11 @@ module Handler =
                     // applying its predecessors, which is what makes the atomicity
                     // claim above true of the tree and not merely of the store. A
                     // guard on the op channel halts here, on its own reason.
-                    match planOps state performance capability ops performed.Store.Tree acc.Staged acc.Trail with
+                    match
+                        planOps state performance capability ops performed.Store.Tree acc.Staged acc.Trail acc.Flow
+                    with
                     | Error code -> halt capability code acc
-                    | Ok(tree, staged, trail) ->
+                    | Ok(tree, staged, trail, flow) ->
                         match performance with
                         // In memory: the apply IS the effect, and it is performed
                         // here, in the plan phase — the shape every placement had
@@ -572,7 +648,8 @@ module Handler =
                         | OpPerformance.InMemory ->
                             { performed with
                                 Store = { performed.Store with Tree = tree }
-                                Trail = trail }
+                                Trail = trail
+                                Flow = flow }
                         // Performed: the apply is a PLAN. The tree moves — a later
                         // stage reads the planned tree — but the capability is not
                         // recorded as performed; the staged calls are, one per edit,
@@ -584,7 +661,8 @@ module Handler =
                             { acc with
                                 Store = { acc.Store with Tree = tree }
                                 Staged = staged
-                                Trail = trail }
+                                Trail = trail
+                                Flow = flow }
 
                 | ServerEffect.HostCall(fn, args, into) ->
                     match Map.tryFind fn registry.HostFunctions with
@@ -686,7 +764,8 @@ module Handler =
                 Diagnostics =
                     (outcome.Diagnostics |> List.rev |> List.map ServerDiagnostic.Bounded)
                     @ acc.Diagnostics
-                Trail = UndoStep.Compute(action, trace) :: acc.Trail }
+                Trail = UndoStep.Compute(action, trace) :: acc.Trail
+                Flow = List.rev (FlowDecision.ofTrace trace) @ acc.Flow }
         | Effect effect -> runEffect state channel registry performance resolve effect acc
 
     /// PERFORM the staged host calls, in declaration order, stopping at the
@@ -760,7 +839,8 @@ module Handler =
               Notifications = []
               ClientEffects = []
               Diagnostics = []
-              Trail = [] }
+              Trail = []
+              Flow = [] }
 
         let channel =
             (witness.Dispatch :> IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>).Fold
@@ -814,7 +894,8 @@ module Handler =
               Patches = []
               Notifications = []
               ClientEffects = []
-              Diagnostics = List.rev final.Diagnostics },
+              Diagnostics = List.rev final.Diagnostics
+              Flow = List.rev final.Flow },
             plan
         else
             { Store = final.Store
@@ -826,7 +907,8 @@ module Handler =
               Patches = List.rev final.Patches
               Notifications = List.rev final.Notifications
               ClientEffects = List.rev final.ClientEffects
-              Diagnostics = List.rev final.Diagnostics },
+              Diagnostics = List.rev final.Diagnostics
+              Flow = List.rev final.Flow },
             plan
 
     /// `runPlanned` without the plan: the outcome alone. The signature every

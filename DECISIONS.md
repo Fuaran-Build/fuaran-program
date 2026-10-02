@@ -1420,3 +1420,93 @@ wants a receipt in its state can write it as an op. The operator controls' inabi
 op performer (D23's finding) stands. A contract keyed by capability STRING in the model is foreclosed
 by the prover (item 3); a model that distinguishes op tokens from host tokens by a token-side
 predicate is the shape a stronger statement would take, and nothing yet needs it.
+
+## D25 — The outcome names the arms it took, a state-only composition has a handler document, and a ceiling clause bounds a number; no specification act and no theorem statement moves (2026-10-02)
+
+The second witness's third run (roadmap-engine#703) placed two store-mutating verbs on this domain
+against the Phase 1976 build. It found three gaps that are generic to any domain rather than plane
+vocabulary, and so this repository's under D18. The run worked round each one. None of them should
+need working round.
+
+**1. B3: the handler outcome carries its flow decisions, host-side.** `HandlerOutcome` gains
+`Flow: FlowDecision list`, where `FlowDecision` is `Chose of tookTrue` or `Repeated of count`.
+- **Order:** plan order and pre-order, so a branch's or a repeat's own decision comes before the
+  decisions inside it.
+- **Both axes feed it.** The op axis (`OpView.Choose` / `OpView.Repeat`) is threaded through
+  `planOps` beside the undo trail. A compute stage's fold is read off the trace it already records
+  (`FlowDecision.ofTrace`). There is one fold and no second walk.
+- **The event tally carries it too.** `HandlerTally.Flow` holds the flows of the handlers an event
+  invoked, in invocation order, so the session placement can report them.
+- **On a rolled-back outcome** it names the decisions taken before the effect that halted, on the
+  terms `Diagnostics` survives a rollback. An op effect whose plan was refused contributes nothing of
+  its own, because its plan was refused whole.
+- **Why the run needed it.** It mapped a verb's arm onto an exit code by reading the conditions a
+  second time. That is sound only while no arm writes what a condition reads, and the outcome is now
+  the reading.
+
+Two things were decided rather than defaulted:
+- **Host-side, not on the wire.** `HandlerReport` does not carry `Flow`, so the outcome document the
+  specification describes is byte-identical, and the UI tier's outcomes are byte-identical because no
+  UI handler uses either shape. Putting the arm trace on the wire would be a specification act
+  across all five artefacts. The one consumer so far reads the outcome in-process, so nothing yet
+  pays for that act.
+- **No theorem statement moves.** The flow is an observation threaded beside the plan; it changes
+  neither the store, the staged list, `Performed` nor a halt. `Staging.fst` and `BoundedFold.fst`
+  say nothing about it, and the oracle bridge fills it empty and does not compare it. Its claim (it
+  names the arms the plan took) is tested, not proved: the verb domain covers both arms, a nested
+  repeat and a halt, and the toy domain covers a compute stage. Disabling the op-axis push turns
+  three of those tests red. A model of it would be `trail_views`' shape, a second walk proved to
+  agree with the fold, and it waits for a consumer that needs the claim proved.
+
+**2. H1: the handler codecs run under every composition.** `HandlerWire` was typed at a full dispatch
+axis, so a domain that fills only the state axis could not encode a handler as a Program document,
+and so could not bind a signed envelope to one (D15).
+- `HandlerWire`, `Replay` and `Harvest.ofRegistration` now read the dispatch position through
+  `IDispatchPosition`, as the handler loop and the demand walk already did.
+- `ProgramWire` gains `decodeActionIn` and `replayDefectsOfActionIn` over the action witness alone,
+  and the full-axis functions delegate to them.
+- **A compute stage decoded at such a composition** is refused on `malformed-referenced-value`: the
+  action is a referenced value and there is no vocabulary to decode it. That class is the
+  specification's own, so no refusal class is added.
+- **A landing slot decodes**, because a composition without a binding channel has no reserved
+  namespace to check it against. The handler refuses it while planning (`no-binding-channel`), which
+  is still before anything external runs.
+- `HandlerWire.contentAddress` is the specification's `sha256:` form over the canonical handler
+  document.
+- `SignedEnvelope.signAddressed` / `verifyAddressed` sign and verify a content address paired with a
+  demanded projection. `sign` / `verify` are now those with the tree's hash and its walk, byte for
+  byte as before.
+- Verification stays recomputation: the caller recomputes the address and the projection from the
+  registration it holds, and the carried bytes have no say. A changed handler whose demand did not
+  move is a bad signature, and a relaxed policy is drift.
+
+The in-repo verb domain gained an op decoder, `encodeOp`'s inverse, so its handlers round-trip.
+
+**3. R2: `ServerConstraintClause.AtMost(argument, limit)`.** Every value under the argument must read
+as an integer no greater than the limit.
+- **What counts as an integer.** Only the canonical decimal spelling: an optional minus sign, no
+  sign on zero, no leading zero, no whitespace, at most eighteen digits. Anything else is refused,
+  because a second spelling of one number would pass the bound under one reading and reach the
+  performer under another.
+- **Refusal token:** `OffList argument`, the allow-list's, which names the argument and never the
+  value. The clause is vacuously true where the effect names nothing under the argument, on the
+  allow-list's reading.
+- **Integer members are now arguments.** A host call's top-level integer members join its string
+  members, as decimal text. Without that, an `AtMost` on a numeric argument would pass vacuously
+  over exactly the value it bounds. It also tightens an existing allow-list on such a name, which
+  used to pass over the number unseen and now sees it.
+  This reverses a limit this repository had stated, "a top-level member whose value is a string",
+  in the policy module's header and in an `EffectConstraintTests` case that pinned it. Both are
+  amended. The limit was a statement of scope rather than an argument for it, and nesting stays
+  out of scope.
+- **Rides document version 6** on the argument `denyList` rode version 5: no producer of a version-6
+  document before it could declare one, a reader built before it refuses a document that carries
+  one at the clause, and the version belongs to an unreleased draft.
+- **No proof moves.** `EffectGate.fst` takes the argument policy as an arbitrary function, and its
+  theorems hold for every policy (the `plan_effect` congruence over `r_policy`).
+- The demanded corpus (`conformance/demanded-effect-projection.json`, Phase 1978) carries the clause
+  in its policy vector and is regenerated.
+
+**What this does not do.** It records no flow on the wire, as item 1 says. It models no flow, also
+item 1. It adds no `AtMost` for non-integer quantities: a byte size is `Ceiling`'s, and no other
+quantity has a consumer.

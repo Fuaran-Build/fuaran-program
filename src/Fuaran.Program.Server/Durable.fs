@@ -481,6 +481,7 @@ module Durable =
                               Performed = tally.Performed @ outcome.Performed
                               Patches = tally.Patches @ outcome.Patches
                               Notifications = tally.Notifications @ outcome.Notifications
+                              Flow = tally.Flow @ outcome.Flow
                               Diagnostics = tally.Diagnostics @ outcome.Diagnostics } } }
 
     /// Step a server session with this interpreter behind its call actions,

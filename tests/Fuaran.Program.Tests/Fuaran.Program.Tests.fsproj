@@ -21,6 +21,9 @@
     <Compile Include="DocDomain.fs" />
     <Compile Include="DocWitnessTests.fs" />
     <Compile Include="FlowTests.fs" />
+    <Compile Include="FlowDecisionTests.fs" />
+    <Compile Include="HandlerDocumentTests.fs" />
+    <Compile Include="AtMostTests.fs" />
     <Compile Include="CoreBoundaryTests.fs" />
     <Compile Include="SchemaClockTests.fs" />
     <Compile Include="Program.fs" />

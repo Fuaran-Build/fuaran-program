@@ -327,8 +327,10 @@ type ServerConstraintDefect =
 ///
 /// ── What is deliberately NOT claimed ────────────────────────────────────────
 /// A host call's arguments are read ONE LEVEL DEEP: a top-level member whose
-/// value is a string is a named argument, and a value nested inside an object or
-/// an array is not. A host whose performer reads a nested member cannot express
+/// value is a string is a named argument, and since Phase 1982 so is one whose
+/// value is an integer, as its decimal text, so that an `AtMost` declared on a
+/// number sees the number. A value nested inside an object or an array is not,
+/// and neither is a boolean or a fractional number. A host whose performer reads a nested member cannot express
 /// an allow-list over it, and will get an admission rather than a refusal — so
 /// the bound belongs on the top-level argument the performer takes, or the
 /// performer belongs behind a narrower registration. An op's arguments are
@@ -425,6 +427,10 @@ module ServerArgumentPolicy =
         (effect: ServerEffect<'Op>)
         : (string * string) list =
         match effect with
+        // A host call's top-level string AND integer members (the integer as
+        // its decimal text, Phase 1982): an `AtMost` declared on a numeric
+        // argument must see the number, and a clause that could not see it
+        // would pass vacuously over exactly the value it bounds.
         | ServerEffect.HostCall(_, args, _) ->
             match args with
             | Fuaran.Core.JObj members ->
@@ -432,6 +438,7 @@ module ServerArgumentPolicy =
                 |> List.choose (fun (key, value) ->
                     match value with
                     | Fuaran.Core.JStr text -> Some(key, text)
+                    | Fuaran.Core.JInt number -> Some(key, string number)
                     | _ -> None)
             | _ -> []
         | ServerEffect.Notify(channel, _) -> [ ChannelArgument, channel ]
@@ -463,6 +470,31 @@ module ServerArgumentPolicy =
             opList
             |> List.sumBy (fun op -> System.Text.Encoding.UTF8.GetByteCount(ops.Stream.Encode op))
         | ServerEffect.RunQuery _ -> 0
+
+    /// An argument's value read as an integer, in its CANONICAL decimal
+    /// spelling only (Phase 1982): an optional minus sign and digits, no sign
+    /// on zero, no leading zero, no whitespace, at most eighteen digits. A
+    /// second spelling of one number would let a value pass the bound under
+    /// one reading and reach the performer under another, so anything else is
+    /// not an integer here. Written out rather than parsed by the platform so
+    /// it reads the same under Fable.
+    let private integerOf (value: string) : int64 option =
+        let negative = value.StartsWith "-"
+        let digits = if negative then value.Substring 1 else value
+
+        if
+            digits.Length = 0
+            || digits.Length > 18
+            || not (digits |> Seq.forall (fun c -> c >= '0' && c <= '9'))
+            || (digits.Length > 1 && digits.[0] = '0')
+            || (negative && digits = "0")
+        then
+            None
+        else
+            let magnitude =
+                digits |> Seq.fold (fun acc c -> acc * 10L + int64 (int c - int '0')) 0L
+
+            Some(if negative then -magnitude else magnitude)
 
     /// Check one effect's arguments against one declared clause.
     ///
@@ -507,6 +539,23 @@ module ServerArgumentPolicy =
             if
                 arguments ops effect
                 |> List.forall (fun (name, value) -> name <> argument || not (List.contains value refused))
+            then
+                Ok()
+            else
+                Error(ServerConstraintDefect.OffList argument)
+        | Fuaran.Program.Bounded.ServerConstraintClause.AtMost(argument, limit) ->
+            // Phase 1982 — the allow-list's reading over a number: vacuously
+            // true when the effect names nothing under the argument, and every
+            // value it does name must read as an integer no greater than the
+            // limit. A value that does not read as one is refused under the
+            // same token, which names the argument and never the value.
+            if
+                arguments ops effect
+                |> List.forall (fun (name, value) ->
+                    name <> argument
+                    || (match integerOf value with
+                        | Some n -> n <= int64 limit
+                        | None -> false))
             then
                 Ok()
             else

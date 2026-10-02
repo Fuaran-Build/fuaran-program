@@ -67,10 +67,23 @@ module HandlerReport =
 
 module HandlerWire =
 
+    // Every codec here runs under EVERY composition (Phase 1982, H1): it reads
+    // its dispatch position through `IDispatchPosition`, as the handler loop
+    // and the demand walk already do, so a domain that fills only the state
+    // axis encodes and decodes its handlers as Program documents. The fold is
+    // read for exactly two things — a compute stage's action codec, which a
+    // composition without one cannot hold, and the host-reserved namespace a
+    // landing slot is checked against, which a composition without a binding
+    // channel does not have.
+    let private foldOf
+        (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
+        : DispatchFold<'Action, 'Expr, 'Store, 'Effect> option =
+        (witness.Dispatch :> IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>).Fold
+
     // ─── the server-effect vocabulary ────────────────────────────────────────
 
     let encodeEffect
-        (witness: ProgramWitness<'Node, 'Op, 'Walk, DispatchWitness<'Node, 'Action, 'Expr, 'Store, 'Effect>>)
+        (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (effect: ServerEffect<'Op>)
         : Result<JVal, WireRefusal> =
         match effect with
@@ -108,7 +121,7 @@ module HandlerWire =
             Ok(Canon.typed "Notify" [ "channel", JStr channel; "payload", payload ])
 
     let decodeEffect
-        (witness: ProgramWitness<'Node, 'Op, 'Walk, DispatchWitness<'Node, 'Action, 'Expr, 'Store, 'Effect>>)
+        (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (value: JVal)
         : Result<ServerEffect<'Op>, WireRefusal> =
         match ProgramWire.tag value with
@@ -150,16 +163,21 @@ module HandlerWire =
                 // step earlier than the interpreter closes it at PLAN. Both are
                 // before anything external runs; refusing here means the
                 // document never becomes a handler at all.
-                match ProgramWire.tryMember "into" value with
-                | None -> Ok(ServerEffect.HostCall(fn, args, None))
-                | Some(JStr slot) when witness.Dispatch.Store.IsReserved slot ->
+                //
+                // A composition with no dispatch axis has no binding channel and
+                // so no reserved namespace: its slot decodes, and the handler
+                // refuses it while planning (`Handler.NoBindingChannel`), which is
+                // still before anything external runs.
+                match ProgramWire.tryMember "into" value, foldOf witness with
+                | None, _ -> Ok(ServerEffect.HostCall(fn, args, None))
+                | Some(JStr slot), Some fold when fold.Store.IsReserved slot ->
                     ProgramWire.refuse
                         RefusalClass.HostReservedLandingSlot
                         ("the landing slot is under the host-reserved '"
-                         + witness.Dispatch.Store.ReservedPrefix
+                         + fold.Store.ReservedPrefix
                          + "' namespace")
-                | Some(JStr slot) -> Ok(ServerEffect.HostCall(fn, args, Some slot))
-                | Some _ -> ProgramWire.refuse RefusalClass.MissingMember "member 'into' is not a string")
+                | Some(JStr slot), _ -> Ok(ServerEffect.HostCall(fn, args, Some slot))
+                | Some _, _ -> ProgramWire.refuse RefusalClass.MissingMember "member 'into' is not a string")
 
         | Some "Notify" ->
             ProgramWire.declaredOnly [ "$type"; "channel"; "payload" ] value
@@ -180,24 +198,36 @@ module HandlerWire =
     let MaxHandlerNameLength = 256
 
     let encodeStage
-        (witness: ProgramWitness<'Node, 'Op, 'Walk, DispatchWitness<'Node, 'Action, 'Expr, 'Store, 'Effect>>)
+        (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (stage: HandlerStage<'Action, 'Op>)
         : Result<JVal, WireRefusal> =
         match stage with
-        | Compute action -> Ok(Canon.typed "Compute" [ "action", ProgramWire.encodeAction witness action ])
+        // An action exists only at a composition that fills the dispatch axis,
+        // so the fold is there whenever this arm is reached.
+        | Compute action ->
+            Ok(Canon.typed "Compute" [ "action", (DispatchPosition.fold witness.Dispatch).Action.Encode action ])
         | Effect effect ->
             encodeEffect witness effect
             |> Result.map (fun e -> Canon.typed "Effect" [ "effect", e ])
 
     let decodeStage
-        (witness: ProgramWitness<'Node, 'Op, 'Walk, DispatchWitness<'Node, 'Action, 'Expr, 'Store, 'Effect>>)
+        (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (value: JVal)
         : Result<HandlerStage<'Action, 'Op>, WireRefusal> =
         match ProgramWire.tag value with
         | Some "Compute" ->
             ProgramWire.declaredOnly [ "$type"; "action" ] value
             |> Result.bind (fun () -> ProgramWire.requireMember "action" value)
-            |> Result.bind (ProgramWire.decodeAction witness)
+            |> Result.bind (fun action ->
+                match foldOf witness with
+                | Some fold -> ProgramWire.decodeActionIn fold.Action action
+                // No dispatch axis, no action vocabulary: the referenced value
+                // has nothing to decode it, which is the referenced-value
+                // refusal the specification already names.
+                | None ->
+                    ProgramWire.refuse
+                        RefusalClass.MalformedReferencedValue
+                        "this composition fills no dispatch axis, so it holds no compute stage")
             |> Result.map Compute
         | Some "Effect" ->
             ProgramWire.declaredOnly [ "$type"; "effect" ] value
@@ -213,7 +243,7 @@ module HandlerWire =
         | None -> ProgramWire.refuse RefusalClass.MissingMember "a stage carries no '$type'"
 
     let encodeHandlerJson
-        (witness: ProgramWitness<'Node, 'Op, 'Walk, DispatchWitness<'Node, 'Action, 'Expr, 'Store, 'Effect>>)
+        (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (handler: Handler<'Action, 'Op>)
         : Result<JVal, WireRefusal> =
         handler.Stages
@@ -221,13 +251,25 @@ module HandlerWire =
         |> Result.map (fun stages -> Canon.typed "Handler" [ "name", JStr handler.Name; "stages", JArr stages ])
 
     let encodeHandler
-        (witness: ProgramWitness<'Node, 'Op, 'Walk, DispatchWitness<'Node, 'Action, 'Expr, 'Store, 'Effect>>)
+        (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (handler: Handler<'Action, 'Op>)
         : Result<string, WireRefusal> =
         encodeHandlerJson witness handler |> Result.map ProgramWire.render
 
+    /// The content address of a handler's document (Phase 1982, H1): the
+    /// specification's `sha256:` form over the canonical encoding, so the
+    /// same handler addresses the same on every runtime. What a signed
+    /// envelope over a handler registration binds the approval to
+    /// (`SignedEnvelope.signAddressed`) when there is no tree to hash.
+    let contentAddress
+        (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
+        (handler: Handler<'Action, 'Op>)
+        : Result<string, WireRefusal> =
+        encodeHandler witness handler
+        |> Result.map (fun document -> ProgramWire.ContentAddressPrefix + Hash.sha256Hex document)
+
     let decodeHandlerJson
-        (witness: ProgramWitness<'Node, 'Op, 'Walk, DispatchWitness<'Node, 'Action, 'Expr, 'Store, 'Effect>>)
+        (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (value: JVal)
         : Result<Handler<'Action, 'Op>, WireRefusal> =
         ProgramWire.declaredOnly [ "$type"; "name"; "stages" ] value
@@ -255,7 +297,7 @@ module HandlerWire =
             |> Result.map (fun stages -> { Name = name; Stages = stages }))
 
     let decodeHandler
-        (witness: ProgramWitness<'Node, 'Op, 'Walk, DispatchWitness<'Node, 'Action, 'Expr, 'Store, 'Effect>>)
+        (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (json: string)
         : Result<Handler<'Action, 'Op>, WireRefusal> =
         ProgramWire.parseDocument json |> Result.bind (decodeHandlerJson witness)
@@ -280,7 +322,7 @@ module HandlerWire =
     /// AND keeps this rule literally identical to the one the conformance
     /// corpus's own emitter applies.
     let replayReasons
-        (witness: ProgramWitness<'Node, 'Op, 'Walk, DispatchWitness<'Node, 'Action, 'Expr, 'Store, 'Effect>>)
+        (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (handler: Handler<'Action, 'Op>)
         : ReplayReason list =
         let ofEffect effect =
@@ -298,7 +340,8 @@ module HandlerWire =
             let defects =
                 match stage with
                 | Effect effect -> ofEffect effect
-                | Compute action -> ProgramWire.replayDefectsOfAction witness action
+                | Compute action ->
+                    ProgramWire.replayDefectsOfActionIn (DispatchPosition.fold witness.Dispatch).Action action
 
             // Qualified: the projection document declares a record with the same
             // two field names, and its `Defect` is the wire TOKEN rather than
@@ -322,7 +365,7 @@ module HandlerWire =
     /// walk that drifted from it would be a set of explanations for a verdict
     /// nobody reached.
     let replaySafety
-        (witness: ProgramWitness<'Node, 'Op, 'Walk, DispatchWitness<'Node, 'Action, 'Expr, 'Store, 'Effect>>)
+        (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (handler: Handler<'Action, 'Op>)
         : ReplaySafety =
         replayReasons witness handler |> ProgramWire.verdictOfReasons
@@ -430,7 +473,7 @@ module HandlerWire =
             |> Result.map (fun payload -> channel, payload))
 
     let encodeReportJson
-        (witness: ProgramWitness<'Node, 'Op, 'Walk, DispatchWitness<'Node, 'Action, 'Expr, 'Store, 'Effect>>)
+        (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (report: HandlerReport<'Op>)
         : Result<JVal, WireRefusal> =
         report.Patches
@@ -445,13 +488,13 @@ module HandlerWire =
                   "performed", JArr(report.Performed |> List.map JStr) ])
 
     let encodeReport
-        (witness: ProgramWitness<'Node, 'Op, 'Walk, DispatchWitness<'Node, 'Action, 'Expr, 'Store, 'Effect>>)
+        (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (report: HandlerReport<'Op>)
         : Result<string, WireRefusal> =
         encodeReportJson witness report |> Result.map ProgramWire.render
 
     let decodeReportJson
-        (witness: ProgramWitness<'Node, 'Op, 'Walk, DispatchWitness<'Node, 'Action, 'Expr, 'Store, 'Effect>>)
+        (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (value: JVal)
         : Result<HandlerReport<'Op>, WireRefusal> =
         // Every member is required even when empty: an omitted array and an
@@ -506,7 +549,7 @@ module HandlerWire =
                 Ok report)
 
     let decodeReport
-        (witness: ProgramWitness<'Node, 'Op, 'Walk, DispatchWitness<'Node, 'Action, 'Expr, 'Store, 'Effect>>)
+        (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (json: string)
         : Result<HandlerReport<'Op>, WireRefusal> =
         ProgramWire.parseDocument json |> Result.bind (decodeReportJson witness)

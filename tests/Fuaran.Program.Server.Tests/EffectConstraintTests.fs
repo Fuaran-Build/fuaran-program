@@ -527,10 +527,11 @@ let tests =
                         "the tree is the entry tree"
                 }
 
-                test "a host call's non-string members are not named arguments" {
-                    // Read ONE LEVEL DEEP and string-valued only — the module
-                    // header states the limit, and this is it as a fact rather
-                    // than as prose.
+                test "a host call's nested members are not named arguments; its integer members are (Phase 1982)" {
+                    // Read ONE LEVEL DEEP, string and integer values only — the
+                    // module header states the limit, and this is it as a fact
+                    // rather than as prose. The integer joined in Phase 1982, so
+                    // an `AtMost` on a number sees the number.
                     let args =
                         Fuaran.Core.JObj
                             [ "url", jstr "api.example.com"
@@ -539,6 +540,6 @@ let tests =
 
                     Expect.equal
                         (ServerArgumentPolicy.arguments UiWitness.state (ServerEffect.HostCall("fetch", args, None)))
-                        [ "url", "api.example.com" ]
+                        [ "url", "api.example.com"; "retries", "3" ]
                         "a nested value is NOT reachable by an allow-list; the bound belongs on the top-level argument"
                 } ] ]
