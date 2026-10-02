@@ -262,6 +262,57 @@ gains `"undo":[]` where no handler contributed. Every earlier proof statement ke
 
 **What a consumer does about it:** `docs/migrations/phase-1977.md` — one page, a diff per file.
 
+### Rides the draft: a performed op is journaled like a host call (Phase 1980)
+
+**Class: breaking**, for a consumer that constructs a `JournalEntry` or a `PerformerFacets` as a
+full literal (a host's persistent effect journal; nothing in this repository outside the two files
+that define them), and for every caller of the facet derivation — the class this slot already
+carries, so it rides rather than advancing. `v0.6.0` is the newest tag and nothing public pins
+`0.7.0`. `DECISIONS.md` D23 records what was decided and why the specification does not move; this
+entry records what a consumer pays.
+
+- **`JournalEntry` gains `Subject: string option`** — `None` for a host call; for a performed op
+  stage the content address (`sha256:` + digest) of the op's canonical form, off the state axis's
+  `Stream.Encode`. A host whose journal persists entries stores and returns the member; `Journal.none`
+  and `Journal.inMemory` already do. `Journal.subjectOf` reads it beside `capabilityOf`, and
+  `Journal.describe` renders it between the capability and the phase tag for an op stage only, so
+  every host-call line a reader pinned reads as it did.
+- **`PerformerFacets` gains `OpPerformer: IdempotencyFacet option`**, with
+  `PerformerFacets.declareOpPerformer` / `isOpPerformerDeclared` / `opPerformerFacet` and
+  `DurableServices.declaringOpPerformer`. Undeclared reads `NonIdempotent`, as an undeclared host
+  function does.
+- **`Durable.runWith` sits beside `Durable.run`** and takes the placement's `OpPerformance` after its
+  registry; `run` is `runWith` in memory, unchanged in signature and behaviour. Under a registered op
+  performer every op stage is journaled under `ApplyOps` at its ordinal in the ONE sequence the host
+  calls share — attempted before the performer, decided after — served on replay, refused undecided
+  by default, re-invoked only under `acceptingIndeterminateReplay` (an `Overrides` record under
+  `ApplyOps`) or a performer declared `Idempotent`, and refused as `durable-replay-divergence` where
+  a recorded ordinal holds another op. `Durable.arm` passes the host's `ServerServices.OpPerformance`,
+  so a session's durable step covers its ops with no change at the call site. `DurableControls.runWith`
+  is the same beside `DurableControls.run`. `Durable.opSubject` and `Durable.OpStageCapability` are
+  new and public, so a host can compute the subject it will find in its journal.
+- **The facet derivation takes the performance:** `Facets.ofEffect` / `ofHandler` / `ofHandlers` /
+  `declare` / `checkDeclaration` and `Durable.guarantees` / `declaration` / `checkDeclaration` gain
+  an `OpPerformance<'Node, 'Op>` argument before the handler(s). Pass `OpPerformance.InMemory` to
+  keep every answer a caller had; pass the registered performance and `ApplyOps` is derived on a host
+  call's terms — strict may lose, accepting may duplicate, exactly-once only where the op performer
+  is declared idempotent — with `checkDeclaration` reporting an undeclared op performer as
+  `facet-undeclared-performer` under `ApplyOps`. `Facets.undeclaredOpPerformer` is new.
+
+**What did NOT change:** no wire member, no fixture byte, no demanded-document byte, no envelope
+needs re-signing, and the UI tier byte for byte through the parity suite and the Fable leg — in memory
+nothing is performed and nothing new is journaled, which `DurableInterpreterTests` pins against the
+journal's own rendering. The program wire specification is unchanged (D23 item 5: the journal is a
+host port, not a wire artefact; §7.1 is checked and holds). Every earlier proof statement keeps its
+form; `Staging.fst` gains the durable discipline — eight theorems over the same staged list — and its
+extraction is re-emitted for them.
+
+**What a consumer does about it:** a host with a persistent journal adds `Subject` to its entry
+construction (`None` where it has only ever journaled host calls); a domain whose ops reach the world
+calls `Durable.runWith` with the performance it already hands `Handler.runWith`, declares its op
+performer's idempotency, and passes the same performance to the facet derivation; a UI-tier consumer
+changes nothing.
+
 ## 0.6.0 — RELEASED (tagged `v0.6.0`, 2026-09-28) — the core becomes domain-generic (Phase 1896)
 
 **Class: breaking**, for `Fuaran.Program.Bounded`, `Fuaran.Program.Runtime` and

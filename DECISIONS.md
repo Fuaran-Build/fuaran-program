@@ -1201,3 +1201,118 @@ slot, which no witness has asked for. The class of an op is a function of the op
 undoability genuinely depends on the state answers `Compensate` with a compensation that reads
 the state, and reads `compensable` — the honest word for an inverse that cannot be checked
 against a law.
+
+## D23 — The durable interpreter journals EVERY arm that reaches outside: a performed op stage is a journaled step at its ordinal, its subject is the op's content address, the op performer is declared like a host performer, and the journal extension is not a specification act (2026-10-02)
+
+D12 journaled "the ONE arm that reaches outside" and gave D8's reason: a query reads, an op edits an
+in-memory tree the caller may discard, a patch and a notification accumulate as values the caller
+performs after the handler returns — none performed by the handler, so none performable twice. D19
+then gave ops a registered performer (`OpPerformance.Performed`): every op of a committed plan is
+staged as a call of its own and performed in the perform phase beside the host calls. From that
+commit D12's premise was false for any domain that registers one — a performed op reaches outside
+exactly as a host call does — and D19 chose to say so ("the durable interpreter runs in memory and
+journals no performed op; a verb under the durable tier is stated as not covered") rather than extend
+the journal. This decision extends it, and restates D12's premise: **what is journaled is every arm
+that reaches outside** — the host call, and the op stage where a performer is registered. Under
+`InMemory` nothing is performed and nothing new is journaled, byte for byte.
+
+**1. An op stage is a journaled step, through the same wrapper and the same cursor.** `Durable.runWith`
+takes the placement's `OpPerformance` beside its registry and wraps the op performer exactly as it
+wraps a host function: ONE `wrapAt`, one ordinal cursor, so an op stage and a host call take their
+ordinals from the one sequence in perform order — the plan phase is deterministic, so a replay reaches
+ordinal *n* holding the same staged call the recorded run held there, whichever arm it is. The
+attempt / invoke / record order is unchanged: `Attempted` before the performer, `Completed` or
+`Refused` after, the third readable state ("attempted, no result") declared rather than closed, its
+replay refused by default, `acceptingIndeterminateReplay` the named opt-in with its override record,
+and a performer declared `Idempotent` closing the window by its own shape. The alternative — a
+second journal keyed by op, or a second cursor for op stages — was refused for D12's own reason read
+once more: two ledgers over one perform phase is a second account of what ran, kept in step by hand.
+`Durable.run` keeps its signature as `runWith` at `InMemory`, on the terms `Handler.run` kept its
+(D19); `Durable.arm` passes the host's performance, so a session whose ops reach the world is covered
+without a second arm. `DurableControls` gains the same `runWith` beside its `run`.
+
+**2. The entry is filed under `ApplyOps` with the op's CONTENT ADDRESS as its subject.** A host call's
+capability names its function; two ops share a capability, so the capability alone cannot say which
+op a step was about, and the divergence check — the one thing that stands between a replay and
+serving one call's answer to another — would pass on any op at a recorded op ordinal. `JournalEntry`
+therefore gains `Subject: string option`: `None` for a host call, and for an op stage
+`sha256:` + the digest of the op's canonical form, read off the state axis's own codec
+(`StateWitness.Stream.Encode`, K6 — the shard named `StateWitness.Canonical`, which canonicalises the
+STATE, and that is exactly the member this must not read: the state handed beside an op is the planned
+state, recomputed on replay, not the thing performed). A hash rather than the form itself, for the
+reason `Journal.describe` renders no value: an op can carry a payload, and the journal's identity for a
+step must stay log-safe and fixed-size — the same shape, for the same reason, as the tree hash a
+signed envelope binds. The divergence check compares the subject beside the capability; a replay that
+reaches a recorded ordinal holding another op refuses with `durable-replay-divergence`, as it always
+did for another arm.
+
+**3. The op performer is DECLARED like a host performer, and the facet derivation reads the
+registration as a fact.** `PerformerFacets` gains `OpPerformer: IdempotencyFacet option`
+(`declareOpPerformer`; `DurableServices.declaringOpPerformer`): a domain whose op is a
+content-addressed write declares it `Idempotent` and reaches `ExactlyOnceEffective`, one whose op is a
+push cannot claim it without saying so, and undeclared reads `NonIdempotent` on the terms an
+undeclared host function always has. The derivation (`Facets.ofEffect` and everything above it, and
+`Durable.guarantees` / `declaration` / `checkDeclaration`) now takes the placement's `OpPerformance`:
+under a registered performer `ApplyOps` is derived on a host call's terms — strict may LOSE, accepting
+may DUPLICATE, exactly-once only where declared — and in memory it is the recomputed arm it always
+was. The registration is PASSED rather than declared on the facets, deliberately: a host that
+registers a performer and declares nothing about it must read as an undeclared performer (reported
+under `ApplyOps` by `checkDeclaration`), never as the recomputed arm it no longer is. A declaration
+that also asserted the registration would be a second source of the same fact, free to disagree.
+
+**4. The discipline is PROVED before the code moved (D14), in the staging model.** `Staging.fst`
+gains the durable discipline beside the handler it wraps, over the same staged list: the journal as a
+SNAPSHOT read once at entry (`journal`), the wrapper's decision per ordinal (`decide`), the perform
+phase through it (`replay`) and `durable_run`. Eight theorems: a completed prefix is served and only
+the rest is performed (`replay_serves_completed`, `replay_unrun_is_perform`,
+`resume_performs_only_the_rest`, and `durable_resume` at the handler); an undecided step under an
+undeclared performer with the opt-in off is refused before it and everything after it
+(`indeterminate_refused_by_default`); it is re-invoked in exactly the two named cases and nowhere
+else (`indeterminate_reinvoked_only_by_name`); a recorded ordinal holding another identity is refused
+(`divergence_refused` — the subject's reason, as a theorem); and with nothing recorded the durable
+run's outcome IS the direct run's (`empty_journal_is_direct`). `plan_pure` and the prefix theorems
+re-prove unchanged, because the wrapper changes `r_perf`'s behaviour and nothing the plan phase reads.
+The journal's WRITES and its storage stay the host's port and out of the theorem. The differential
+host (`DurableInterpreterTests`, "the proved durable replay as oracle") runs the extraction beside
+`Durable.runWith` over every journal shape the crash fixtures leave — nothing recorded, interrupted
+between stages, a crash inside a stage under each policy, a served refusal, a diverging op — and it
+went red first, on a model staged list a comprehension had shortened to two calls, before it went
+green.
+
+**5. The specification act is DECIDED: the journal extension needs no specification change.** PROGRAM
+WIRE §6.2 ("only `HostCall` is staged") and §6.4 (`PerformFailed` over host calls) describe the
+in-memory placement, which every conformant host had and every UI host still has; D19 left carrying
+the performer case into the normative text as a specification act, and this phase does not take it,
+for three reasons that are each sufficient. (a) **The effect journal is not a wire artefact.** It is
+a host-internal port (`EffectJournal`: append, read, a restart claim) with no document, no schema, no
+fixture and no refusal class in the specification — the host-call steps it has journaled since D12
+were never specified either, and an op stage's entry is the same record with one more member. (b)
+**No specified member moves.** The outcome document is unchanged: `performed` carried `ApplyOps` once
+per performed op from D19 on, under the hook that "changes no wire at all", and this phase changes
+what is RECORDED about those stages, not what is reported. (c) **§7.1 is checked and holds.** "A
+conformant host MUST NOT journal a handler invocation as a replayable record" — and nothing here
+journals an invocation. A journaled op stage is a step record keyed to an ordinal within an
+invocation, served so the step is not performed twice; it is not an artefact from which a host
+re-issues the invocation, and the invocation-level marker this interpreter already writes is an
+audit fact a replay never short-circuits on. §7.1's own words are "ops, not invocations", and an op
+stage's entry is, to the letter, an op. The one thing this decision records for the specification's
+own follow-on is unchanged from D19: carrying the performer case into §6.2 remains a specification
+act across five artefacts, and the sentence a registered performer reads past is still §6.2's, not
+§7's.
+
+**Version.** Rides the `0.7.0` draft: the slot is untagged, publicly unpinned and already breaking of
+this class. `JournalEntry` and `PerformerFacets` each gain a member (FS0764 on a full-literal
+construction — a host's persistent journal that constructs entries, and nothing else in this
+repository), and `Facets.ofEffect` / `ofHandler` / `ofHandlers` / `declare` / `checkDeclaration` and
+`Durable.guarantees` / `declaration` / `checkDeclaration` take the performance. No wire member, no
+fixture byte, and the UI tier byte for byte: `Durable.run` is unchanged in signature and behaviour.
+`STABILITY.md` has the consumer's account.
+
+**What this forecloses, and what it leaves.** A performed op's receipt — what the performer can say it
+did, and a return contract over it — is Phase 1981's, and this decision assumes nothing about it: the
+journaled value for an op stage is the inert object the staged call already answers, and a receipt
+rides there when it exists. The operator controls (`Controls.revoke`) still name a host performer by
+function and cannot withdraw the op performer, which has no name; that is a finding, not a decision.
+The journal's writes are two acts to two systems and the indeterminate window stays declared, not
+closed, exactly as D12 left it — what this decision adds is that the window is now the same window
+for an op stage, read, refused and overridden by the same code.

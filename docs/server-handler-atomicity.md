@@ -74,6 +74,16 @@ exists to avoid.
 > in-memory placement. A placement that registers an op performer (`OpPerformance.Performed`) stages
 > `ApplyOps` as well: its ops are applied in memory while planning and performed after the plan
 > commits, one staged call per op, under the same law and the same residual report.
+>
+> **Amended by [D23](../DECISIONS.md) (2026-10-02).** The residual is now RESUMABLE under the
+> durable interpreter for ops as it was for host calls: D12's journal covered "the one arm that
+> reaches outside", and under a registered op performer that premise was false — a performed op
+> reaches outside exactly as a host call does. `Durable.runWith` journals every op stage under
+> `ApplyOps` at its ordinal in the one sequence the host calls share, with the op's content address
+> as the entry's subject, so a plan interrupted after a performed op resumes without repeating it,
+> a crash inside a performer leaves an indeterminate step the default replay refuses, and in memory
+> nothing new is journaled. The discipline is proved over the staged list (`proofs/Staging.fst`,
+> `durable_resume` and the seven beside it) before the code moved.
 
 *Concurrency is not addressed at all.* One session, one event, one handler. Two sessions running
 handlers against the same domain tree is a question about where durable state actually lives, which
@@ -92,6 +102,16 @@ diff — reaches `OnApply`; the handler invocation itself is recorded nowhere. R
 reconstructs state by applying ops, and is effect-free by construction: there is no recorded artefact
 from which a replaying host *could* re-issue a host call even if it wanted to. This is not a new
 seam; it is the seam both other placements already have, used deliberately.
+
+> **Still true under the durable interpreter, and checked against it ([D12](../DECISIONS.md),
+> [D23](../DECISIONS.md)).** The durable interpreter's EFFECT journal is a different record from the
+> op stream this section is about: a step record, keyed by ordinal within an invocation, written
+> before and after each performer so a resumed run can serve the steps that ran rather than perform
+> them twice. It records host-call steps (D12) and, since D23, performed op stages — under
+> `ApplyOps`, with the op's content address as the subject. Neither is an invocation journaled as a
+> replayable record: a resume recomputes the invocation from its entry state and reads the journal
+> only at the perform phase, and nothing in it is an artefact from which a host re-issues the
+> invocation. Which is why the journal extension is not a specification act (D23 item 5).
 
 **What remains open.**
 
