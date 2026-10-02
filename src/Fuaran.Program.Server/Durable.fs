@@ -237,12 +237,21 @@ module Durable =
     /// resuming it. Two runs with different ids are different invocations and
     /// share nothing, which is what a caller wants for two clicks of the same
     /// button.
-    let runWith
+    ///
+    /// `opRefusal` is the operator controls' half (Phase 1983): asked for an
+    /// op stage the journal has NOT served, immediately before it would be
+    /// attempted, and a `Some reason` refuses the stage with that reason
+    /// without an `Attempted` record and without invoking the performer. A
+    /// served stage never asks it — the journal's answer stands — so a resumed
+    /// run serves its recorded prefix and refuses the first stage it did not
+    /// record. `runWith` passes the refusal that never refuses.
+    let internal runGuarded
         (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (services: DurableServices)
         (invocation: string)
         (registry: ServerEffectRegistry)
         (performance: OpPerformance<'Node, 'Op>)
+        (opRefusal: unit -> string option)
         (resolve: string -> Result<Fuaran.Core.Table, Fuaran.Core.EvalError>)
         (nodeId: string)
         (handler: Handler<'Action, 'Op>)
@@ -307,11 +316,24 @@ module Durable =
             (capability: string)
             (subject: string option)
             (declared: IdempotencyFacet)
+            (refusal: unit -> string option)
             (performer: Fuaran.Core.JVal -> Result<Fuaran.Core.JVal, string>)
             (args: Fuaran.Core.JVal)
             : Result<Fuaran.Core.JVal, string> =
             let step = cursor
             cursor <- step + 1
+
+            // The operator controls' refusal (Phase 1983) is asked only where the
+            // performer WOULD be invoked, and before the `Attempted` record: a
+            // refused stage reached nothing, so the effect journal has nothing to
+            // say about it, and no override is recorded for a re-invocation that
+            // did not happen.
+            let attempt (beforeInvoking: unit -> unit) =
+                match refusal () with
+                | Some reason -> Error reason
+                | None ->
+                    beforeInvoking ()
+                    invoke step capability subject performer args
 
             let diverged =
                 match Journal.capabilityOf recorded step, Journal.subjectOf recorded step with
@@ -333,26 +355,25 @@ module Durable =
                 | JournaledStep.Refusal reason ->
                     replayed.Add step
                     Error reason
-                | JournaledStep.Unrun -> invoke step capability subject performer args
+                | JournaledStep.Unrun -> attempt ignore
                 | JournaledStep.Indeterminate _ ->
                     if declared = IdempotencyFacet.Idempotent then
                         // Re-invoking costs nothing by the performer's own
                         // declared shape, so the window closes without a
                         // policy and without an override to record.
-                        invoke step capability subject performer args
+                        attempt ignore
                     elif services.ReinvokeIndeterminate then
-                        overrides.Add
-                            { Step = step
-                              Capability = capability
-                              Idempotency = declared }
-
-                        invoke step capability subject performer args
+                        attempt (fun () ->
+                            overrides.Add
+                                { Step = step
+                                  Capability = capability
+                                  Idempotency = declared })
                     else
                         indeterminate.Add step
                         Error DurableCode.IndeterminateStep
 
         let wrap (fn: string) (performer: Fuaran.Core.JVal -> Result<Fuaran.Core.JVal, string>) =
-            wrapAt ("host:" + fn) None (PerformerFacets.facetOf fn services.Performers) performer
+            wrapAt ("host:" + fn) None (PerformerFacets.facetOf fn services.Performers) (fun () -> None) performer
 
         let journalling =
             { registry with
@@ -381,6 +402,7 @@ module Durable =
                         OpStageCapability
                         (Some(opSubject witness.State op))
                         declared
+                        opRefusal
                         (fun _ -> perform state op)
                         (Fuaran.Core.JObj []))
 
@@ -404,6 +426,22 @@ module Durable =
           Invoked = List.ofSeq invoked
           Indeterminate = List.ofSeq indeterminate
           Overrides = List.ofSeq overrides }
+
+    /// **Run one handler under deterministic replay, performing its ops as the
+    /// placement declares** — `runGuarded` above with no control in force.
+    /// `DurableControls.runWith` is the same run with the operator controls.
+    let runWith
+        (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
+        (services: DurableServices)
+        (invocation: string)
+        (registry: ServerEffectRegistry)
+        (performance: OpPerformance<'Node, 'Op>)
+        (resolve: string -> Result<Fuaran.Core.Table, Fuaran.Core.EvalError>)
+        (nodeId: string)
+        (handler: Handler<'Action, 'Op>)
+        (store: ServerStore<'Node, 'Store>)
+        : DurableOutcome<'Node, 'Store, 'Op, 'Effect> =
+        runGuarded witness services invocation registry performance (fun () -> None) resolve nodeId handler store
 
     /// `runWith` at `OpPerformance.InMemory`: ops are performed by being
     /// applied, which is every placement before Phase 1967 and the UI tier
@@ -431,9 +469,13 @@ module Durable =
     /// resuming an event therefore resumes each of its handlers against its own
     /// journal, rather than against a shared one where the second handler's
     /// steps would be read as the first's.
-    let arm
+    ///
+    /// `opRefusal` is `runGuarded`'s, asked for every handler this arm answers
+    /// (Phase 1983); `arm` passes the refusal that never refuses.
+    let internal armGuarded
         (services: DurableServices)
         (invocation: string)
+        (opRefusal: unit -> string option)
         (host: ServerServices<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
         : HandlerArm<'Store, 'Effect, HandlerTally<'Node, 'Op>> =
         let mutable index = 0
@@ -457,12 +499,13 @@ module Durable =
                     // 1980), so a session whose ops reach the world is covered
                     // by the journal exactly as its host calls are.
                     let durable =
-                        runWith
+                        runGuarded
                             host.Witness
                             services
                             (sprintf "%s/%d" invocation ordinal)
                             host.Effects
                             host.OpPerformance
+                            opRefusal
                             host.Sources
                             nodeId
                             handler
@@ -483,6 +526,15 @@ module Durable =
                               Notifications = tally.Notifications @ outcome.Notifications
                               Flow = tally.Flow @ outcome.Flow
                               Diagnostics = tally.Diagnostics @ outcome.Diagnostics } } }
+
+    /// This interpreter's answer to a call action the shared fold recognised —
+    /// `armGuarded` with no control in force.
+    let arm
+        (services: DurableServices)
+        (invocation: string)
+        (host: ServerServices<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        : HandlerArm<'Store, 'Effect, HandlerTally<'Node, 'Op>> =
+        armGuarded services invocation (fun () -> None) host
 
     /// Step a server session with this interpreter behind its call actions,
     /// through a TRANSPORT's step (K8): `transport arm session` runs that
@@ -551,11 +603,20 @@ module Durable =
 //  controls-aware forms below CALL them rather than reproducing them — the same
 //  discipline D12 records for the two interpreters, one level down. A control
 //  takes effect by wrapping the REGISTRY the run is handed, which is the one
-//  place every effect already passes through, so there is no arm of the
-//  vocabulary a control can be forgotten for.
+//  place every effect already passes through — and, since Phase 1983, by
+//  handing the run the op stage's refusal, because the one performer the
+//  registry does NOT hold is the op performer. Until then "there is no arm a
+//  control can be forgotten for" was true of every arm but that one: an
+//  operator who revoked every host performer still had ops performed (D23's
+//  finding, closed by D26). `runGuarded` / `armGuarded` are the uncontrolled
+//  forms with that one hook exposed, so the controlled forms still call the
+//  interpreter rather than reproducing it.
 //
 //  ── Where each act lands ────────────────────────────────────────────────────
-//  Three of the four land at the effect gate and are `Controls.apply`'s work.
+//  Three of the four land at the effect gate and are `Controls.apply`'s work —
+//  a revoke of the op performer (`OpPerformance.RegistrationKey`) excepted,
+//  which lands at the op STAGE, before the stage is attempted
+//  (`Controls.opStageRefusal`).
 //  The fourth — the suspend's "refuse every dispatch" — lands one level up, at
 //  the session's own G1 gate, because a dispatch is refused before a handler is
 //  reached and therefore before any registry is consulted. `stepControlled`
@@ -644,7 +705,11 @@ module DurableControls =
     /// consults it before a pipeline is evaluated, before an op reaches the
     /// apply engine and before a performer is looked up), so a control expressed
     /// at the registry reaches every arm of the closed vocabulary without this
-    /// file enumerating them.
+    /// file enumerating them — every arm but a PERFORMED op, whose performer
+    /// is the placement's `OpPerformance` and not a registry member. That arm
+    /// is handed `Controls.opStageRefusal` (Phase 1983): a withdrawn op
+    /// performer refuses each op stage the journal has not served, at its
+    /// ordinal and before it is attempted.
     let runWith
         (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (services: DurableServices)
@@ -661,7 +726,10 @@ module DurableControls =
         let refusals = ResizeArray<ControlRefusal>()
         let controlled = Controls.apply refusals.Add state registry
 
-        { Durable = Durable.runWith witness services invocation controlled performance resolve nodeId handler store
+        let opRefusal = Controls.opStageRefusal refusals.Add state
+
+        { Durable =
+            Durable.runGuarded witness services invocation controlled performance opRefusal resolve nodeId handler store
           Controls = state
           Refusals = List.ofSeq refusals }
 
@@ -694,9 +762,10 @@ module DurableControls =
         : HandlerArm<'Store, 'Effect, HandlerTally<'Node, 'Op>> =
         let state = Controls.stateOf controls.Journal controls.Scope
 
-        Durable.arm
+        Durable.armGuarded
             services
             invocation
+            (Controls.opStageRefusal record state)
             { host with
                 Effects = Controls.apply record state host.Effects }
 

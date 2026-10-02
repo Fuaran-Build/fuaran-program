@@ -874,3 +874,460 @@ let tests =
                   RefusalClass.UnknownEffectArm
                   "and an actor is a person or a machine, with no third reading"
           } ]
+
+// ─── the op performer is revocable (Phase 1983, D26) ─────────────────────────
+//
+// D23 recorded the finding these close: a revoke named a performer by its
+// registry key, the op performer had none, and so an operator who withdrew
+// every host performer still had ops performed. Each claim is asserted with a
+// COUNT of the op performer's own invocations, because "no op was performed"
+// is the property, and an outcome that merely reports a refusal could still
+// have performed one first.
+
+/// A counting op performer — the op-side twin of `Counter`.
+type private OpCounter() =
+    let mutable count = 0
+    member _.Count = count
+
+    member _.Performance: OpPerformance<Node<obj>, TreeOp<obj>> =
+        OpPerformance.performedWithoutReceipt (fun _ _ ->
+            count <- count + 1
+            Ok())
+
+let private removeReadout: TreeOp<obj> = TreeOp.RemoveNode(NodeId "readout")
+let private removeCall: TreeOp<obj> = TreeOp.RemoveNode(NodeId "call")
+
+/// Two edits, then a host call: under a registered op performer the staged
+/// list is op, op, host call — ordinals 0, 1, 2.
+let private editsThenAudit: Handler =
+    { Name = "work"
+      Stages =
+        [ Effect(ServerEffect.ApplyOps [ removeReadout; removeCall ])
+          Effect(ServerEffect.HostCall("audit", jstr "x", None)) ] }
+
+/// A host call, then an edit: the host call takes ordinal 0, the op stage 1.
+let private auditThenEdit: Handler =
+    { Name = "work"
+      Stages =
+        [ Effect(ServerEffect.HostCall("audit", jstr "x", None))
+          Effect(ServerEffect.ApplyOps [ removeReadout ]) ] }
+
+/// Edits only — no host call to be denied while planning.
+let private editsOnly: Handler =
+    { Name = "work"
+      Stages = [ Effect(ServerEffect.ApplyOps [ removeReadout ]) ] }
+
+let private revokeOps (controls: ControlServices) (reason: string) =
+    DurableControls.record controls (Controls.revoke ops reason OpPerformance.RegistrationKey)
+    |> ignore
+
+let private runControlled
+    (journal: EffectJournal)
+    (controls: ControlServices)
+    (registry: ServerEffectRegistry)
+    (performance: OpPerformance<Node<obj>, TreeOp<obj>>)
+    (handler: Handler)
+    =
+    Fuaran.Program.Server.DurableControls.runWith
+        UiWitness.witness
+        (durableWith journal)
+        controls
+        "inv-0"
+        registry
+        performance
+        Fuaran.Core.DataFrame.noResolve
+        "call"
+        handler
+        store
+
+/// The DIRECT interpreter with the controls in force: the registry through
+/// `Controls.apply`, the op performance through `Controls.performance`.
+let private runDirect
+    (controls: ControlServices)
+    (registry: ServerEffectRegistry)
+    (performance: OpPerformance<Node<obj>, TreeOp<obj>>)
+    (handler: Handler)
+    =
+    let state = DurableControls.stateOf controls
+    let refusals = ResizeArray<ControlRefusal>()
+
+    let outcome =
+        Fuaran.Program.Server.Handler.runWith
+            UiWitness.witness
+            (Controls.apply refusals.Add state registry)
+            (Controls.performance refusals.Add state performance)
+            Fuaran.Core.DataFrame.noResolve
+            "call"
+            handler
+            store
+
+    outcome, List.ofSeq refusals
+
+let private revokedOpStage =
+    ServerDiagnostic.PerformFailed("ApplyOps", ControlCode.PerformerRevoked)
+
+/// The non-invocation steps of one invocation's journal.
+let private stepsOf (journal: EffectJournal) =
+    journal.Read "inv-0" |> List.filter (fun e -> e.Step <> Journal.InvocationStep)
+
+/// A journal the process dies in front of: the ATTEMPT record for `step`
+/// kills the process before it lands — the clean between-steps interruption.
+let private dyingBefore (step: int) (inner: EffectJournal) : EffectJournal =
+    { inner with
+        Append =
+            fun entry ->
+                match entry.Phase with
+                | JournalPhase.Attempted when entry.Step = step -> raise (ProcessDied "between steps")
+                | _ -> inner.Append entry }
+
+[<Tests>]
+let opPerformerRevocation =
+    testList
+        "Phase 1983 — the op performer is revocable"
+        [
+
+          test "the registration key is the capability the op stage is gated and journaled under" {
+              Expect.equal
+                  OpPerformance.RegistrationKey
+                  (ServerEffect.capability (ServerEffect.ApplyOps([]: TreeOp<obj> list)))
+                  "one name for the arm: what a revoke names is what a throttle names"
+
+              Expect.equal
+                  OpPerformance.RegistrationKey
+                  Durable.OpStageCapability
+                  "and what a performed op stage is journaled under"
+          }
+
+          test "revoking the op performer, every host performer live, refuses the FIRST op stage and performs no op" {
+              let audit = Counter()
+              let opsRun = OpCounter()
+              let effects = Journal.inMemory ()
+              let controls = controlsOn (Controls.inMemory ())
+
+              revokeOps controls "ops reach the world; withdrawn"
+
+              let outcome =
+                  runControlled effects controls (registryOf audit.Performer) opsRun.Performance editsThenAudit
+
+              Expect.equal opsRun.Count 0 "the op performer was never invoked"
+              Expect.equal audit.Count 0 "and the host call staged after the refused stage was never reached"
+              Expect.isFalse outcome.Durable.Outcome.Committed "the handler did not commit"
+
+              Expect.equal
+                  outcome.Durable.Outcome.Diagnostics
+                  [ revokedOpStage ]
+                  "refused at the op stage, under ApplyOps, naming the control's code"
+
+              Expect.isEmpty outcome.Durable.Outcome.Performed "nothing is reported performed"
+
+              Expect.isEmpty
+                  (stepsOf effects)
+                  "and the effect journal records no step: a refused stage was never attempted"
+
+              match outcome.Refusals with
+              | [ ControlRefusal.Revoked(capability, actor, reason) ] ->
+                  Expect.equal capability "ApplyOps" "the capability the op stage is gated under"
+                  Expect.equal (ControlActor.tag actor) "operator" "withdrawn by the operator"
+                  Expect.equal reason "ops reach the world; withdrawn" "with the raiser's reason"
+              | other -> failtestf "expected one revocation refusal, got %A" other
+          }
+
+          test "the same, in the DIRECT interpreter" {
+              let audit = Counter()
+              let opsRun = OpCounter()
+              let controls = controlsOn (Controls.inMemory ())
+
+              revokeOps controls "withdrawn"
+
+              let outcome, refusals =
+                  runDirect controls (registryOf audit.Performer) opsRun.Performance editsThenAudit
+
+              Expect.equal opsRun.Count 0 "the op performer was never invoked"
+              Expect.equal audit.Count 0 "nor the host call after it"
+              Expect.isFalse outcome.Committed "the handler did not commit"
+              Expect.equal outcome.Diagnostics [ revokedOpStage ] "refused at the op stage"
+
+              match refusals with
+              | [ ControlRefusal.Revoked("ApplyOps", _, "withdrawn") ] -> ()
+              | other -> failtestf "expected one revocation refusal under ApplyOps, got %A" other
+          }
+
+          test "the refusal lands at the op stage's ORDINAL: a host call staged before it performs, and is reported" {
+              let audit = Counter()
+              let opsRun = OpCounter()
+              let effects = Journal.inMemory ()
+              let controls = controlsOn (Controls.inMemory ())
+
+              revokeOps controls "withdrawn"
+
+              let outcome =
+                  runControlled effects controls (registryOf audit.Performer) opsRun.Performance auditThenEdit
+
+              Expect.equal audit.Count 1 "the live host performer at ordinal 0 ran"
+              Expect.equal opsRun.Count 0 "the withdrawn op performer at ordinal 1 did not"
+
+              Expect.equal
+                  outcome.Durable.Outcome.Performed
+                  [ "host:audit" ]
+                  "the prefix that ran is reported — D8's residual, unchanged in shape"
+
+              Expect.equal outcome.Durable.Outcome.Diagnostics [ revokedOpStage ] "and the op stage refused"
+              Expect.equal outcome.Durable.Invoked [ 0 ] "only ordinal 0 was invoked"
+
+              Expect.equal
+                  (stepsOf effects |> List.map _.Step |> List.distinct)
+                  [ 0 ]
+                  "the journal holds the host call's step and nothing at the refused ordinal"
+          }
+
+          test "revoking a HOST performer leaves op stages unaffected" {
+              let audit = Counter()
+              let opsRun = OpCounter()
+              let controls = controlsOn (Controls.inMemory ())
+
+              DurableControls.record controls (Controls.revoke ops "withdrawn" "audit")
+              |> ignore
+
+              let outcome =
+                  runControlled (Journal.inMemory ()) controls (registryOf audit.Performer) opsRun.Performance editsOnly
+
+              Expect.equal opsRun.Count 1 "the op performer ran"
+              Expect.isTrue outcome.Durable.Outcome.Committed "and the handler committed"
+              Expect.isEmpty outcome.Refusals "no control refused anything"
+
+              let direct, refusals =
+                  runDirect controls (registryOf audit.Performer) opsRun.Performance editsOnly
+
+              Expect.equal opsRun.Count 2 "the direct interpreter performs it too"
+              Expect.isTrue direct.Committed "and commits"
+              Expect.isEmpty refusals "with nothing refused"
+          }
+
+          test "the refusal is IDENTICAL in shape to a revoked host call's" {
+              let hostRevoked =
+                  let controls = controlsOn (Controls.inMemory ())
+
+                  DurableControls.record controls (Controls.revoke ops "same reason" "audit")
+                  |> ignore
+
+                  let outcome =
+                      runControlled
+                          (Journal.inMemory ())
+                          controls
+                          (registryOf (Counter()).Performer)
+                          (OpCounter()).Performance
+                          (auditing "done")
+
+                  outcome.Refusals
+
+              let opRevoked =
+                  let controls = controlsOn (Controls.inMemory ())
+                  revokeOps controls "same reason"
+
+                  let outcome =
+                      runControlled
+                          (Journal.inMemory ())
+                          controls
+                          (registryOf (Counter()).Performer)
+                          (OpCounter()).Performance
+                          editsOnly
+
+                  outcome.Refusals
+
+              let erase (refusal: ControlRefusal) =
+                  match refusal with
+                  | ControlRefusal.Revoked(_, actor, reason) -> Some(actor, reason)
+                  | _ -> None
+
+              Expect.equal (List.length hostRevoked) 1 "one refusal for the host call"
+              Expect.equal (List.length opRevoked) 1 "one for the op stage"
+
+              Expect.equal
+                  (opRevoked |> List.map erase)
+                  (hostRevoked |> List.map erase)
+                  "the same arm, the same actor, the same reason — only the capability differs"
+
+              Expect.equal
+                  (opRevoked |> List.map Controls.describeRefusal)
+                  [ ControlCode.PerformerRevoked
+                    + ": 'ApplyOps' refused — its performer was withdrawn by operator 'ops' (same reason)" ]
+                  "rendered in the one vocabulary"
+
+              Expect.equal
+                  (hostRevoked |> List.map Controls.describeRefusal)
+                  [ ControlCode.PerformerRevoked
+                    + ": 'host:audit' refused — its performer was withdrawn by operator 'ops' (same reason)" ]
+                  "as a host call's is"
+          }
+
+          test "a resumed run SERVES the journalled prefix and refuses the first unperformed op stage" {
+              let audit = Counter()
+              let opsRun = OpCounter()
+              let effects = Journal.inMemory ()
+              let controls = controlsOn (Controls.inMemory ())
+              let registry = registryOf audit.Performer
+
+              // The process dies in front of ordinal 1: the first op stage
+              // performed and recorded, the second never attempted.
+              Expect.throws
+                  (fun () ->
+                      runControlled (dyingBefore 1 effects) controls registry opsRun.Performance editsThenAudit
+                      |> ignore)
+                  "the first run dies between steps"
+
+              Expect.equal opsRun.Count 1 "one op reached the world before the crash"
+
+              revokeOps controls "withdrawn while the session was down"
+
+              let resumed =
+                  runControlled effects controls registry opsRun.Performance editsThenAudit
+
+              Expect.equal resumed.Durable.Replayed [ 0 ] "ordinal 0 was SERVED from the journal"
+              Expect.isEmpty resumed.Durable.Invoked "nothing was invoked"
+              Expect.equal opsRun.Count 1 "the op performer was not reached again"
+              Expect.equal audit.Count 0 "nor the host call after the refused stage"
+
+              Expect.equal
+                  resumed.Durable.Outcome.Performed
+                  [ "ApplyOps" ]
+                  "the served op is reported as performed — it was"
+
+              Expect.equal resumed.Durable.Outcome.Diagnostics [ revokedOpStage ] "and ordinal 1 refused"
+
+              match resumed.Refusals with
+              | [ ControlRefusal.Revoked("ApplyOps", _, "withdrawn while the session was down") ] -> ()
+              | other -> failtestf "expected one revocation refusal under ApplyOps, got %A" other
+          }
+
+          test "revocation survives a resume, and a RESUME does not lift it" {
+              let opsRun = OpCounter()
+              let controls = controlsOn (Controls.inMemory ())
+              let registry = registryOf (Counter()).Performer
+
+              revokeOps controls "withdrawn"
+              DurableControls.record controls (Controls.suspend ops "halt") |> ignore
+              DurableControls.record controls (Controls.resume ops "reviewed") |> ignore
+
+              let state = DurableControls.stateOf controls
+
+              Expect.isFalse (Controls.isSuspended state) "the suspend is lifted"
+
+              Expect.equal
+                  (Controls.opPerformerRevocation state |> Option.map snd)
+                  (Some "withdrawn")
+                  "the op performer's withdrawal stands"
+
+              // Two runs of the same session: each re-decides from the control
+              // stream, rather than serving a refusal frozen into a journal.
+              for journal in [ Journal.inMemory (); Journal.inMemory () ] do
+                  let outcome = runControlled journal controls registry opsRun.Performance editsOnly
+
+                  Expect.equal outcome.Durable.Outcome.Diagnostics [ revokedOpStage ] "still refused"
+                  Expect.equal (List.length outcome.Refusals) 1 "and recorded on every run"
+
+              Expect.equal opsRun.Count 0 "the op performer was never invoked"
+          }
+
+          test "under IN-MEMORY performance a revoke of the key withdraws nothing — nothing reaches outside" {
+              let controls = controlsOn (Controls.inMemory ())
+              revokeOps controls "withdrawn"
+
+              let inMemory: OpPerformance<Node<obj>, TreeOp<obj>> = OpPerformance.InMemory
+
+              let outcome =
+                  runControlled (Journal.inMemory ()) controls (registryOf (Counter()).Performer) inMemory editsOnly
+
+              Expect.isTrue outcome.Durable.Outcome.Committed "the apply is the effect, and it ran"
+              Expect.isEmpty outcome.Refusals "nothing refused"
+              Expect.equal outcome.Durable.Outcome.Performed [ "ApplyOps" ] "performed in the plan phase, as always"
+          }
+
+          test "a session stepped with the op performer revoked refuses the op stage (the arm path)" {
+              let opsRun = OpCounter()
+
+              let services =
+                  { servicesOf (registryOf (Counter()).Performer) editsOnly with
+                      OpPerformance = opsRun.Performance }
+
+              let controls = controlsOn (Controls.inMemory ())
+              revokeOps controls "withdrawn"
+
+              let stepped =
+                  DurableControls.step
+                      (durableWith (Journal.inMemory ()))
+                      controls
+                      "inv-0"
+                      (ServerSession.init services empty callWire)
+                      (clickEv 0)
+
+              Expect.equal opsRun.Count 0 "the op performer was never invoked"
+
+              match stepped.Refusals with
+              | [ ControlRefusal.Revoked("ApplyOps", _, "withdrawn") ] -> ()
+              | other -> failtestf "expected one revocation refusal under ApplyOps, got %A" other
+          }
+
+          test "a deployment that revokes NOTHING runs a performing handler byte-identically" {
+              let project (outcome: HandlerOutcome) =
+                  {| Tree = CanonicalJson.encodeNode outcome.Store.Tree
+                     Committed = outcome.Committed
+                     Performed = outcome.Performed
+                     Diagnostics = outcome.Diagnostics |> List.map (sprintf "%A") |}
+
+              let uncontrolledOps = OpCounter()
+              let controlledOps = OpCounter()
+              let uncontrolledJournal = Journal.inMemory ()
+              let controlledJournal = Journal.inMemory ()
+
+              let uncontrolled =
+                  Fuaran.Program.Server.Durable.runWith
+                      UiWitness.witness
+                      (durableWith uncontrolledJournal)
+                      "inv-0"
+                      (registryOf (Counter()).Performer)
+                      uncontrolledOps.Performance
+                      Fuaran.Core.DataFrame.noResolve
+                      "call"
+                      editsThenAudit
+                      store
+
+              let controlled =
+                  runControlled
+                      controlledJournal
+                      (ControlServices.create scope)
+                      (registryOf (Counter()).Performer)
+                      controlledOps.Performance
+                      editsThenAudit
+
+              Expect.isTrue uncontrolled.Outcome.Committed "the probe performs: two ops and a host call"
+              Expect.equal (project controlled.Durable.Outcome) (project uncontrolled.Outcome) "the same outcome"
+              Expect.equal controlled.Durable.Invoked uncontrolled.Invoked "the same steps invoked"
+
+              Expect.equal
+                  (controlledJournal.Read "inv-0")
+                  (uncontrolledJournal.Read "inv-0")
+                  "the same journal, entry for entry"
+
+              Expect.equal controlledOps.Count uncontrolledOps.Count "the op performer ran as often"
+              Expect.isEmpty controlled.Refusals "nothing refused"
+
+              let direct =
+                  Fuaran.Program.Server.Handler.runWith
+                      UiWitness.witness
+                      (registryOf (Counter()).Performer)
+                      (OpCounter()).Performance
+                      Fuaran.Core.DataFrame.noResolve
+                      "call"
+                      editsThenAudit
+                      store
+
+              let directControlled, refusals =
+                  runDirect
+                      (ControlServices.create scope)
+                      (registryOf (Counter()).Performer)
+                      (OpCounter()).Performance
+                      editsThenAudit
+
+              Expect.equal (project directControlled) (project direct) "and the direct interpreter likewise"
+              Expect.isEmpty refusals "with nothing refused"
+          } ]

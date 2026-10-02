@@ -686,6 +686,25 @@ module OpContract =
 
 module OpPerformance =
 
+    /// **The op performer's registration key (Phase 1983, D26)** — the name an
+    /// operator control withdraws it by: `Controls.revoke actor reason
+    /// OpPerformance.RegistrationKey`. A host performer is revoked by the
+    /// function name it was registered under; the op performer is revoked by
+    /// this.
+    ///
+    /// FIXED and reserved rather than declared by the host at registration,
+    /// because a placement registers at most one op performer (the slot
+    /// `PerformerFacets.OpPerformer` is one slot for the same reason) and a
+    /// control stream is scoped to one session, so the key has nothing to tell
+    /// apart but the host's own function names. It is the capability the op
+    /// performer's stages are already gated, throttled, journaled and reported
+    /// under, so an operator meets one name for the arm everywhere. A host
+    /// function registered under this same name is withdrawn with it by one
+    /// revoke — the over-broad direction, which is the safe one for a kill
+    /// switch.
+    [<Literal>]
+    let RegistrationKey = "ApplyOps"
+
     /// The default: ops are performed by being applied.
     let inMemory<'Node, 'Op> : OpPerformance<'Node, 'Op> = OpPerformance.InMemory
 

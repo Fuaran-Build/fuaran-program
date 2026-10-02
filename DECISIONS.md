@@ -1510,3 +1510,97 @@ as an integer no greater than the limit.
 **What this does not do.** It records no flow on the wire, as item 1 says. It models no flow, also
 item 1. It adds no `AtMost` for non-integer quantities: a byte size is `Ceiling`'s, and no other
 quantity has a consumer.
+
+## D26 — The op performer is revocable: a fixed reserved key names it, and a revoke of that key refuses every op stage at its ordinal, before the stage is attempted, in both interpreters (2026-10-02)
+
+D23 closed with a finding, not a decision: "the operator controls (`Controls.revoke`) still name a
+host performer by function and cannot withdraw the op performer, which has no name". A revoke is a
+registry edit (`Controls.apply` removes the named function), the op performer is not a registry
+member — it is the placement's `OpPerformance`, handed to the interpreter beside the registry — and
+so an operator who revoked every host performer still had ops performed. `Durable.fs`'s controls
+header claimed the opposite: that wrapping the registry left "no arm of the vocabulary a control can
+be forgotten for". It was true of every arm but this one. This decision closes the finding.
+
+**1. The identity is a FIXED, RESERVED key — `OpPerformance.RegistrationKey`, which is `"ApplyOps"` —
+not a name the host declares at registration.** The phase left both open. A declared name was
+weighed and refused on three grounds. (a) **It has nothing to distinguish.** A placement registers at
+most one op performer, which is why `PerformerFacets.OpPerformer` is one slot rather than a key
+(D23 §3), and a control stream is scoped to one session, so the key need only be told apart from the
+host's own function names in that session — never from a second op performer. (b) **It would be a
+second identity for an arm that already has one.** The op stage is gated, throttled
+(`ThrottleWindow.Capability = "ApplyOps"` already throttles it), journaled (`Durable.OpStageCapability`)
+and reported (`checkDeclaration`'s undeclared-performer line) under `ApplyOps`. A declared name
+would be the one place the arm is called something else, free to drift from the rest. (c) **It costs
+a breaking change for no capability.** Every registration function and every match on
+`OpPerformance.Performed` would change — across the server package, the verb and document
+witnesses, and the extraction tests — to carry a string nothing else reads. The rule in `Journal.fs`
+("what a control record may carry") holds: the key is vocabulary, never a payload. **The cost, stated
+rather than hidden:** a host function the host has itself registered under the name `ApplyOps` shares
+the key, so one revoke withdraws both arms. That is the over-broad direction, which is the safe one for
+a kill switch, and the alternative — a revoke of the key that skips the like-named host function —
+would leave that function unrevocable. A future host with two op performers in one session (none
+exists, and the type admits one) is the trigger to revisit, and the revisit is a declared name.
+
+**2. A revoked op performer refuses at the op STAGE — at the stage's ordinal, in the perform phase,
+before the performer is invoked — and not while planning.** A revoked host performer is refused while
+planning: removed from the registry, its call reads as `Unregistered` and the handler performs
+nothing. The op stage cannot be refused at that point, and should not be. The plan phase never looks
+the op performer up (an edit is applied in memory and STAGED whatever is registered), so the stage is
+the first point the performer would be reached; and refusing there is what lets a resumed durable run
+SERVE the stages its journal recorded and refuse the first it did not, which a plan-time refusal
+would deny — it would report a run whose recorded prefix reached the world as one that performed
+nothing. The consequence is D8's residual, unchanged in shape: a host call staged BEFORE the op stage
+has performed and is named in `Performed`, and the op stage fails as
+`PerformFailed("ApplyOps", "control-performer-revoked")`. The control record is
+`ControlRefusal.Revoked("ApplyOps", actor, reason)`, the shape a revoked host call's has; and
+`describeRefusal` now renders a revocation as "refused — its performer was withdrawn by …", because
+its old text ("reads as unregistered") was false of an op stage.
+
+**3. Both interpreters, through one decision.** `Controls.opPerformerRevocation` reads the key out of
+the folded `Revoked` map, and `Controls.opStageRefusal` turns it into the stage's refusal, recording
+the `ControlRefusal` as it answers. The DIRECT interpreter takes it through
+`Controls.performance`, beside `Controls.apply` for the registry: a withdrawn op performer is replaced
+by one that answers the refusal, so the registered performer is never invoked. The DURABLE interpreter
+takes it through a hook rather than through a replaced performer, and the difference is deliberate:
+the hook is asked only for a stage the journal has NOT served, and before the `Attempted` record, so a
+refused stage leaves the effect journal untouched. A replaced performer would have been invoked inside
+the journal's attempt / invoke / record order, writing `Attempted` and `Refused` for a step that
+reached nothing — and a later run would then SERVE that refusal from the effect journal instead of
+re-deciding it from the control stream, which is where the act lives. `Durable.runGuarded` /
+`armGuarded` are the uncontrolled interpreter with that one hook exposed (internal);
+`Durable.runWith` / `run` / `arm` pass the refusal that never refuses and are unchanged in signature
+and behaviour, and `DurableControls.runWith` / `arm` / `stepVia` pass the controls' refusal.
+
+**4. Monotonicity is unchanged.** `Controls.step` gains no arm and no arm removes a key from
+`Revoked`, so a withdrawn op performer stays withdrawn across every prefix of the stream; a `Resume`
+lifts the suspend and nothing else; and because the refusal is re-decided from the control stream on
+every run rather than journaled, a resumed run is refused exactly as the first was.
+
+**5. In memory there is nothing to withdraw.** Under `OpPerformance.InMemory` the apply is the effect,
+performed while planning, and nothing reaches outside; a revoke of the key changes nothing there, and
+`Controls.performance` returns the value it was handed.
+
+**6. The facets name the op performer by its key.** `checkDeclaration`'s undeclared-performer line
+for the op performer is filed under `OpPerformance.RegistrationKey` and its detail names it, so a
+finding names every performer by the key a revoke would use — `host:<key>` for a host function, the
+key itself for the op performer. No member is added to the facet vocabulary: the key IS the
+capability the line was already filed under, which is item 1's point (b) read from the other side.
+
+**Version.** Rides the `0.7.0` draft as an additive change: new members
+(`OpPerformance.RegistrationKey`, `Controls.opPerformerRevocation` / `opStageRefusal` / `performance`)
+and a refusal path a session reaches only by recording a revoke of the key. No wire member, no fixture
+byte, no control-stream byte and no proof statement moves; a session that revokes nothing runs byte
+for byte as before, in memory and durably, journal entry for entry. `STABILITY.md` has the consumer's
+account, including the one behaviour a host already recording revokes can observe.
+
+**What this forecloses, and what it leaves.** It forecloses an op performer with a host-chosen name;
+item 1 names the trigger to reopen it. It leaves the demanded-effect COVERAGE check unaware of a
+withdrawn op performer: `Controls.coverage` reads the registry, which never held the op performer, so
+a host whose op performer is revoked is still reported as covering `ApplyOps`. Coverage asks whether
+the host HAS a capability, and in-memory ops are covered whatever is revoked, so the honest answer
+needs the placement's performance beside the registry; that is a change to the coverage question,
+not to the controls, and is left for the phase that asks it. And the staging model
+(`proofs/Staging.fst`) is untouched: to the model a refused stage is a performer that answers a
+refusal at its ordinal, which `r_perf` already quantifies over, and the journal's WRITES — the one
+thing the hook does differently from such a performer — are outside the theorem (D23 §4), so nothing a
+theorem states moves.

@@ -300,7 +300,8 @@ module Journal =
 //  ── What a control record may carry ─────────────────────────────────────────
 //  The same rule as everything else in this placement: the CAPABILITY and the
 //  host's own vocabulary, never a payload. A revoke names the performer (the
-//  host's own registration key), a throttle names the capability, and the reason
+//  host's own registration key, or `OpPerformance.RegistrationKey` for the op
+//  performer — Phase 1983), a throttle names the capability, and the reason
 //  is the raiser's own text of the same class as a `PerformFailed` reason. No
 //  arguments, no pipeline, no endpoint.
 // ============================================================================
@@ -368,7 +369,9 @@ type ControlOp =
     /// throttle of the same capability REPLACES the earlier one.
     | Throttle of window: ThrottleWindow
     /// Withdraw a performer's registration for this session. Never lifted — see
-    /// `Controls.step`.
+    /// `Controls.step`. `performer` is a host function's registration key, or
+    /// `OpPerformance.RegistrationKey` for the op performer (Phase 1983), which
+    /// withdraws every op stage a plan would perform.
     | Revoke of performer: string
     /// Lift the suspend. Deliberately lifts THAT and nothing else: a throttle is
     /// a standing limit and a revocation is monotone, so a resume that cleared
@@ -479,9 +482,11 @@ type ControlRefusal =
     /// one-based ordinal of the attempt that breached it, so a reader sees the
     /// window AND where it was crossed rather than only that it was.
     | Throttled of capability: string * window: ThrottleWindow * attempt: int
-    /// The performer behind this capability was withdrawn. The effect itself
-    /// reads as `ServerEffectDenial.Unregistered`, which is the honest report to
-    /// the gate; this record is the reason behind it.
+    /// The performer behind this capability was withdrawn. A host call reads as
+    /// `ServerEffectDenial.Unregistered`, which is the honest report to the
+    /// gate; an op stage (capability `ApplyOps`, Phase 1983) reads as a
+    /// `PerformFailed` naming `ControlCode.PerformerRevoked` at the stage's
+    /// ordinal. This record is the reason behind either, in one shape.
     | Revoked of capability: string * actor: ControlActor * reason: string
 
 module ControlCode =
@@ -674,7 +679,10 @@ module Controls =
     ///             from this host" — which is the honest report, and is what
     ///             carries the withdrawal through to `ServerCoverage` and so to
     ///             the demanded-effect check, with no second vocabulary to teach
-    ///             it.
+    ///             it. The OP performer is not a member of the registry — it
+    ///             is the placement's `OpPerformance` — so its revocation is
+    ///             not this function's work: see `performance` and
+    ///             `opStageRefusal` below (Phase 1983).
     ///   RESUME    is the ABSENCE of a suspend and needs nothing here.
     ///
     /// The counter is per CALL of this function, which is what makes a throttle
@@ -741,6 +749,69 @@ module Controls =
     /// capability the host has, not the absence of one.
     let coverage (state: ControlState) (registry: ServerEffectRegistry) : ServerCoverage =
         ServerDemanded.coverageOfRegistry (apply ignore state registry)
+
+    // ─── the op performer (Phase 1983, D26) ─────────────────────────────────
+    //
+    //  The registry holds the host performers; the OP performer is the
+    //  placement's `OpPerformance`, handed to the interpreter beside it — so a
+    //  revoke expressed only at the registry withdrew every arm that reaches
+    //  outside except one. These are that arm's half of the same act.
+    //
+    //  It refuses at the op STAGE, in the perform phase, at the stage's
+    //  ordinal and before the performer is invoked — not while planning, where
+    //  a revoked host function is refused as `Unregistered`. The plan phase
+    //  never looks the op performer up (an edit is applied in memory and
+    //  STAGED, whatever is registered), so the stage is the first point the
+    //  performer would be reached, and refusing there is what lets a resumed
+    //  durable run serve the stages its journal recorded and refuse the first
+    //  it did not. The refusal is a `PerformFailed` under `ApplyOps` naming
+    //  `ControlCode.PerformerRevoked`, with the prefix that ran reported (D8's
+    //  residual, unchanged in shape), and the control record beside it is
+    //  `ControlRefusal.Revoked` — the shape a revoked host call's has.
+    //
+    //  In memory there is no op performer and nothing reaches outside, so
+    //  there is nothing to withdraw: a revoke of the key changes nothing there.
+
+    /// Who withdrew the op performer, and why — `None` while it stands.
+    let opPerformerRevocation (state: ControlState) : (ControlActor * string) option =
+        Map.tryFind OpPerformance.RegistrationKey state.Revoked
+
+    /// One refused op stage: the control record, then the reason the stage
+    /// fails with. The capability is `ApplyOps` — the registration key IS the
+    /// capability the arm is gated under (D26).
+    let private refuseOpStage (record: ControlRefusal -> unit) (actor: ControlActor) (reason: string) : string =
+        record (ControlRefusal.Revoked(OpPerformance.RegistrationKey, actor, reason))
+        ControlCode.PerformerRevoked
+
+    /// **The refusal an op stage meets, decided BEFORE the stage is attempted.**
+    ///
+    /// `None` while the op performer stands. Once it is withdrawn, every call
+    /// records `ControlRefusal.Revoked` under `ApplyOps` through `record` and
+    /// answers the reason the stage fails with. The durable interpreter asks
+    /// it for a stage its journal has not served, before the `Attempted`
+    /// record — so a withdrawn performer leaves the effect journal untouched,
+    /// and every run, a resumed one included, re-decides from the control
+    /// stream rather than from a refusal frozen into the effect journal.
+    let opStageRefusal (record: ControlRefusal -> unit) (state: ControlState) : unit -> string option =
+        match opPerformerRevocation state with
+        | None -> fun () -> None
+        | Some(actor, reason) -> fun () -> Some(refuseOpStage record actor reason)
+
+    /// **The placement's op performance with the controls in force** — the
+    /// direct interpreter's half (`Handler.runWith`), beside `apply` for the
+    /// registry. A withdrawn op performer is REPLACED: every staged op answers
+    /// `opStageRefusal`'s reason and the registered performer is never
+    /// invoked. In memory, or with nothing withdrawn, the value is returned
+    /// as it was.
+    let performance
+        (record: ControlRefusal -> unit)
+        (state: ControlState)
+        (performance: OpPerformance<'Node, 'Op>)
+        : OpPerformance<'Node, 'Op> =
+        match performance, opPerformerRevocation state with
+        | OpPerformance.Performed _, Some(actor, reason) ->
+            OpPerformance.Performed(fun _ _ -> Error(refuseOpStage record actor reason))
+        | _ -> performance
 
     // ─── the wire ────────────────────────────────────────────────────────────
     //
@@ -908,7 +979,7 @@ module Controls =
                 window.MaxPerInvocation
         | ControlRefusal.Revoked(capability, actor, reason) ->
             sprintf
-                "%s: '%s' reads as unregistered — withdrawn by %s '%s' (%s)"
+                "%s: '%s' refused — its performer was withdrawn by %s '%s' (%s)"
                 ControlCode.PerformerRevoked
                 capability
                 (ControlActor.tag actor)

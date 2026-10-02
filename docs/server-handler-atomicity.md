@@ -84,6 +84,19 @@ exists to avoid.
 > a crash inside a performer leaves an indeterminate step the default replay refuses, and in memory
 > nothing new is journaled. The discipline is proved over the staged list (`proofs/Staging.fst`,
 > `durable_resume` and the seven beside it) before the code moved.
+>
+> **What an operator's revoke reaches — amended by [D26](../DECISIONS.md) (2026-10-02).** A revoke
+> (`Controls.revoke`) withdraws a performer for the session, and now reaches every arm that commits
+> outside. A HOST performer, named by its registration key, is removed from the registry, so its
+> call reads as `Unregistered` while PLANNING and the handler performs nothing. The OP performer,
+> named by the reserved key `OpPerformance.RegistrationKey` (`ApplyOps`), is refused at each op
+> STAGE in the perform phase, at the stage's ordinal and before the performer is invoked, as a
+> `PerformFailed` under `ApplyOps` naming `control-performer-revoked` — the same residual report
+> as any perform-phase failure, so a host call staged before the op has run and is named in
+> `Performed`. Under the durable interpreter a resumed run serves the stages its journal recorded
+> and refuses the first it did not, and a refused stage leaves no journal entry. In memory there is
+> no op performer and a revoke of the key withdraws nothing. The control record is
+> `ControlRefusal.Revoked` for both.
 
 *Concurrency is not addressed at all.* One session, one event, one handler. Two sessions running
 handlers against the same domain tree is a question about where durable state actually lives, which

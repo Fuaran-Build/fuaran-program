@@ -391,6 +391,43 @@ why neither the specification nor any theorem statement moves.
   its `Stream.Decode` the inverse of `Stream.Encode` if it had none.
 - A UI-tier consumer changes nothing.
 
+### Rides the draft: the op performer is revocable (Phase 1983)
+
+**Class: additive** — new members, and one refusal path that a session reaches only by recording a
+revoke of the reserved key. It rides the draft rather than advancing it: `v0.6.0` is the newest tag
+and nothing public pins `0.7.0`. `DECISIONS.md` D26 records what was decided and why.
+
+- **`OpPerformance.RegistrationKey`** (`"ApplyOps"`) is new: the reserved key an operator's revoke
+  names the op performer by — `Controls.revoke actor reason OpPerformance.RegistrationKey`. No
+  registration shape changes; `performedBy` / `performedChecked` / `performedWithoutReceipt` and the
+  `OpPerformance` cases are as Phase 1981 left them.
+- **`Controls.opPerformerRevocation`, `Controls.opStageRefusal` and `Controls.performance`** are new.
+  `Controls.performance record state performance` is the direct interpreter's half beside
+  `Controls.apply`: a host running `Handler.runWith` under its own controls passes its op performance
+  through it, as it passes its registry through `apply`.
+- **`DurableControls.runWith` / `arm` / `stepVia` refuse an op stage once the op performer is
+  revoked** — at the stage's ordinal, before it is attempted, as
+  `PerformFailed("ApplyOps", "control-performer-revoked")` with the prefix that ran reported, and a
+  `ControlRefusal.Revoked("ApplyOps", actor, reason)` in `Refusals`. A refused stage writes no
+  effect-journal entry; a resumed run serves its recorded prefix and refuses the first unrecorded
+  op stage. Their signatures are unchanged, and so are `Durable.runWith` / `run` / `arm`.
+- **A behaviour a host already recording revokes can observe:** a session whose stream ALREADY holds
+  a revoke of `"ApplyOps"` (a host function of that name, before this phase) now also has its op
+  stages refused. One revoke withdraws both arms; that is the over-broad direction, deliberately.
+- **`Controls.describeRefusal` renders a revocation as "'<capability>' refused — its performer was
+  withdrawn by …"** where it said "reads as unregistered": true of a host call, false of an op stage,
+  so the one rendering now says what holds of both. A log-safe string, not a wire member.
+
+**What did NOT change:** no wire member, no fixture byte, no demanded-document byte, the control
+stream's encoding, `Controls.step` (no arm removes a key from `Revoked`; monotonicity unchanged), no
+proof statement, and the UI tier byte for byte — in memory there is no op performer to withdraw. A
+session that records no revoke of the key runs byte-identically, in memory and durably, journal
+entry for entry.
+
+**What a consumer does about it:** nothing, unless it means to withdraw ops. An operator does so with
+`Controls.revoke actor reason OpPerformance.RegistrationKey`. A host that drives the direct
+interpreter under its own controls adds `Controls.performance` beside its `Controls.apply`.
+
 ## 0.6.0 — RELEASED (tagged `v0.6.0`, 2026-09-28) — the core becomes domain-generic (Phase 1896)
 
 **Class: breaking**, for `Fuaran.Program.Bounded`, `Fuaran.Program.Runtime` and
