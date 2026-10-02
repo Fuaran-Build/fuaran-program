@@ -267,6 +267,264 @@ let private durableDiscipline (reinvoke: bool) =
 
 let private logicTree: LogicTreeRef = { Ref = "orders/refresh"; Hash = None }
 
+/// The UI tier's op performance, typed for this suite's witness: ops are
+/// performed by being applied, and nothing new is journaled.
+let private inMemory: OpPerformance<Node<obj>, TreeOp<obj>> = OpPerformance.InMemory
+
+// ─── a performed op, journaled like a host call (Phase 1980) ─────────────────
+
+let private removeRefresh: TreeOp<obj> = TreeOp.RemoveNode(NodeId "refresh")
+let private removeReadout: TreeOp<obj> = TreeOp.RemoveNode(NodeId "readout")
+
+/// An op, as this suite compares it: its canonical form off the state axis.
+let private enc (op: TreeOp<obj>) =
+    UiWitness.witness.State.Stream.Encode op
+
+/// The journal subject of an op — what production records for its stage.
+let private subjectOf (op: TreeOp<obj>) =
+    Durable.opSubject UiWitness.witness.State op
+
+/// Two ops in one stage and a host call after them, so under a registered op
+/// performer the staged list is op, op, host call — three ordinals in ONE
+/// sequence, which is the shape the certification needs.
+let private editsThenAudit: Handler =
+    { Name = "edits"
+      Stages =
+        [ Effect(ServerEffect.ApplyOps [ removeRefresh; removeReadout ])
+          Effect(ServerEffect.HostCall("audit", jstr "edited", None)) ] }
+
+/// The same ops in the other order: the same capabilities at every ordinal
+/// and different subjects, which only the subject can tell apart.
+let private editsSwapped: Handler =
+    { Name = "edits-swapped"
+      Stages =
+        [ Effect(ServerEffect.ApplyOps [ removeReadout; removeRefresh ])
+          Effect(ServerEffect.HostCall("audit", jstr "edited", None)) ] }
+
+/// What an op performer was handed, in order — the op-side twin of `Counter`.
+type private OpLog() =
+    let performed = ResizeArray<string>()
+    member _.Performed = List.ofSeq performed
+    member _.Record(op: TreeOp<obj>) = performed.Add(enc op)
+
+/// An op performer that records and succeeds.
+let private performing (log: OpLog) : OpPerformance<Node<obj>, TreeOp<obj>> =
+    OpPerformance.performedBy (fun _ op ->
+        log.Record op
+        Ok())
+
+/// An op performer that performs the op named and then the process dies — the
+/// crash inside the indeterminate window, where the effect happened and the
+/// record of it did not.
+let private performingThenDyingAt (victim: string) (log: OpLog) : OpPerformance<Node<obj>, TreeOp<obj>> =
+    OpPerformance.performedBy (fun _ op ->
+        log.Record op
+
+        match op with
+        | TreeOp.RemoveNode(NodeId id) when id = victim -> raise (ProcessDied "after the op")
+        | _ -> Ok())
+
+/// A journal the process dies in front of: the ATTEMPT record for `step` kills
+/// the process before it lands. The interruption BETWEEN two steps — the one
+/// before completed and recorded, the next never attempted — which is the
+/// clean resume case, and the one the acceptance names.
+let private dyingBeforeAttempting (step: int) (inner: EffectJournal) : EffectJournal =
+    { inner with
+        Append =
+            fun entry ->
+                match entry.Phase with
+                | JournalPhase.Attempted when entry.Step = step -> raise (ProcessDied "between steps")
+                | _ -> inner.Append entry }
+
+let private auditRegistry (audit: Counter) =
+    registryOf [ "audit", counting audit "recorded" ]
+
+let private runEdits
+    (services: DurableServices)
+    (registry: ServerEffectRegistry)
+    (performance: OpPerformance<Node<obj>, TreeOp<obj>>)
+    (handler: Handler)
+    =
+    Durable.runWith
+        UiWitness.witness
+        services
+        "inv"
+        registry
+        performance
+        Fuaran.Core.DataFrame.noResolve
+        "node"
+        handler
+        emptyStore
+
+// ─── the proved durable replay as oracle (Phase 1980) ────────────────────────
+//
+// `proofs/Staging.fst` models `Durable.runWith`'s perform phase — `decide` and
+// `replay` over a journal SNAPSHOT — and the extraction is what runs here,
+// beside production, over every journal shape the cases above leave behind.
+// The staged list is built by hand in the shape the plan phase stages for
+// `editsThenAudit`: two op stages carrying their subjects, one host call.
+
+/// The model's performer token for this host: production's closure, with the
+/// subject and the declaration the model's arrows read off it.
+type private Token =
+    { Subject: string option
+      Idempotent: bool
+      Invoke: Fuaran.Core.JVal -> Result<Fuaran.Core.JVal, string> }
+
+let private modelOpt (value: 'T option) : Staging.opt<'T> =
+    match value with
+    | Some v -> Staging.OSome v
+    | None -> Staging.ONone
+
+let private modelRes (value: Result<'T, string>) : Staging.res<'T> =
+    match value with
+    | Ok v -> Staging.ROk v
+    | Error e -> Staging.RErr e
+
+/// Only `w_assign` is reached — no staged call here lands a slot, so the
+/// identity is never even asked — and the rest refuse loudly: the replay
+/// differential is about the perform phase and stages no plan.
+let private modelWitness: Staging.witness<Node<obj>, BindingSources, Fuaran.Core.JVal, TreeOp<obj>, obj, obj, obj, obj> =
+    { w_compute = fun _ _ _ -> failwith "the replay differential plans nothing"
+      w_undo_compute = fun _ _ _ -> failwith "the replay differential plans nothing"
+      w_query = fun _ _ _ -> failwith "the replay differential plans nothing"
+      w_apply = fun _ _ -> failwith "the replay differential plans nothing"
+      w_op_view = fun _ -> failwith "the replay differential plans nothing"
+      w_assign = fun _ _ bindings -> bindings
+      w_slot_refused = fun _ -> failwith "the replay differential plans nothing" }
+
+let private modelRegistry: Staging.registry<Node<obj>, Fuaran.Core.JVal, TreeOp<obj>, obj, Token> =
+    { r_gate = fun _ -> true
+      r_policy = fun _ -> Staging.ONone
+      r_lookup = fun _ -> Staging.ONone
+      r_perf = fun token args -> token.Invoke args |> modelRes
+      r_op_perform = Staging.ONone }
+
+/// The journal snapshot as the model reads it, from the production journal's
+/// own entries: `stepOf` for the three-state reading, `capabilityOf` and
+/// `subjectOf` for the recorded identity.
+let private modelJournal (entries: JournalEntry list) : Staging.journal<Fuaran.Core.JVal> =
+    { j_step =
+        fun k ->
+            match Journal.stepOf entries (int k) with
+            | JournaledStep.Unrun -> Staging.JUnrun
+            | JournaledStep.Value v -> Staging.JValue v
+            | JournaledStep.Refusal r -> Staging.JRefusal r
+            | JournaledStep.Indeterminate _ -> Staging.JIndeterminate
+      j_recorded =
+        fun k ->
+            match Journal.capabilityOf entries (int k), Journal.subjectOf entries (int k) with
+            | Some capability, Some subject -> Staging.OSome(capability, modelOpt subject)
+            | _ -> Staging.ONone }
+
+/// The staged list the plan phase stages for `editsThenAudit` under a
+/// registered op performer, with the resume's performers as tokens.
+let private modelStaged
+    (opDeclared: bool)
+    (auditDeclared: bool)
+    (audit: Fuaran.Core.JVal -> Result<Fuaran.Core.JVal, string>)
+    : Staging.staged_call<Fuaran.Core.JVal, Token> list =
+    let opStage (op: TreeOp<obj>) : Staging.staged_call<Fuaran.Core.JVal, Token> =
+        { Staging.sc_capability = "ApplyOps"
+          Staging.sc_performer =
+            { Subject = Some(subjectOf op)
+              Idempotent = opDeclared
+              Invoke = fun _ -> Ok(Fuaran.Core.JObj []) }
+          Staging.sc_args = Fuaran.Core.JObj []
+          Staging.sc_into = Staging.ONone }
+
+    let hostCall: Staging.staged_call<Fuaran.Core.JVal, Token> =
+        { Staging.sc_capability = "host:audit"
+          Staging.sc_performer =
+            { Subject = None
+              Idempotent = auditDeclared
+              Invoke = audit }
+          Staging.sc_args = jstr "edited"
+          Staging.sc_into = Staging.ONone }
+
+    [ opStage removeRefresh; opStage removeReadout; hostCall ]
+
+let private modelDiagnostic (diagnostic: Staging.diagnostic<obj>) : ServerDiagnostic =
+    match diagnostic with
+    | Staging.PerformFailed(capability, reason) -> ServerDiagnostic.PerformFailed(capability, reason)
+    | Staging.Failed(capability, reason) -> ServerDiagnostic.Failed(capability, reason)
+    | Staging.Denied(Staging.Unregistered capability) ->
+        ServerDiagnostic.Denied(ServerEffectDenial.Unregistered capability)
+    | Staging.Denied(Staging.GateRefused capability) ->
+        ServerDiagnostic.Denied(ServerEffectDenial.GateRefused capability)
+    | Staging.Bounded _ -> failwith "the replay differential plans nothing"
+
+/// One differential: production's resume over `journal` under `services`,
+/// against the model's `replay` over the same snapshot, the same staged
+/// shape and the same performer verdicts. Six things are compared: the four
+/// ordinal lists, the verdict, the audit trail — and the diagnostics.
+let private replayDifferential
+    (services: DurableServices)
+    (journal: EffectJournal)
+    (auditAnswer: Fuaran.Core.JVal -> Result<Fuaran.Core.JVal, string>)
+    =
+    let snapshot = journal.Read "inv"
+    let resumeLog = OpLog()
+
+    let production =
+        runEdits
+            (services |> DurableServices.withJournal journal)
+            (registryOf [ "audit", auditAnswer ])
+            (performing resumeLog)
+            editsThenAudit
+
+    let dur: Staging.durable<Fuaran.Core.JVal, Token> =
+        { d_journal = modelJournal snapshot
+          d_subject = fun call -> modelOpt call.sc_performer.Subject
+          d_idempotent = fun call -> call.sc_performer.Idempotent
+          d_reinvoke = services.ReinvokeIndeterminate }
+
+    let staged =
+        modelStaged
+            (PerformerFacets.opPerformerFacet services.Performers = IdempotencyFacet.Idempotent)
+            (PerformerFacets.facetOf "audit" services.Performers = IdempotencyFacet.Idempotent)
+            auditAnswer
+
+    let model =
+        Staging.replay
+            modelWitness
+            modelRegistry
+            dur
+            0I
+            staged
+            (Staging.start
+                { st_tree = baseTree
+                  st_bindings = empty })
+
+    let ordinals (xs: bigint list) = xs |> List.map int
+
+    Expect.equal production.Replayed (ordinals model.rp_replayed) "replayed: the ordinals served from the journal"
+    Expect.equal production.Invoked (ordinals model.rp_invoked) "invoked: the ordinals whose performer ran"
+
+    Expect.equal
+        production.Indeterminate
+        (ordinals model.rp_indeterminate)
+        "indeterminate: the ordinals refused undecided"
+
+    Expect.equal
+        (production.Overrides |> List.map _.Step)
+        (ordinals model.rp_overrides)
+        "overrides: the ordinals re-invoked under the opt-in"
+
+    Expect.equal production.Outcome.Committed (not model.rp_acc.ac_halted) "the verdict"
+
+    Expect.equal
+        production.Outcome.Performed
+        (Staging.rev model.rp_acc.ac_externally)
+        "the audit trail — served stages included, because the outcome is recomputed"
+
+    Expect.equal
+        production.Outcome.Diagnostics
+        (Staging.rev model.rp_acc.ac_diagnostics |> List.map modelDiagnostic)
+        "the diagnostics, verbatim"
+
+    production, resumeLog
+
 [<Tests>]
 let tests =
     let fixtures = FixtureIo.load FixtureIo.fixturesRoot
@@ -687,6 +945,491 @@ let tests =
                 } ]
 
           testList
+              "a performed op is journaled like a host call (Phase 1980)"
+              [ test "an op stage is journaled under ApplyOps at its ordinal, in the sequence the host calls share" {
+                    let log = OpLog()
+                    let audit = Counter()
+                    let journal = Journal.declaringDurable (Journal.inMemory ())
+                    let services = DurableServices.create |> DurableServices.withJournal journal
+
+                    let first = runEdits services (auditRegistry audit) (performing log) editsThenAudit
+
+                    Expect.isTrue first.Outcome.Committed "the plan committed and every staged call ran"
+
+                    Expect.equal
+                        first.Invoked
+                        [ 0; 1; 2 ]
+                        "two op stages and one host call: three ordinals in ONE sequence"
+
+                    Expect.equal
+                        log.Performed
+                        [ enc removeRefresh; enc removeReadout ]
+                        "the performer was handed each op once, in plan order"
+
+                    Expect.equal
+                        first.Outcome.Performed
+                        [ "ApplyOps"; "ApplyOps"; "host:audit" ]
+                        "and the audit trail names each op stage as performed, in execution order"
+
+                    let s0 = subjectOf removeRefresh
+                    let s1 = subjectOf removeReadout
+
+                    Expect.equal
+                        (Journal.describe (journal.Read "inv"))
+                        [ sprintf "0 ApplyOps %s attempted" s0
+                          sprintf "0 ApplyOps %s completed" s0
+                          sprintf "1 ApplyOps %s attempted" s1
+                          sprintf "1 ApplyOps %s completed" s1
+                          "2 host:audit attempted"
+                          "2 host:audit completed"
+                          "-1 Invocation completed" ]
+                        "each op stage is journaled under ApplyOps with the op's content address as its \
+                         subject — attempted before the performer, decided after — exactly as a host call is"
+
+                    Expect.equal
+                        s0
+                        ("sha256:" + Fuaran.Core.Hash.sha256Hex (enc removeRefresh))
+                        "the subject is the content address of the op's canonical form, read off the state axis"
+
+                    Expect.notEqual s0 s1 "two ops, two subjects"
+
+                    Expect.equal
+                        s0.Length
+                        ("sha256:".Length + 64)
+                        "and a subject is fixed-size: a hash, never the op's payload"
+                }
+
+                test
+                    "interrupted after the first op and before the second, the resume performs only the ops after the recorded prefix" {
+                    // The acceptance's clause, driven: the process died between
+                    // the first op stage's record and the second's attempt.
+                    let journal = Journal.declaringDurable (Journal.inMemory ())
+                    let firstLog = OpLog()
+                    let audit = Counter()
+                    let services = DurableServices.create |> DurableServices.withJournal journal
+
+                    let crashed =
+                        crashing (fun () ->
+                            runEdits
+                                (services |> DurableServices.withJournal (dyingBeforeAttempting 1 journal))
+                                (auditRegistry audit)
+                                (performing firstLog)
+                                editsThenAudit)
+
+                    Expect.isTrue crashed "the process died between the first op's record and the second's attempt"
+                    Expect.equal firstLog.Performed [ enc removeRefresh ] "the first op had been performed"
+
+                    let s0 = subjectOf removeRefresh
+
+                    Expect.equal
+                        (Journal.describe (journal.Read "inv"))
+                        [ sprintf "0 ApplyOps %s attempted" s0; sprintf "0 ApplyOps %s completed" s0 ]
+                        "and the journal holds exactly that: one op stage decided, nothing after it"
+
+                    let resumeLog = OpLog()
+
+                    let resumed =
+                        runEdits services (auditRegistry audit) (performing resumeLog) editsThenAudit
+
+                    Expect.equal resumed.Replayed [ 0 ] "the recorded op stage was served from the journal"
+
+                    Expect.equal
+                        resumeLog.Performed
+                        [ enc removeReadout ]
+                        "so the performer was handed ONLY the op after the recorded prefix"
+
+                    Expect.equal resumed.Invoked [ 1; 2 ] "— the second op stage and the host call"
+                    Expect.equal audit.Count 1 "each exactly once across both runs"
+                    Expect.isTrue resumed.Outcome.Committed "and the resumed run committed"
+
+                    Expect.equal
+                        resumed.Outcome.Performed
+                        [ "ApplyOps"; "ApplyOps"; "host:audit" ]
+                        "with the audit trail of the whole plan, served stage included: recomputed, not stored"
+
+                    Expect.equal resumed.Indeterminate [] "nothing was refused"
+                    Expect.equal resumed.Overrides [] "and nothing was overridden"
+                }
+
+                test "a crash inside the second op performer leaves it indeterminate, and the default replay refuses it" {
+                    let journal = Journal.declaringDurable (Journal.inMemory ())
+                    let firstLog = OpLog()
+                    let audit = Counter()
+                    let services = DurableServices.create |> DurableServices.withJournal journal
+
+                    crashing (fun () ->
+                        runEdits
+                            services
+                            (auditRegistry audit)
+                            (performingThenDyingAt "readout" firstLog)
+                            editsThenAudit)
+                    |> fun died -> Expect.isTrue died "killed inside the second op performer, after its effect"
+
+                    Expect.equal
+                        firstLog.Performed
+                        [ enc removeRefresh; enc removeReadout ]
+                        "both ops happened — and the second's record did not"
+
+                    Expect.equal
+                        (Journal.describe (journal.Read "inv"))
+                        [ sprintf "0 ApplyOps %s attempted" (subjectOf removeRefresh)
+                          sprintf "0 ApplyOps %s completed" (subjectOf removeRefresh)
+                          sprintf "1 ApplyOps %s attempted" (subjectOf removeReadout) ]
+                        "one op stage decided, one attempted, and no more"
+
+                    let resumeLog = OpLog()
+
+                    let replay =
+                        runEdits services (auditRegistry audit) (performing resumeLog) editsThenAudit
+
+                    Expect.equal replay.Replayed [ 0 ] "the decided op stage was served"
+                    Expect.equal replay.Indeterminate [ 1 ] "the undecided one was REFUSED"
+                    Expect.equal replay.Invoked [] "and no performer ran — not the op, and not the host call after it"
+                    Expect.equal resumeLog.Performed [] "so the op was not performed a second time"
+                    Expect.equal audit.Count 0 "and the host call was never reached"
+                    Expect.isFalse replay.Outcome.Committed "the handler rolled back around the refusal"
+
+                    Expect.equal
+                        replay.Outcome.Diagnostics
+                        [ ServerDiagnostic.PerformFailed("ApplyOps", DurableCode.IndeterminateStep) ]
+                        "naming the op stage's capability and the code, with no payload"
+
+                    Expect.equal
+                        replay.Outcome.Performed
+                        [ "ApplyOps" ]
+                        "and the residual names the stage that did run — reported, never absorbed"
+
+                    Expect.equal replay.Overrides [] "no override was recorded, because none was used"
+                }
+
+                test "the opt-in re-invokes the undecided op stage, records the override under ApplyOps, and DUPLICATES" {
+                    let journal = Journal.declaringDurable (Journal.inMemory ())
+                    let audit = Counter()
+
+                    let services =
+                        DurableServices.create
+                        |> DurableServices.withJournal journal
+                        |> DurableServices.acceptingIndeterminateReplay
+
+                    crashing (fun () ->
+                        runEdits
+                            services
+                            (auditRegistry audit)
+                            (performingThenDyingAt "readout" (OpLog()))
+                            editsThenAudit)
+                    |> ignore
+
+                    let resumeLog = OpLog()
+
+                    let replay =
+                        runEdits services (auditRegistry audit) (performing resumeLog) editsThenAudit
+
+                    Expect.equal
+                        resumeLog.Performed
+                        [ enc removeReadout ]
+                        "the second op ran AGAIN — the duplicate the opt-in accepts, and the first was not touched"
+
+                    Expect.equal replay.Invoked [ 1; 2 ] "then the host call"
+                    Expect.isTrue replay.Outcome.Committed "and the resume completed"
+
+                    Expect.equal
+                        (replay.Overrides |> List.map (fun o -> o.Step, o.Capability))
+                        [ 1, "ApplyOps" ]
+                        "and the override was RECORDED under the op stage's capability"
+                }
+
+                test "an op performer the host declares idempotent closes the window with no override" {
+                    let journal = Journal.declaringDurable (Journal.inMemory ())
+                    let audit = Counter()
+
+                    let services =
+                        DurableServices.create
+                        |> DurableServices.withJournal journal
+                        |> DurableServices.declaringOpPerformer IdempotencyFacet.Idempotent
+
+                    crashing (fun () ->
+                        runEdits
+                            services
+                            (auditRegistry audit)
+                            (performingThenDyingAt "readout" (OpLog()))
+                            editsThenAudit)
+                    |> ignore
+
+                    let resumeLog = OpLog()
+
+                    let replay =
+                        runEdits services (auditRegistry audit) (performing resumeLog) editsThenAudit
+
+                    Expect.equal
+                        resumeLog.Performed
+                        [ enc removeReadout ]
+                        "re-invoked, because repeating it costs nothing"
+
+                    Expect.equal replay.Invoked [ 1; 2 ] "then the host call"
+                    Expect.isTrue replay.Outcome.Committed "the resume completed"
+                    Expect.equal replay.Overrides [] "with no override: the performer's own declared shape closes it"
+                }
+
+                test
+                    "a replay holding a different op at a recorded ordinal is refused — the subject is what tells them apart" {
+                    let journal = Journal.declaringDurable (Journal.inMemory ())
+                    let audit = Counter()
+                    let services = DurableServices.create |> DurableServices.withJournal journal
+
+                    runEdits services (auditRegistry audit) (performing (OpLog())) editsThenAudit
+                    |> ignore
+
+                    // The same invocation id, the same capability at every
+                    // ordinal — ApplyOps, ApplyOps, host:audit — and a different
+                    // op at the first. Without the subject this would be served.
+                    let resumeLog = OpLog()
+
+                    let replay =
+                        runEdits services (auditRegistry audit) (performing resumeLog) editsSwapped
+
+                    Expect.isFalse replay.Outcome.Committed "the divergent replay did not commit"
+
+                    Expect.equal
+                        replay.Outcome.Diagnostics
+                        [ ServerDiagnostic.PerformFailed("ApplyOps", DurableCode.ReplayDivergence) ]
+                        "it named the ordinal's identity mismatch, under the op stage's capability, and stopped"
+
+                    Expect.equal replay.Replayed [] "nothing was served"
+                    Expect.equal resumeLog.Performed [] "and no op was performed"
+                    Expect.equal audit.Count 1 "nor the host call, a second time"
+                }
+
+                test "in memory, nothing new is journaled — the UI tier's journal is what it was" {
+                    let journal = Journal.declaringDurable (Journal.inMemory ())
+                    let audit = Counter()
+                    let services = DurableServices.create |> DurableServices.withJournal journal
+
+                    let outcome =
+                        Durable.run
+                            services
+                            "inv"
+                            (auditRegistry audit)
+                            Fuaran.Core.DataFrame.noResolve
+                            "node"
+                            editsThenAudit
+                            emptyStore
+
+                    Expect.equal
+                        (Journal.describe (journal.Read "inv"))
+                        [ "0 host:audit attempted"
+                          "0 host:audit completed"
+                          "-1 Invocation completed" ]
+                        "the host call is the only step journaled: the apply IS the effect, recomputed on replay"
+
+                    Expect.equal outcome.Invoked [ 0 ] "one ordinal"
+
+                    Expect.equal
+                        outcome.Outcome.Performed
+                        [ "ApplyOps"; "host:audit" ]
+                        "and the audit trail is the in-memory placement's, as it always was"
+                }
+
+                test
+                    "a performed op is derived on a host call's terms, and reaches exactly-once only where it is earned" {
+                    let edits = ServerEffect.ApplyOps [ removeRefresh ]
+                    let performed = performing (OpLog())
+
+                    let delivery discipline performers performance =
+                        (Facets.ofEffect discipline performers performance edits).Delivery
+                        |> DeliveryFacet.ofHazards
+
+                    Expect.equal
+                        (delivery (durableDiscipline false) PerformerFacets.none inMemory)
+                        (Some DeliveryFacet.ExactlyOnceEffective)
+                        "in memory the arm is recomputed: exactly-once, as before this phase"
+
+                    Expect.equal
+                        (delivery (durableDiscipline false) PerformerFacets.none performed)
+                        (Some DeliveryFacet.AtMostOnce)
+                        "performed and undeclared, strict: the placement may LOSE the op"
+
+                    Expect.equal
+                        (delivery (durableDiscipline true) PerformerFacets.none performed)
+                        (Some DeliveryFacet.AtLeastOnce)
+                        "…accepting: it may DUPLICATE it"
+
+                    Expect.equal
+                        (delivery
+                            (durableDiscipline false)
+                            (PerformerFacets.none
+                             |> PerformerFacets.declareOpPerformer IdempotencyFacet.Idempotent)
+                            performed)
+                        (Some DeliveryFacet.ExactlyOnceEffective)
+                        "a content-addressed write the host declares idempotent earns exactly-once"
+
+                    Expect.equal
+                        (delivery
+                            (durableDiscipline true)
+                            (PerformerFacets.none
+                             |> PerformerFacets.declareOpPerformer IdempotencyFacet.NonIdempotent)
+                            performed)
+                        (Some DeliveryFacet.AtLeastOnce)
+                        "a push the host says is not idempotent cannot claim it, under either policy"
+
+                    Expect.isFalse
+                        (allDisciplines
+                         |> List.exists (fun d ->
+                             delivery d PerformerFacets.none performed = Some DeliveryFacet.ExactlyOnceEffective))
+                        "under NO configuration does an undeclared op performer reach exactly-once"
+
+                    let services =
+                        DurableServices.create
+                        |> DurableServices.withJournal (Journal.declaringDurable (Journal.inMemory ()))
+                        |> DurableServices.declaringPerformer "audit" IdempotencyFacet.Idempotent
+
+                    let inflated =
+                        { Placement = PlacementId.durable
+                          LogicTree = logicTree
+                          Guarantees =
+                            { Delivery = DeliveryFacet.ExactlyOnceEffective
+                              Idempotency = IdempotencyFacet.Idempotent
+                              Restart = RestartVisibility.SurvivesRestart } }
+
+                    let findings =
+                        Durable.checkDeclaration services performed [ editsThenAudit ] inflated
+
+                    Expect.contains
+                        (findings |> List.map _.Code)
+                        FacetCode.DeliveryInflated
+                        "an undeclared op performer cannot be exactly-once, and saying so is refused"
+
+                    Expect.isTrue
+                        (findings
+                         |> List.exists (fun f ->
+                             f.Code = FacetCode.UndeclaredPerformer && f.Capability = Some "ApplyOps"))
+                        "and the report says WHY, under the capability the op stages are journaled under"
+
+                    Expect.equal
+                        (Durable.checkDeclaration
+                            (services |> DurableServices.declaringOpPerformer IdempotencyFacet.Idempotent)
+                            performed
+                            [ editsThenAudit ]
+                            inflated)
+                        []
+                        "declared idempotent, the same registration checks clean"
+
+                    Expect.isFalse
+                        (Durable.checkDeclaration services inMemory [ editsThenAudit ] inflated
+                         |> List.exists (fun f -> f.Code = FacetCode.DeliveryInflated))
+                        "and in memory the delivery was never inflated: nothing reaches outside"
+                } ]
+
+          testList
+              "Phase 1980 - the proved durable replay as oracle"
+              [ test "a first run: nothing recorded, everything invoked" {
+                    let journal = Journal.declaringDurable (Journal.inMemory ())
+
+                    let production, log =
+                        replayDifferential DurableServices.create journal (fun _ -> Ok(jstr "recorded"))
+
+                    Expect.equal production.Invoked [ 0; 1; 2 ] "every ordinal invoked"
+                    Expect.equal log.Performed [ enc removeRefresh; enc removeReadout ] "both ops performed"
+                }
+
+                test "interrupted between two op stages: the prefix served, the rest performed" {
+                    let journal = Journal.declaringDurable (Journal.inMemory ())
+
+                    crashing (fun () ->
+                        runEdits
+                            (DurableServices.create
+                             |> DurableServices.withJournal (dyingBeforeAttempting 1 journal))
+                            (auditRegistry (Counter()))
+                            (performing (OpLog()))
+                            editsThenAudit)
+                    |> ignore
+
+                    let production, _ =
+                        replayDifferential DurableServices.create journal (fun _ -> Ok(jstr "recorded"))
+
+                    Expect.equal production.Replayed [ 0 ] "the differential ran the resume case"
+                }
+
+                test "interrupted, and the host call refuses on the resume" {
+                    let journal = Journal.declaringDurable (Journal.inMemory ())
+
+                    crashing (fun () ->
+                        runEdits
+                            (DurableServices.create
+                             |> DurableServices.withJournal (dyingBeforeAttempting 1 journal))
+                            (auditRegistry (Counter()))
+                            (performing (OpLog()))
+                            editsThenAudit)
+                    |> ignore
+
+                    let production, _ =
+                        replayDifferential DurableServices.create journal (fun _ -> Error "refused")
+
+                    Expect.isFalse production.Outcome.Committed "the differential ran the refusal case"
+                    Expect.equal production.Invoked [ 1; 2 ] "and the refused call counts as invoked"
+                }
+
+                test "a recorded refusal is served, and halts where it halted" {
+                    let journal = Journal.declaringDurable (Journal.inMemory ())
+
+                    runEdits
+                        (DurableServices.create |> DurableServices.withJournal journal)
+                        (registryOf [ "audit", (fun _ -> Error "refused") ])
+                        (performing (OpLog()))
+                        editsThenAudit
+                    |> ignore
+
+                    let production, log =
+                        replayDifferential DurableServices.create journal (fun _ -> Ok(jstr "recorded"))
+
+                    Expect.equal production.Replayed [ 0; 1; 2 ] "every step served, the refusal included"
+                    Expect.equal log.Performed [] "and no op performed"
+                }
+
+                testList
+                    "a crash inside the second op stage, under each policy"
+                    [ for name, services in
+                          [ "strict", DurableServices.create
+                            "accepting", DurableServices.create |> DurableServices.acceptingIndeterminateReplay
+                            "declared idempotent",
+                            DurableServices.create
+                            |> DurableServices.declaringOpPerformer IdempotencyFacet.Idempotent ] ->
+                          test name {
+                              let journal = Journal.declaringDurable (Journal.inMemory ())
+
+                              crashing (fun () ->
+                                  runEdits
+                                      (services |> DurableServices.withJournal journal)
+                                      (auditRegistry (Counter()))
+                                      (performingThenDyingAt "readout" (OpLog()))
+                                      editsThenAudit)
+                              |> ignore
+
+                              let production, _ =
+                                  replayDifferential services journal (fun _ -> Ok(jstr "recorded"))
+
+                              Expect.equal production.Replayed [ 0 ] "the differential ran the indeterminate case"
+                          } ]
+
+                test "a recorded ordinal holding another op: refused as divergence" {
+                    let journal = Journal.declaringDurable (Journal.inMemory ())
+
+                    runEdits
+                        (DurableServices.create |> DurableServices.withJournal journal)
+                        (auditRegistry (Counter()))
+                        (performing (OpLog()))
+                        editsSwapped
+                    |> ignore
+
+                    let production, _ =
+                        replayDifferential DurableServices.create journal (fun _ -> Ok(jstr "recorded"))
+
+                    Expect.equal
+                        production.Outcome.Diagnostics
+                        [ ServerDiagnostic.PerformFailed("ApplyOps", DurableCode.ReplayDivergence) ]
+                        "the differential ran the divergence case"
+                } ]
+
+          testList
               "the conjunction rule, and what it refuses to claim"
               [ test "combination is associative, commutative, idempotent, with a two-sided identity" {
                     // Pinned over the whole 36-value lattice rather than
@@ -745,10 +1488,10 @@ let tests =
                                 { Name = "all"
                                   Stages = allEffects |> List.map Effect }
 
-                            let whole = Facets.ofHandler discipline performers handler
+                            let whole = Facets.ofHandler discipline performers inMemory handler
 
                             for effect in allEffects do
-                                let arm = Facets.ofEffect discipline performers effect
+                                let arm = Facets.ofEffect discipline performers inMemory effect
 
                                 Expect.isTrue
                                     (not arm.Delivery.MayLose || whole.Delivery.MayLose)
@@ -768,14 +1511,14 @@ let tests =
                               Effect(ServerEffect.Notify("ops", jstr "n")) ] }
 
                     Expect.equal
-                        (Facets.ofHandler (durableDiscipline false) PerformerFacets.none engineOwned
+                        (Facets.ofHandler (durableDiscipline false) PerformerFacets.none inMemory engineOwned
                          |> Facets.narrowest
                          |> Option.map _.Delivery)
                         (Some DeliveryFacet.ExactlyOnceEffective)
                         "a handler that reaches nothing outside is exactly-once-effective under replay"
 
                     Expect.equal
-                        (Facets.ofHandler PlacementDiscipline.Direct PerformerFacets.none engineOwned
+                        (Facets.ofHandler PlacementDiscipline.Direct PerformerFacets.none inMemory engineOwned
                          |> Facets.narrowest
                          |> Option.map _.Delivery)
                         (Some DeliveryFacet.AtMostOnce)
@@ -786,7 +1529,7 @@ let tests =
                         |> PerformerFacets.declare "audit" IdempotencyFacet.Idempotent
 
                     Expect.equal
-                        (Facets.ofHandler (durableDiscipline false) declared refreshHandler
+                        (Facets.ofHandler (durableDiscipline false) declared inMemory refreshHandler
                          |> Facets.narrowest
                          |> Option.map _.Delivery)
                         (Some DeliveryFacet.ExactlyOnceEffective)
@@ -795,14 +1538,14 @@ let tests =
 
                 test "an undeclared performer is never flattered — the honest boundary, both ways" {
                     Expect.equal
-                        (Facets.ofHandler (durableDiscipline false) PerformerFacets.none refreshHandler
+                        (Facets.ofHandler (durableDiscipline false) PerformerFacets.none inMemory refreshHandler
                          |> Facets.narrowest
                          |> Option.map _.Delivery)
                         (Some DeliveryFacet.AtMostOnce)
                         "strict: the placement may LOSE the call rather than repeat it"
 
                     Expect.equal
-                        (Facets.ofHandler (durableDiscipline true) PerformerFacets.none refreshHandler
+                        (Facets.ofHandler (durableDiscipline true) PerformerFacets.none inMemory refreshHandler
                          |> Facets.narrowest
                          |> Option.map _.Delivery)
                         (Some DeliveryFacet.AtLeastOnce)
@@ -811,7 +1554,7 @@ let tests =
                     Expect.isFalse
                         (allDisciplines
                          |> List.exists (fun d ->
-                             Facets.ofHandler d PerformerFacets.none refreshHandler
+                             Facets.ofHandler d PerformerFacets.none inMemory refreshHandler
                              |> Facets.narrowest
                              |> Option.map _.Delivery = Some DeliveryFacet.ExactlyOnceEffective))
                         "under NO configuration does an undeclared host call reach exactly-once"
@@ -824,8 +1567,8 @@ let tests =
                         |> DurableServices.declaringPerformer "audit" IdempotencyFacet.Idempotent
 
                     Expect.equal
-                        (Durable.guarantees services [ refreshHandler ] |> Facets.narrowest)
-                        (Facets.ofHandler PlacementDiscipline.Direct services.Performers refreshHandler
+                        (Durable.guarantees services inMemory [ refreshHandler ] |> Facets.narrowest)
+                        (Facets.ofHandler PlacementDiscipline.Direct services.Performers inMemory refreshHandler
                          |> Facets.narrowest)
                         "an in-memory journal derives the DIRECT interpreter's posture, exactly"
                 } ]
@@ -838,7 +1581,7 @@ let tests =
                         |> DurableServices.withJournal (Journal.declaringDurable (Journal.inMemory ()))
                         |> DurableServices.declaringPerformer "audit" IdempotencyFacet.Idempotent
 
-                    match Durable.declaration services logicTree [ refreshHandler ] with
+                    match Durable.declaration services inMemory logicTree [ refreshHandler ] with
                     | None -> failtest "the registration has an honest declaration and should have produced one"
                     | Some declaration ->
                         Expect.equal declaration.Placement PlacementId.durable "it names this placement"
@@ -850,7 +1593,7 @@ let tests =
                             "with the facet this phase exists to certify"
 
                         Expect.equal
-                            (Durable.checkDeclaration services [ refreshHandler ] declaration)
+                            (Durable.checkDeclaration services inMemory [ refreshHandler ] declaration)
                             []
                             "and a derived declaration is consistent with the registration it came from"
 
@@ -873,7 +1616,8 @@ let tests =
                               Idempotency = IdempotencyFacet.Idempotent
                               Restart = RestartVisibility.SurvivesRestart } }
 
-                    let findings = Durable.checkDeclaration services [ refreshHandler ] inflated
+                    let findings =
+                        Durable.checkDeclaration services inMemory [ refreshHandler ] inflated
 
                     Expect.contains
                         (findings |> List.map _.Code)
@@ -917,7 +1661,7 @@ let tests =
                               Restart = RestartVisibility.LostOnRestart } }
 
                     Expect.equal
-                        (Durable.checkDeclaration services [ refreshHandler ] conservative
+                        (Durable.checkDeclaration services inMemory [ refreshHandler ] conservative
                          |> List.filter Facets.isInflation)
                         []
                         "promising less than you can keep costs only the promise"
@@ -935,7 +1679,8 @@ let tests =
                               Restart = RestartVisibility.LostOnRestart } }
 
                     Expect.contains
-                        (Durable.checkDeclaration services [ refreshHandler ] foreign |> List.map _.Code)
+                        (Durable.checkDeclaration services inMemory [ refreshHandler ] foreign
+                         |> List.map _.Code)
                         FacetCode.UnknownPlacement
                         "an id nobody here serves is a finding"
 

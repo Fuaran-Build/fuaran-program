@@ -36,14 +36,28 @@ open Fuaran.Program.Bounded
 //  `Journal.fs` with a table, a log file, or somebody else's workflow engine,
 //  and this interpreter cannot tell which.
 //
-//  ── Why only the host call is journaled ─────────────────────────────────────
-//  Because it is the only arm that reaches outside, and D8 already says so: a
-//  query reads, an op edits an in-memory tree the caller may discard, and a
-//  patch and a notification accumulate as values the caller performs after the
-//  handler returns. None of the four can be "performed twice" by a re-run,
-//  because none of them is performed by the handler at all — they are
-//  RECOMPUTED, deterministically, from the entry state, which is what makes the
-//  replay discipline worth having rather than an extra ledger to keep.
+//  ── Every arm that reaches outside is journaled ─────────────────────────────
+//  D12 first put it as "only the host call", on D8's premise: a query reads, an
+//  op edits an in-memory tree the caller may discard, and a patch and a
+//  notification accumulate as values the caller performs after the handler
+//  returns — none of them performed by the handler at all, so none of them can
+//  be "performed twice" by a re-run; they are RECOMPUTED, deterministically,
+//  from the entry state. That premise is still true of the reads and the
+//  accumulating arms, and it is what makes the replay discipline worth having
+//  rather than an extra ledger to keep. It stopped being true of `ApplyOps` the
+//  moment D19 gave ops a registered performer: under `OpPerformance.Performed`
+//  every op of a committed plan is staged as a call of its own and performed in
+//  the perform phase beside the host calls, and a performed op reaches outside
+//  exactly as a host call does. So the premise is restated (D23): what is
+//  journaled is every arm that REACHES OUTSIDE — the host call, and the op
+//  stage where a performer is registered — and under `InMemory` nothing is
+//  performed and nothing new is journaled.
+//
+//  An op stage's entry is filed under `ApplyOps` with the op's content address
+//  as its SUBJECT (`JournalEntry.Subject`): the capability says which arm ran
+//  at an ordinal, the subject says which op, and the divergence check reads
+//  both. The state handed beside the op is never the subject — it is the
+//  planned state, recomputed on replay, not the thing performed.
 //
 //  The consequence a reader should carry away is the one the facets state: this
 //  interpreter's exactly-once claim is about what IT performs. What a caller
@@ -52,11 +66,11 @@ open Fuaran.Program.Bounded
 //
 //  ── The step ordinal is DERIVED from the fold, not declared ─────────────────
 //  A journal entry is addressed by the ordinal of the performer invocation
-//  within the invocation — zero for the first host call the perform phase makes,
-//  one for the next. That is well defined because the plan phase is
-//  deterministic: the same handler against the same entry store stages the same
-//  calls in the same order, so a replay reaches ordinal *n* holding the same
-//  call the recorded run held there.
+//  within the invocation — zero for the first call the perform phase makes,
+//  host call or op stage, one for the next. That is well defined because the
+//  plan phase is deterministic: the same handler against the same entry store
+//  stages the same calls in the same order, so a replay reaches ordinal *n*
+//  holding the same call the recorded run held there.
 //
 //  "Well defined because the plan phase is deterministic" is a premise, and a
 //  premise a `RunQuery` can break — its rows come from outside and may have
@@ -163,6 +177,14 @@ module DurableServices =
         { services with
             Performers = PerformerFacets.declare fn facet services.Performers }
 
+    /// Declare what repeating the registered OP performer does (Phase 1980) —
+    /// the declaration a domain whose op is a content-addressed write makes to
+    /// reach exactly-once, and one whose op is a push cannot make without
+    /// saying so.
+    let declaringOpPerformer (facet: IdempotencyFacet) (services: DurableServices) : DurableServices =
+        { services with
+            Performers = PerformerFacets.declareOpPerformer facet services.Performers }
+
     /// **The named opt-in.** Re-invoke a step the journal cannot decide, taking
     /// the duplicate hazard rather than the loss. Naming it is the
     /// configuration, and it is what the override record attaches to.
@@ -183,25 +205,44 @@ module Durable =
             { JournalSurvivesRestart = services.Journal.SurvivesRestart
               ReinvokeIndeterminate = services.ReinvokeIndeterminate }
 
-    /// **Run one handler under deterministic replay.**
+    /// The journal SUBJECT of a performed op (Phase 1980): the content address
+    /// of the op's canonical form, read off the state axis's codec (K6) — the
+    /// same shape, for the same reason, as the tree hash a signed envelope
+    /// binds. Never the state handed beside the op: that is the planned state,
+    /// recomputed on replay, and not the thing performed.
+    let opSubject (state: StateWitness<'Node, 'Op>) (op: 'Op) : string =
+        ProgramWire.ContentAddressPrefix
+        + Fuaran.Core.Hash.sha256Hex (state.Stream.Encode op)
+
+    /// The capability a performed op stage is journaled under — the arm's own,
+    /// one entry per op, in the ordinal sequence the host calls share.
+    [<Literal>]
+    let OpStageCapability = "ApplyOps"
+
+    /// **Run one handler under deterministic replay, performing its ops as the
+    /// placement declares.**
     ///
-    /// The plan phase, the gate, the staging and the rollback are `Handler.run`'s
-    /// — unchanged, and reached through the same call every other caller makes.
-    /// What this function supplies is a registry whose performers consult the
-    /// journal first, which is the entire difference between the two
-    /// interpreters and is exactly where it should be: at the one arm that
-    /// commits outside.
+    /// The plan phase, the gate, the staging and the rollback are
+    /// `Handler.runWith`'s — unchanged, and reached through the same call every
+    /// other caller makes. What this function supplies is a registry whose
+    /// performers consult the journal first and, under a registered op
+    /// performer, an op performer that does the same — which is the entire
+    /// difference between the two interpreters and is exactly where it should
+    /// be: at every arm that commits outside. Both go through ONE wrapper and
+    /// one cursor, so an op stage and a host call take their ordinals from the
+    /// same sequence, in perform order.
     ///
     /// `invocation` identifies the run whose journal is being read and written.
     /// Two runs sharing an id are the SAME invocation — one crashed and one
     /// resuming it. Two runs with different ids are different invocations and
     /// share nothing, which is what a caller wants for two clicks of the same
     /// button.
-    let run
+    let runWith
         (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (services: DurableServices)
         (invocation: string)
         (registry: ServerEffectRegistry)
+        (performance: OpPerformance<'Node, 'Op>)
         (resolve: string -> Result<Fuaran.Core.Table, Fuaran.Core.EvalError>)
         (nodeId: string)
         (handler: Handler<'Action, 'Op>)
@@ -221,11 +262,12 @@ module Durable =
         let indeterminate = ResizeArray<int>()
         let overrides = ResizeArray<DurableOverrideRecord>()
 
-        let append (step: int) (capability: string) (phase: JournalPhase) =
+        let append (step: int) (capability: string) (subject: string option) (phase: JournalPhase) =
             services.Journal.Append
                 { Invocation = invocation
                   Step = step
                   Capability = capability
+                  Subject = subject
                   Phase = phase }
 
         /// Attempt, invoke, record. The order is the whole contract: the
@@ -235,10 +277,11 @@ module Durable =
         let invoke
             (step: int)
             (capability: string)
+            (subject: string option)
             (performer: Fuaran.Core.JVal -> Result<Fuaran.Core.JVal, string>)
             (args: Fuaran.Core.JVal)
             : Result<Fuaran.Core.JVal, string> =
-            append step capability JournalPhase.Attempted
+            append step capability subject JournalPhase.Attempted
             // Nothing below this line runs if the performer does not return.
             // That is not an omission — it is the crash this interpreter exists
             // to survive, and the journal is what it leaves behind.
@@ -248,58 +291,95 @@ module Durable =
             append
                 step
                 capability
+                subject
                 (match result with
                  | Ok value -> JournalPhase.Completed value
                  | Error reason -> JournalPhase.Refused reason)
 
             result
 
+        /// ONE wrapper for every performer the perform phase reaches — a host
+        /// call's (`capability` = `host:<fn>`, no subject) and an op stage's
+        /// (`ApplyOps`, the op's content address). `declared` is what the host
+        /// said about repeating THIS performer. The model's `decide` + `replay`
+        /// (`proofs/Staging.fst`).
+        let wrapAt
+            (capability: string)
+            (subject: string option)
+            (declared: IdempotencyFacet)
+            (performer: Fuaran.Core.JVal -> Result<Fuaran.Core.JVal, string>)
+            (args: Fuaran.Core.JVal)
+            : Result<Fuaran.Core.JVal, string> =
+            let step = cursor
+            cursor <- step + 1
+
+            let diverged =
+                match Journal.capabilityOf recorded step, Journal.subjectOf recorded step with
+                | Some previous, Some previousSubject -> previous <> capability || previousSubject <> subject
+                | _ -> false
+
+            if diverged then
+                // The recomputation reached a different call here than the
+                // recorded run did — another arm, or the same arm over another
+                // op. Serving the recorded answer would be delivering one call's
+                // result to another; refusing is the only safe reading, and the
+                // handler rolls back around it.
+                Error DurableCode.ReplayDivergence
+            else
+                match Journal.stepOf recorded step with
+                | JournaledStep.Value value ->
+                    replayed.Add step
+                    Ok value
+                | JournaledStep.Refusal reason ->
+                    replayed.Add step
+                    Error reason
+                | JournaledStep.Unrun -> invoke step capability subject performer args
+                | JournaledStep.Indeterminate _ ->
+                    if declared = IdempotencyFacet.Idempotent then
+                        // Re-invoking costs nothing by the performer's own
+                        // declared shape, so the window closes without a
+                        // policy and without an override to record.
+                        invoke step capability subject performer args
+                    elif services.ReinvokeIndeterminate then
+                        overrides.Add
+                            { Step = step
+                              Capability = capability
+                              Idempotency = declared }
+
+                        invoke step capability subject performer args
+                    else
+                        indeterminate.Add step
+                        Error DurableCode.IndeterminateStep
+
         let wrap (fn: string) (performer: Fuaran.Core.JVal -> Result<Fuaran.Core.JVal, string>) =
-            fun (args: Fuaran.Core.JVal) ->
-                let step = cursor
-                cursor <- step + 1
-                let capability = "host:" + fn
-
-                match Journal.capabilityOf recorded step with
-                | Some previous when previous <> capability ->
-                    // The recomputation reached a different call here than the
-                    // recorded run did. Serving the recorded answer would be
-                    // delivering one call's result to another; refusing is the
-                    // only safe reading, and the handler rolls back around it.
-                    Error DurableCode.ReplayDivergence
-                | _ ->
-                    match Journal.stepOf recorded step with
-                    | JournaledStep.Value value ->
-                        replayed.Add step
-                        Ok value
-                    | JournaledStep.Refusal reason ->
-                        replayed.Add step
-                        Error reason
-                    | JournaledStep.Unrun -> invoke step capability performer args
-                    | JournaledStep.Indeterminate _ ->
-                        let declared = PerformerFacets.facetOf fn services.Performers
-
-                        if declared = IdempotencyFacet.Idempotent then
-                            // Re-invoking costs nothing by the performer's own
-                            // declared shape, so the window closes without a
-                            // policy and without an override to record.
-                            invoke step capability performer args
-                        elif services.ReinvokeIndeterminate then
-                            overrides.Add
-                                { Step = step
-                                  Capability = capability
-                                  Idempotency = declared }
-
-                            invoke step capability performer args
-                        else
-                            indeterminate.Add step
-                            Error DurableCode.IndeterminateStep
+            wrapAt ("host:" + fn) None (PerformerFacets.facetOf fn services.Performers) performer
 
         let journalling =
             { registry with
                 HostFunctions = registry.HostFunctions |> Map.map wrap }
 
-        let outcome = Handler.run witness journalling resolve nodeId handler store
+        // The op performer, through the same wrapper. The plan phase stages
+        // `fun _ -> perform state op` per edit (`Handler.stagedOp`), so this
+        // closure runs in the perform phase, at its ordinal, exactly as a host
+        // call's does; the inert argument and the inert answer are the honest
+        // spelling of "an op lands nothing", as the staged call's are.
+        let performing =
+            match performance with
+            | OpPerformance.InMemory -> OpPerformance.InMemory
+            | OpPerformance.Performed perform ->
+                let declared = PerformerFacets.opPerformerFacet services.Performers
+
+                OpPerformance.Performed(fun state op ->
+                    wrapAt
+                        OpStageCapability
+                        (Some(opSubject witness.State op))
+                        declared
+                        (fun _ -> perform state op |> Result.map (fun () -> Fuaran.Core.JObj []))
+                        (Fuaran.Core.JObj [])
+                    |> Result.map ignore)
+
+        let outcome =
+            Handler.runWith witness journalling performing resolve nodeId handler store
 
         // An audit fact, not a short circuit. A completed invocation is
         // REPLAYED rather than skipped — the outcome of a handler is a tree and
@@ -310,6 +390,7 @@ module Durable =
             append
                 Journal.InvocationStep
                 Journal.InvocationCapability
+                None
                 (JournalPhase.Completed(Fuaran.Core.JStr(if outcome.Committed then "committed" else "uncommitted")))
 
         { Outcome = outcome
@@ -317,6 +398,23 @@ module Durable =
           Invoked = List.ofSeq invoked
           Indeterminate = List.ofSeq indeterminate
           Overrides = List.ofSeq overrides }
+
+    /// `runWith` at `OpPerformance.InMemory`: ops are performed by being
+    /// applied, which is every placement before Phase 1967 and the UI tier
+    /// still — so nothing new is journaled, and the signature every caller had
+    /// is unchanged. A placement whose ops reach the world registers a
+    /// performer and calls `runWith`.
+    let run
+        (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
+        (services: DurableServices)
+        (invocation: string)
+        (registry: ServerEffectRegistry)
+        (resolve: string -> Result<Fuaran.Core.Table, Fuaran.Core.EvalError>)
+        (nodeId: string)
+        (handler: Handler<'Action, 'Op>)
+        (store: ServerStore<'Node, 'Store>)
+        : DurableOutcome<'Node, 'Store, 'Op, 'Effect> =
+        runWith witness services invocation registry OpPerformance.InMemory resolve nodeId handler store
 
     /// This interpreter's answer to a call action the shared fold recognised —
     /// the direct placement's arm, with the durable interpreter behind it.
@@ -349,12 +447,16 @@ module Durable =
                     let ordinal = index
                     index <- ordinal + 1
 
+                    // The host's own op performance rides into the run (Phase
+                    // 1980), so a session whose ops reach the world is covered
+                    // by the journal exactly as its host calls are.
                     let durable =
-                        run
+                        runWith
                             host.Witness
                             services
                             (sprintf "%s/%d" invocation ordinal)
                             host.Effects
+                            host.OpPerformance
                             host.Sources
                             nodeId
                             handler
@@ -399,27 +501,36 @@ module Durable =
 
     /// What this interpreter guarantees for a registration — derived, never
     /// authored. `None` where the derivation proves both delivery hazards and no
-    /// facet says both.
-    let guarantees (services: DurableServices) (handlers: Handler<'Action, 'Op> seq) : DerivedGuarantees =
-        Facets.ofHandlers (discipline services) services.Performers handlers
+    /// facet says both. `performance` is how the host performs an op (Phase
+    /// 1980) — the same value its `ServerServices` carries — because an
+    /// `ApplyOps` arm that is performed reaches outside and is derived on a
+    /// host call's terms, and one applied in memory is recomputed.
+    let guarantees
+        (services: DurableServices)
+        (performance: OpPerformance<'Node, 'Op>)
+        (handlers: Handler<'Action, 'Op> seq)
+        : DerivedGuarantees =
+        Facets.ofHandlers (discipline services) services.Performers performance handlers
 
     /// **The declaration a composition's logic-tree slot can carry** for this
     /// placement, derived from the registration it is about.
     let declaration
         (services: DurableServices)
+        (performance: OpPerformance<'Node, 'Op>)
         (logicTree: LogicTreeRef)
         (handlers: Handler<'Action, 'Op> seq)
         : PlacementDeclaration option =
-        Facets.declare PlacementId.durable logicTree (discipline services) services.Performers handlers
+        Facets.declare PlacementId.durable logicTree (discipline services) services.Performers performance handlers
 
     /// The end-to-end facet check for a declaration a composition already holds,
     /// against the registration this host actually runs.
     let checkDeclaration
         (services: DurableServices)
+        (performance: OpPerformance<'Node, 'Op>)
         (handlers: Handler<'Action, 'Op> seq)
         (declared: PlacementDeclaration)
         : FacetFinding list =
-        Facets.checkDeclaration (discipline services) services.Performers handlers declared
+        Facets.checkDeclaration (discipline services) services.Performers performance handlers declared
 
 // ============================================================================
 //  The OPERATOR CONTROLS, wired to this interpreter.
@@ -527,6 +638,27 @@ module DurableControls =
     /// apply engine and before a performer is looked up), so a control expressed
     /// at the registry reaches every arm of the closed vocabulary without this
     /// file enumerating them.
+    let runWith
+        (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
+        (services: DurableServices)
+        (controls: ControlServices)
+        (invocation: string)
+        (registry: ServerEffectRegistry)
+        (performance: OpPerformance<'Node, 'Op>)
+        (resolve: string -> Result<Fuaran.Core.Table, Fuaran.Core.EvalError>)
+        (nodeId: string)
+        (handler: Handler<'Action, 'Op>)
+        (store: ServerStore<'Node, 'Store>)
+        : ControlledOutcome<'Node, 'Store, 'Op, 'Effect> =
+        let state = Controls.stateOf controls.Journal controls.Scope
+        let refusals = ResizeArray<ControlRefusal>()
+        let controlled = Controls.apply refusals.Add state registry
+
+        { Durable = Durable.runWith witness services invocation controlled performance resolve nodeId handler store
+          Controls = state
+          Refusals = List.ofSeq refusals }
+
+    /// `runWith` at `OpPerformance.InMemory` — the signature every caller had.
     let run
         (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (services: DurableServices)
@@ -538,13 +670,7 @@ module DurableControls =
         (handler: Handler<'Action, 'Op>)
         (store: ServerStore<'Node, 'Store>)
         : ControlledOutcome<'Node, 'Store, 'Op, 'Effect> =
-        let state = Controls.stateOf controls.Journal controls.Scope
-        let refusals = ResizeArray<ControlRefusal>()
-        let controlled = Controls.apply refusals.Add state registry
-
-        { Durable = Durable.run witness services invocation controlled resolve nodeId handler store
-          Controls = state
-          Refusals = List.ofSeq refusals }
+        runWith witness services controls invocation registry OpPerformance.InMemory resolve nodeId handler store
 
     /// This interpreter's answer to a call action, with the controls in force.
     ///

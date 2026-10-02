@@ -75,10 +75,22 @@ type JournalPhase =
 /// echoing any string a document chose. `Capability` is the derived capability
 /// (`ServerEffect.capability`), recorded so a replay can prove it is serving the
 /// step it thinks it is.
+///
+/// `Subject` (Phase 1980) is what the step was ABOUT, where the capability
+/// alone cannot say: `None` for a host call, whose capability already names
+/// the function; for a performed OP STAGE — journaled under `ApplyOps` since
+/// every op of a committed plan is staged and performed like a host call — the
+/// content address (`sha256:` + the digest) of the op's canonical form, read
+/// off the state axis's codec and never the state handed beside it. A hash
+/// rather than the form itself for the reason `describe` renders no value: an
+/// op can carry a payload, and the journal's identity for it must stay
+/// log-safe and fixed-size. The divergence check compares it beside the
+/// capability, which is what tells two ops at one ordinal apart.
 type JournalEntry =
     { Invocation: string
       Step: int
       Capability: string
+      Subject: string option
       Phase: JournalPhase }
 
 /// The durability port. Two functions and a declaration, and deliberately
@@ -196,6 +208,14 @@ module Journal =
     let capabilityOf (entries: JournalEntry list) (step: int) : string option =
         entries |> List.tryFind (fun e -> e.Step = step) |> Option.map _.Capability
 
+    /// The subject recorded against `step`, if the journal has seen the step —
+    /// `Some (Some address)` for an op stage, `Some None` for a host call, and
+    /// `None` where nothing was recorded. Read beside `capabilityOf` by the
+    /// replay-divergence check (Phase 1980): the capability says which arm ran
+    /// at an ordinal, the subject says which op.
+    let subjectOf (entries: JournalEntry list) (step: int) : string option option =
+        entries |> List.tryFind (fun e -> e.Step = step) |> Option.map _.Subject
+
     /// The ordinal reserved for the INVOCATION itself rather than for one of its
     /// steps.
     ///
@@ -218,13 +238,18 @@ module Journal =
         | JournaledStep.Value _ -> true
         | _ -> false
 
-    /// A log-safe rendering of one invocation's journal — ordinals, capabilities
-    /// and phase tags, and no recorded value. The values are safe to SERVE (a
-    /// performer's own answer) and needlessly wide to LOG, which is the same
-    /// distinction `ServerDiagnostic` draws between a reason and a payload.
+    /// A log-safe rendering of one invocation's journal — ordinals, capabilities,
+    /// an op stage's subject (a content address, so it is log-safe by
+    /// construction) and phase tags, and no recorded value. The values are safe
+    /// to SERVE (a performer's own answer) and needlessly wide to LOG, which is
+    /// the same distinction `ServerDiagnostic` draws between a reason and a
+    /// payload.
     let describe (entries: JournalEntry list) : string list =
         entries
-        |> List.map (fun e -> sprintf "%d %s %s" e.Step e.Capability (JournalPhase.tag e.Phase))
+        |> List.map (fun e ->
+            match e.Subject with
+            | None -> sprintf "%d %s %s" e.Step e.Capability (JournalPhase.tag e.Phase)
+            | Some subject -> sprintf "%d %s %s %s" e.Step e.Capability subject (JournalPhase.tag e.Phase))
 
 // ============================================================================
 //  OPERATOR CONTROLS — suspend, throttle, revoke and resume, as RECORDED OPS.

@@ -497,8 +497,9 @@ module Handler =
     /// Four of the five arms complete here, and can, because none of them
     /// commits anything outside the returned value: a query READS, an op edits
     /// an in-memory tree, and a patch and a notification are values the host
-    /// performs after the handler returns. The fifth — `HostCall` — is the only
-    /// arm that reaches outside, so it is the only one staged (D8).
+    /// performs after the handler returns. The fifth — `HostCall` — reaches
+    /// outside, so it is staged (D8); and so is `ApplyOps` under a registered op
+    /// performer (D19), one staged call per edit, in the same list.
     let private runEffect
         (state: StateWitness<'Node, 'Op>)
         (channel: StoreWitness<'Store> option)

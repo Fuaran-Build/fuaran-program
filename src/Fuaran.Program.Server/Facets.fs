@@ -115,8 +115,19 @@ type DerivedGuarantees =
 /// `NonIdempotent`: an unknown performer is assumed to change the result, never
 /// assumed to be safe, because over-claiming is the failure this whole file
 /// exists to prevent.
+///
+/// `OpPerformer` (Phase 1980) is the same declaration for the registered OP
+/// performer — the one `OpPerformance.Performed` carries, which performs every
+/// op of a committed plan as a staged call of its own. One slot rather than a
+/// key, because a placement registers at most one. `None` is undeclared and
+/// reads as `NonIdempotent` on the same terms: a domain whose op is a
+/// content-addressed write may declare it `Idempotent` and reach exactly-once;
+/// one whose op is a push cannot claim it without saying so. Read only where
+/// ops are actually performed — in memory the arm is recomputed, and a
+/// declaration about a performer that is not registered changes nothing.
 type PerformerFacets =
-    { Declared: Map<string, IdempotencyFacet> }
+    { Declared: Map<string, IdempotencyFacet>
+      OpPerformer: IdempotencyFacet option }
 
 /// Which interpreter is running the handlers, and under what settings. The
 /// facet derivation is a function of THIS as much as of the handler — the same
@@ -299,7 +310,9 @@ module PerformerFacets =
     /// hidden: every registered performer then reads as `NonIdempotent`, so a
     /// handler that calls one cannot be certified exactly-once until the host
     /// says something.
-    let none: PerformerFacets = { Declared = Map.empty }
+    let none: PerformerFacets =
+        { Declared = Map.empty
+          OpPerformer = None }
 
     /// Declare what repeating this performer does.
     let declare (fn: string) (facet: IdempotencyFacet) (facets: PerformerFacets) : PerformerFacets =
@@ -314,6 +327,18 @@ module PerformerFacets =
     let facetOf (fn: string) (facets: PerformerFacets) : IdempotencyFacet =
         Map.tryFind fn facets.Declared
         |> Option.defaultValue IdempotencyFacet.NonIdempotent
+
+    /// Declare what repeating the registered OP performer does (Phase 1980).
+    let declareOpPerformer (facet: IdempotencyFacet) (facets: PerformerFacets) : PerformerFacets =
+        { facets with OpPerformer = Some facet }
+
+    /// Whether the host said anything about the op performer.
+    let isOpPerformerDeclared (facets: PerformerFacets) : bool = facets.OpPerformer.IsSome
+
+    /// What repeating the op performer does — `NonIdempotent` where the host
+    /// has not said, on `facetOf`'s terms.
+    let opPerformerFacet (facets: PerformerFacets) : IdempotencyFacet =
+        facets.OpPerformer |> Option.defaultValue IdempotencyFacet.NonIdempotent
 
 /// The placement ids a composition's logic-tree slot can name.
 module PlacementId =
@@ -433,38 +458,80 @@ module Facets =
           Idempotency = idempotency
           Restart = RestartVisibility.LostOnRestart }
 
+    /// Whether this placement PERFORMS its ops — a registered op performer
+    /// (Phase 1967) makes `ApplyOps` an arm that reaches outside, on a host
+    /// call's terms. A fact about the registration, passed in rather than
+    /// declared, so a host that registers a performer and declares nothing
+    /// about it reads as the undeclared performer it is rather than as the
+    /// recomputed arm it no longer is.
+    let private performsOps (performance: OpPerformance<'Node, 'Op>) : bool =
+        match performance with
+        | OpPerformance.InMemory -> false
+        | OpPerformance.Performed _ -> true
+
     /// What repeating an arm does, independent of any interpreter.
     ///
     /// A read repeats freely. `ApplyOps` is the placement's one domain-state
     /// mutation and `Notify` ships a message, so both change the result when
-    /// repeated. `EmitPatch` pushes ops the caller applies to a tree it already
-    /// holds; repeating it is not provably a no-op, so it takes the mutating
-    /// answer rather than the flattering one.
-    let private intrinsicIdempotency (performers: PerformerFacets) (effect: ServerEffect<'Op>) : IdempotencyFacet =
+    /// repeated — and under a registered op performer `ApplyOps` repeats
+    /// whatever the host declared of that performer (Phase 1980), on exactly a
+    /// host call's terms. `EmitPatch` pushes ops the caller applies to a tree it
+    /// already holds; repeating it is not provably a no-op, so it takes the
+    /// mutating answer rather than the flattering one.
+    let private intrinsicIdempotency
+        (performers: PerformerFacets)
+        (performance: OpPerformance<'Node, 'Op>)
+        (effect: ServerEffect<'Op>)
+        : IdempotencyFacet =
         match effect with
         | ServerEffect.RunQuery _ -> IdempotencyFacet.Idempotent
+        | ServerEffect.ApplyOps _ when performsOps performance -> PerformerFacets.opPerformerFacet performers
         | ServerEffect.ApplyOps _
         | ServerEffect.EmitPatch _
         | ServerEffect.Notify _ -> IdempotencyFacet.NonIdempotent
         | ServerEffect.HostCall(fn, _, _) -> PerformerFacets.facetOf fn performers
+
+    /// The posture of an arm that COMMITS OUTSIDE under deterministic replay —
+    /// a host call, or a performed op — given what repeating its performer does
+    /// and whether the policy re-invokes an undecided step. It cannot avoid both
+    /// hazards; see `ofEffect`.
+    let private reachingOutside (intrinsic: IdempotencyFacet) (replay: ReplayDiscipline) : DerivedGuarantees =
+        match intrinsic, replay.ReinvokeIndeterminate with
+        | IdempotencyFacet.Idempotent, _ ->
+            { Delivery = DeliveryFacet.hazards DeliveryFacet.ExactlyOnceEffective
+              Idempotency = IdempotencyFacet.Idempotent
+              Restart = RestartVisibility.SurvivesRestart }
+        | IdempotencyFacet.IdempotentWithStore, true ->
+            { Delivery = DeliveryFacet.hazards DeliveryFacet.ExactlyOnceEffective
+              Idempotency = IdempotencyFacet.IdempotentWithStore
+              Restart = RestartVisibility.SurvivesRestart }
+        | _, true ->
+            { Delivery = DeliveryFacet.hazards DeliveryFacet.AtLeastOnce
+              Idempotency = intrinsic
+              Restart = RestartVisibility.RetriedAfterRestart }
+        | _, false ->
+            { Delivery = DeliveryFacet.hazards DeliveryFacet.AtMostOnce
+              Idempotency = intrinsic
+              Restart = RestartVisibility.LostOnRestart }
 
     /// **What ONE arm guarantees under ONE interpreter.**
     ///
     /// Two divisions decide every answer, and both are rulings this repository
     /// already made rather than choices taken here.
     ///
-    /// **Four of the five arms never reach outside the interpreter** (D8 says so
-    /// in as many words: a query reads, an op edits an in-memory tree, and a
-    /// patch and a notification accumulate as values the caller performs after
-    /// the handler returns). So under deterministic replay they are recomputed
-    /// from the entry state on every re-run and land exactly once — not because
-    /// anything dedupes them, but because there was never a second act to
-    /// dedupe. Their idempotency is `IdempotentWithStore` and not `Idempotent`,
-    /// and that is the honest half: repeating them is safe BECAUSE the journal
-    /// makes the recomputation deterministic, which is a claim about substrate.
+    /// **The arms that never reach outside the interpreter** (D8 says so in as
+    /// many words: a query reads, an op edits an in-memory tree, and a patch and
+    /// a notification accumulate as values the caller performs after the handler
+    /// returns) are recomputed from the entry state on every re-run under
+    /// deterministic replay and land exactly once — not because anything dedupes
+    /// them, but because there was never a second act to dedupe. Their
+    /// idempotency is `IdempotentWithStore` and not `Idempotent`, and that is
+    /// the honest half: repeating them is safe BECAUSE the journal makes the
+    /// recomputation deterministic, which is a claim about substrate.
     ///
-    /// **`HostCall` is the only arm that commits outside**, so it is the only one
-    /// whose facet depends on the policy, and it cannot avoid both hazards:
+    /// **The arms that commit outside — `HostCall`, and `ApplyOps` under a
+    /// registered op performer (D23)** — are the ones whose facet depends on the
+    /// policy, and they cannot avoid both hazards:
     ///
     ///   * a performer the host declares `Idempotent` closes the indeterminate
     ///     window by its own shape — re-invoking costs nothing — so the arm is
@@ -482,9 +549,10 @@ module Facets =
     let ofEffect
         (discipline: PlacementDiscipline)
         (performers: PerformerFacets)
+        (performance: OpPerformance<'Node, 'Op>)
         (effect: ServerEffect<'Op>)
         : DerivedGuarantees =
-        let intrinsic = intrinsicIdempotency performers effect
+        let intrinsic = intrinsicIdempotency performers performance effect
 
         match discipline with
         | PlacementDiscipline.Direct -> directPosture intrinsic
@@ -496,30 +564,14 @@ module Facets =
                 { Delivery = DeliveryFacet.hazards DeliveryFacet.ExactlyOnceEffective
                   Idempotency = IdempotencyFacet.Idempotent
                   Restart = RestartVisibility.SurvivesRestart }
+            | ServerEffect.ApplyOps _ when performsOps performance -> reachingOutside intrinsic replay
             | ServerEffect.ApplyOps _
             | ServerEffect.EmitPatch _
             | ServerEffect.Notify _ ->
                 { Delivery = DeliveryFacet.hazards DeliveryFacet.ExactlyOnceEffective
                   Idempotency = IdempotencyFacet.IdempotentWithStore
                   Restart = RestartVisibility.SurvivesRestart }
-            | ServerEffect.HostCall _ ->
-                match intrinsic, replay.ReinvokeIndeterminate with
-                | IdempotencyFacet.Idempotent, _ ->
-                    { Delivery = DeliveryFacet.hazards DeliveryFacet.ExactlyOnceEffective
-                      Idempotency = IdempotencyFacet.Idempotent
-                      Restart = RestartVisibility.SurvivesRestart }
-                | IdempotencyFacet.IdempotentWithStore, true ->
-                    { Delivery = DeliveryFacet.hazards DeliveryFacet.ExactlyOnceEffective
-                      Idempotency = IdempotencyFacet.IdempotentWithStore
-                      Restart = RestartVisibility.SurvivesRestart }
-                | _, true ->
-                    { Delivery = DeliveryFacet.hazards DeliveryFacet.AtLeastOnce
-                      Idempotency = intrinsic
-                      Restart = RestartVisibility.RetriedAfterRestart }
-                | _, false ->
-                    { Delivery = DeliveryFacet.hazards DeliveryFacet.AtMostOnce
-                      Idempotency = intrinsic
-                      Restart = RestartVisibility.LostOnRestart }
+            | ServerEffect.HostCall _ -> reachingOutside intrinsic replay
 
     /// The effects one handler declares, in stage order. A `Compute` stage
     /// reaches no effect vocabulary at all — it is the shared fold, against the
@@ -531,21 +583,27 @@ module Facets =
             | Effect effect -> Some effect
             | Compute _ -> None)
 
-    /// What ONE handler guarantees.
+    /// What ONE handler guarantees. `performance` is how the placement performs
+    /// an op (Phase 1980): the registration fact the `ApplyOps` arm's answer
+    /// turns on.
     let ofHandler
         (discipline: PlacementDiscipline)
         (performers: PerformerFacets)
+        (performance: OpPerformance<'Node, 'Op>)
         (handler: Handler<'Action, 'Op>)
         : DerivedGuarantees =
-        effectsOf handler |> List.map (ofEffect discipline performers) |> combineAll
+        effectsOf handler
+        |> List.map (ofEffect discipline performers performance)
+        |> combineAll
 
     /// **What a whole registration guarantees** — the composition's honest facet.
     let ofHandlers
         (discipline: PlacementDiscipline)
         (performers: PerformerFacets)
+        (performance: OpPerformance<'Node, 'Op>)
         (handlers: Handler<'Action, 'Op> seq)
         : DerivedGuarantees =
-        handlers |> Seq.map (ofHandler discipline performers) |> combineAll
+        handlers |> Seq.map (ofHandler discipline performers performance) |> combineAll
 
     // ─── the declaration, and the check ──────────────────────────────────────
 
@@ -560,9 +618,10 @@ module Facets =
         (logicTree: LogicTreeRef)
         (discipline: PlacementDiscipline)
         (performers: PerformerFacets)
+        (performance: OpPerformance<'Node, 'Op>)
         (handlers: Handler<'Action, 'Op> seq)
         : PlacementDeclaration option =
-        ofHandlers discipline performers handlers
+        ofHandlers discipline performers performance handlers
         |> narrowest
         |> Option.map (fun guarantees ->
             { Placement = placement
@@ -581,6 +640,23 @@ module Facets =
         |> Seq.distinct
         |> Seq.sort
         |> List.ofSeq
+
+    /// Whether the registration performs ops through a performer the host has
+    /// not declared (Phase 1980): an op performer is registered, a handler
+    /// reaches `ApplyOps`, and nothing is said about repeating it.
+    let undeclaredOpPerformer
+        (performers: PerformerFacets)
+        (performance: OpPerformance<'Node, 'Op>)
+        (handlers: Handler<'Action, 'Op> seq)
+        : bool =
+        performsOps performance
+        && not (PerformerFacets.isOpPerformerDeclared performers)
+        && (handlers
+            |> Seq.collect effectsOf
+            |> Seq.exists (fun effect ->
+                match effect with
+                | ServerEffect.ApplyOps _ -> true
+                | _ -> false))
 
     /// **The end-to-end consistency check.**
     ///
@@ -602,10 +678,11 @@ module Facets =
     let checkDeclaration
         (discipline: PlacementDiscipline)
         (performers: PerformerFacets)
+        (performance: OpPerformance<'Node, 'Op>)
         (handlers: Handler<'Action, 'Op> seq)
         (declaration: PlacementDeclaration)
         : FacetFinding list =
-        let derived = ofHandlers discipline performers handlers
+        let derived = ofHandlers discipline performers performance handlers
         let declared = derivedOf declaration.Guarantees
 
         let unknown =
@@ -670,7 +747,20 @@ module Facets =
                     "no idempotency declared, so the derivation used "
                     + IdempotencyFacet.tag IdempotencyFacet.NonIdempotent })
 
-        unknown @ delivery @ idempotency @ restart @ undeclared
+        // The op performer, on the same terms (Phase 1980): reported under the
+        // capability its stages are journaled under, so a host reading
+        // "at-most-once" over a handler of nothing but ops finds the line.
+        let undeclaredOp =
+            if undeclaredOpPerformer performers performance handlers then
+                [ { Code = FacetCode.UndeclaredPerformer
+                    Capability = Some "ApplyOps"
+                    Detail =
+                      "no idempotency declared for the registered op performer, so the derivation used "
+                      + IdempotencyFacet.tag IdempotencyFacet.NonIdempotent } ]
+            else
+                []
+
+        unknown @ delivery @ idempotency @ restart @ undeclared @ undeclaredOp
 
     /// Whether a check found anything that is a REFUSAL rather than a note. The
     /// undeclared-performer line is information; everything else is a promise
