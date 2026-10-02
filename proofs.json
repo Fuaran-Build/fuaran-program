@@ -1592,6 +1592,115 @@
         "document": "proofs/README.md"
       },
       "reason": "they are the host's port (EffectJournal): two acts to two systems, which is why the indeterminate window exists and cannot be closed here, and a restart claim nothing in this repository can check. The theorems are about what a replay does with a snapshot, never about how the snapshot came to be; the facet derivation carries the restart claim as the host's own, and DurableInterpreterTests pins the attempt-before / decide-after order against the journal's rendering."
+    },
+    {
+      "id": "each-is-lowering",
+      "level": "proved",
+      "phase": "Phase 1990",
+      "claim": "An Each over a literal collection, seen lowered — the body once per element with that element substituted for the placeholder — folds to the same outcome and placement as the sequence of its elements, traces the same steps under its own constructor, is in the reversible fragment exactly when the sequence is, and is priced exactly as the sequence is (the body's cost once per element, no step for a bound); and the inverse of an Each run is the sequence's inverse, its elements' inverses in reverse order. Every other fold theorem — totality, blindness, the reserved-key invariant, the halting clause, traced_agrees, reverse_run, fold_steps_within_cost — extends over the shape through its list lemma.",
+      "evidence": {
+        "theorem": "each_is_lowering",
+        "model": "proofs/BoundedFold.fst",
+        "prover": "proofs/fstar-pin.json",
+        "supporting": [
+          "each_reverse_is_sequence_reverse",
+          "reverse_run",
+          "fold_steps_within_cost",
+          "traced_agrees"
+        ],
+        "definitions": [
+          "fold",
+          "fold_many",
+          "fold_traced",
+          "reverse",
+          "reversible",
+          "view_cost"
+        ],
+        "note": "the view carries the elements already substituted (VEach act elements), because a substitution into the model's abstract action and expression types is not a thing the model can define; the lowering is the witness's Substitute, and its obligation is the each-substitution-preserves-shape row"
+      }
+    },
+    {
+      "id": "each-plans-as-lowered",
+      "level": "proved",
+      "phase": "Phase 1990",
+      "claim": "An Each over ops plans exactly as its lowered elements written out one after another — state and staged list — so every law about a sequence of ops is a law about it; the trail, the effect gate and the undo ladders take its case through their list lemmas.",
+      "evidence": {
+        "theorem": "each_plans_as_lowered",
+        "model": "proofs/Staging.fst",
+        "prover": "proofs/fstar-pin.json",
+        "supporting": [
+          "plan_each_unstaged",
+          "handed_each",
+          "plan_each_admitted",
+          "trail_agrees_each",
+          "trail_chain_each",
+          "defects_clear_each"
+        ],
+        "definitions": [
+          "plan_each",
+          "trail_each",
+          "lowered",
+          "view_defects_each"
+        ]
+      }
+    },
+    {
+      "id": "each-model-agrees-with-shipped-code",
+      "level": "tested",
+      "phase": "Phase 1990",
+      "claim": "The extracted generic fold, handed an Each's elements substituted through the production Substitute, agrees with BoundedActions.run, which substitutes as it folds, over a toy corpus of per-element iterations — empty, one element, several, a halt inside an element, nested with distinct placeholders, inside a branch inside a repeat — in store, effects, diagnostics, halt and placement; and the extracted staging model maps an op-channel Each the same way.",
+      "evidence": {
+        "family": "Phase 1715 - the proved bounded fold as oracle",
+        "host": "tests/Fuaran.Program.Parity.Tests/ProofOracleTests.fs",
+        "cases": [
+          "each writes the element, element by element",
+          "each over nothing runs nothing",
+          "each with a leaf and a write per element",
+          "each halts at the element whose guard fails",
+          "each nested in each, distinct placeholders",
+          "each inside a branch inside a repeat"
+        ],
+        "runner": "proofs/check.ps1 step 6 (the BoundedFold module's host), and run.ps1 (the Parity test project)",
+        "note": "the model receives the lowered form; production lowers as it goes; a Substitute that did not preserve the body's shape would show here as a divergence"
+      }
+    },
+    {
+      "id": "each-substitution-preserves-shape",
+      "level": "assumed",
+      "phase": "Phase 1990",
+      "claim": "A witness's Substitute writes the element over the placeholder in every operand of the action or op and of those beneath it, and moves nothing else: the substituted body VIEWS as the original does, a nested Each keeping its own collection and placeholder. Under it the model's VEach / OEach over the lowered elements is the production fold over the Each.",
+      "class": "witness-obligation",
+      "evidence": {
+        "assumption": "ActionWitness.Substitute and StateWitness.Substitute preserve the view's shape; a domain with no placeholders answers the identity"
+      },
+      "mitigation": "the differential hosts above; and EachTests, which runs an Each against its hand-written unrolling over generated collections through the fold, the traced fold, the budget, the demanded projection, the replay classification and the fragment, and shows that on a tree containing no Each the arrow is never invoked (a witness whose Substitute throws answers the same through every walk)"
+    },
+    {
+      "id": "each-scope-refused-at-validation",
+      "level": "tested",
+      "phase": "Phase 1990",
+      "claim": "A program that reads a placeholder no enclosing Each binds, or whose Each rebinds a name an enclosing Each binds, is refused BEFORE anything runs — at the fold's entry as a halt naming the placeholder with nothing written or emitted, and at the handler before an ApplyOps effect's first op plans — on both axes; the static walks answer the same defects from the tree alone.",
+      "evidence": {
+        "family": "Phase 1990 - Each over a literal collection",
+        "host": "tests/Fuaran.Program.Tests/EachTests.fs",
+        "cases": [
+          "a placeholder read outside any Each that binds it is refused at validation, named, with nothing run",
+          "an Each that rebinds a name an enclosing Each binds is refused rather than shadowed",
+          "a placeholder read outside any Each is refused on the op axis before the first op plans, named"
+        ],
+        "runner": "run.ps1 (the Tests project)",
+        "note": "not modelled: the model's expressions and ops are abstract and read no names, so the scope rule is a property of production's walk over the view, pinned here"
+      }
+    },
+    {
+      "id": "each-specification-unchanged",
+      "level": "policy",
+      "phase": "Phase 1990",
+      "claim": "The program wire specification does not move for Each: no schema, fixture byte, refusal class or rule.",
+      "evidence": {
+        "document": "docs/generic-tier.md"
+      },
+      "reason": "the specification references the action and op algebras and does not spell their shapes (its §3, rule 2); a compute stage's action and an ApplyOps effect's ops travel in the domain's own codec, spliced verbatim (K6), which is where an Each is encoded — the toy's and the verb's test codecs gain a case; the UI adapter's codec is the UI specification's and its tier adopts no Each. DECISIONS.md D29 item 6 records the phase's wire task as answered rather than performed, and the codec families, the driver scenarios, the parity suite and the Fable leg pass byte for byte."
     }
   ]
 }

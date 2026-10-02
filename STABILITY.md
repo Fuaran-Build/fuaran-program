@@ -458,6 +458,63 @@ op performance as the third argument (`OpPerformance.InMemory` if it performs no
 branches on coverage findings should expect `ApplyOps` in a gate finding when an operator has
 withdrawn the op performer; D28 says why it is a gate finding rather than an absence.
 
+### Rides the draft: `Each` over a literal collection (Phase 1990)
+
+**Class: breaking**, for every consumer that matches exhaustively on `ActionView`, `OpView`, `Trace`
+or `FlowDecision`, constructs an `ActionWitness` or a `StateWitness`, or calls `OpView.beneath` — the
+class this slot already carries, so it rides rather than advancing. `v0.6.0` is the newest tag and
+nothing public pins `0.7.0`. A loop whose body depends on which iteration it is in could not be
+written (D21 gave `Repeat` no index, for the reversal argument); `DECISIONS.md` D29 records what was
+decided; this entry records what a consumer pays.
+
+- **`ActionView` has an eighth shape:** `Each of collection: JVal list * placeholder: string * body:
+  'Action` — per-element iteration over a LITERAL collection, lowered by substitution: the body runs
+  once per element with that element written over the placeholder, as a sequence. Every exhaustive
+  match over the view gains an arm (the fold, the budget, the demanded projection, the replay
+  classification, the fragment and the inverse in this repository; any consumer's own walk).
+- **`OpView<'Op>` has a fifth shape:** `Each of collection: JVal list * placeholder: string * body:
+  'Op list`. `OpView.edits` still fills `View` for a domain with none.
+- **`ActionWitness` gains `Substitute: string -> JVal -> 'Action -> 'Action` and `Placeholders:
+  'Action -> string list`; `StateWitness` gains `Substitute: string -> JVal -> 'Op -> 'Op` and
+  `Placeholders: 'Op -> string list`** (FS0764 on every full-literal construction). `Substitute`
+  writes an element over a placeholder throughout the action or op — the domain's own recursion — and
+  is called only when an `Each` is met; `Placeholders` answers the names a node's OWN operands read,
+  for the scope check. A domain with no placeholders fills them with `fun _ _ x -> x` and `fun _ ->
+  []`, which is what the UI adapter does. The obligation on `Substitute` — the substituted action or
+  op views as the original does, shape for shape — is stated in `proofs/README.md` and tested at the
+  toy witness.
+- **`OpView.beneath` takes the substitution:** `beneath view substitute op`, because the ops beneath
+  an `Each` are its SUBSTITUTED elements — the policy must see every address a placeholder stands for.
+  `ServerArgumentPolicy.reachOfOp` passes the state witness's; a consumer calling `beneath` directly
+  adds the argument. `OpView.lowered` / `StateWitness.lowered` / `ActionWitness.lowered` are the
+  lowered forms, public.
+- **`Trace` gains `Each of elements: Trace list`** — the elements that ran, under their own
+  constructor; `Trace.restorable` reads it; the inverse of an `Each` run is a `Reversed.Sequence`.
+  **`FlowDecision` gains `Iterated of count: int`**, reported from both axes.
+- **Two new refusals, both at validation and never mid-run**, each a `BoundedDiagnostic.Refused` (the
+  fold, carrying the program's description) or the `ApplyOps` arm's `Failed` (the handler): `placeholder
+  '<name>' is read outside any Each that binds it` and `placeholder '<name>' is already bound by an
+  enclosing Each`. `BoundedActions.run` / `runTraced` refuse at entry with nothing run; `Handler`'s
+  op planning refuses before its first op. `ScopeDefect` and the static walks
+  (`BoundedActions.scopeDefects`, `StateWitness.scopeDefects`, `OpView.scopeDefects`,
+  `ActionWitness.scopeDefects`) are public, for a host that validates at registration.
+- **The budget prices an `Each` as its lowered form** — the body's cost once per element, summed, no
+  step for a bound — so the driver's gate refuses an over-size `Each` before its first element.
+- **The oracle differentials** map the shape lowered (`tests/*/ProofOracleTests.fs`); the toy corpus
+  covers it; the verb domain carries placeholders as `{name}` tokens in its paths and the toy's
+  expressions as `Hole`.
+
+**What did NOT change:** no wire member, no fixture byte, no refusal class of the program wire
+specification (D29 item 6: the specification references the action and op algebras and does not
+spell their shapes; a compute stage's action and an effect's ops travel in the DOMAIN's codec), no
+demanded-document byte for any program that uses no `Each` (the document stays at version 6), no
+envelope needs re-signing, and the UI tier's behaviour, byte for byte through the parity suite and
+the Fable leg — it views nothing as an `Each` (`ui_view_no_flow`, proved and tested over the
+arm-complete corpus) and never substitutes. Every earlier proof statement keeps its form; `Each`
+takes the sequence's case in each.
+
+**What a consumer does about it:** `docs/migrations/phase-1990.md` — one page, a diff per file.
+
 ## 0.6.0 — RELEASED (tagged `v0.6.0`, 2026-09-28) — the core becomes domain-generic (Phase 1896)
 
 **Class: breaking**, for `Fuaran.Program.Bounded`, `Fuaran.Program.Runtime` and

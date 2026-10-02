@@ -121,9 +121,10 @@ generic tier, the `DECISIONS.md` D18 contract member — above every definition,
 it has two layers in one file.
 
 **The generic tier** is a model of the fold the generic core runs (`BoundedActions.run witness`,
-which Phase 1896 wrote against this model — D14's "model first"): one `match` over the five shapes
+which Phase 1896 wrote against this model — D14's "model first"): one `match` over the eight shapes
 of D18's `ActionView` — `Sequence`, `Assign`, `Call`, `Require` (the halting guard, Phase 1967),
-`Leaf` — parameterised by a WITNESS record holding the fold-read members of `ProgramWitness`
+`Choose` and `Repeat` (Phase 1976), `Each` (per-element iteration over a literal collection, seen
+lowered, Phase 1990), `Leaf` — parameterised by a WITNESS record holding the fold-read members of `ProgramWitness`
 (`View`, `Lower`, `Describe`, `Resolve`, `IsReserved`, `ReservedPrefix`) plus the core's own truth
 test as an arrow (`w_is_true`, because the model's value type is abstract). Its four theorems are
 over the view and quantified over every witness, and a fifth — `fold_no_require_no_halt` — says a
@@ -160,10 +161,10 @@ the differential host's projection of the domain store onto that channel is wher
 
 ### 1. `fold_total` / `run_total` — the fold is defined on every shape, and one step is characterised
 
-The view has five shapes and the fold names all five, with no wildcard arm, no partial match and no
-throw; termination is structural on the view, carried by the `decreases` clause rather than by a
+The view has eight shapes and the fold names all eight, with no wildcard arm, no partial match and
+no throw; termination is structural on the view, carried by the `decreases` clause rather than by a
 depth counter. In F\* that much is the `Tot` effect, and `handled_view` states it a second time by
-naming every constructor again — so a fifth shape fails to compile here exactly as it fails to
+naming every constructor again — so a ninth shape fails to compile here exactly as it fails to
 compile in the fold. At the UI witness the same holds of the fourteen arms: `ui_view` names each
 with no wildcard, and `handled` names them once more. This is the exhaustiveness check D18 moves
 into the adapter's `View`, checked here by the same means.
@@ -295,6 +296,24 @@ so `sequence_homomorphism` and every other sequence law is a law about repeats, 
 repeat is the inverse of that sequence (which is why `reverse` answers a sequence for it: each
 iteration overwrote different values and has its own inverse body). Unconditional.
 
+### 9. `each_is_lowering` / `each_reverse_is_sequence_reverse` — an `Each` is the sequence of its elements (Phase 1990)
+
+Per-element iteration over a literal collection is vocabulary that lowers to the core by
+SUBSTITUTION (D1, D29): the witness writes each element over the placeholder in the body, and what
+the core runs is the sequence of the results. The view carries the LOWERED form — `VEach act
+elements`, the body once per element, substituted — because the model's action and expression types
+are abstract and a substitution into them is not a thing the model can define; it is the witness's,
+exactly as `View` and `Lower` are, and the obligation that it preserves the body's shape is stated
+under "Assumed, and stated". Over that view the theorem is an EQUATION: an `Each` folds to the same
+outcome and placement as the sequence of its elements, traces the same steps (under `TEach` rather
+than `TSeq`, so a reader sees how many elements ran), is in the reversible fragment exactly when the
+sequence is, and is priced exactly as the sequence is — the body's cost once per element, with no
+step for a bound, because a literal collection is not read. `each_reverse_is_sequence_reverse` says
+the inverse of an `Each` run is the sequence's inverse: its elements' inverses in reverse order. With
+`reverse_run`, which takes the `VEach` case through `reverse_run_many`, that is the reversal
+statement carried through the lowering. Unconditional; every other theorem above extends over `VEach`
+by its list lemma, with no new proof technique and no change to any `decreases` clause.
+
 ### Phase 1715's lemmas, one by one
 
 Nothing is dropped silently. Each Phase-1715 name is either kept with its statement, or restated
@@ -388,18 +407,23 @@ Over the generic tier's view, for every witness (Phase 1898):
 8. **A run's work is within the view's cost** — `fold_steps_within_cost` (Phase 1976).
    Unconditional.
 9. **A repeat is the sequence of its body** — `repeat_is_unrolling` (Phase 1976). Unconditional.
+10. **An `Each` is the sequence of its lowered elements** — `each_is_lowering` and
+    `each_reverse_is_sequence_reverse` (Phase 1990): the same outcome, placement, trace steps,
+    fragment membership, cost and inverse as the sequence of its elements. Unconditional over the
+    view; the lowering itself is the witness's `Substitute`, an obligation stated under "Assumed".
 
 At the UI witness (Phase 1715's five, each a corollary of the generic theorem above it):
 
-10. **Totality over the closed union** — `run_total`.
-11. **No closure invocation** — `run_no_closure`, with `ui_blind_to_closures` discharging the
+11. **Totality over the closed union** — `run_total`.
+12. **No closure invocation** — `run_no_closure`, with `ui_blind_to_closures` discharging the
     obligation, so the theorem is unconditional again.
-12. **`Chain` is the fold's homomorphism** — `chain_homomorphism`.
-13. **Host-reserved keys untouched** — `reserved_untouched`, conditional on the same seam
+13. **`Chain` is the fold's homomorphism** — `chain_homomorphism`.
+14. **Host-reserved keys untouched** — `reserved_untouched`, conditional on the same seam
     hypothesis as 4, discharged the same way.
-14. **The UI tier never halts** — `ui_never_halts`, through `ui_view_no_require` (Phase 1967) and
-    `ui_view_no_flow` (Phase 1976: no UI arm views as a branch or a repeat). Unconditional; it is
-    what keeps 10–13 at their pre-1967 statements.
+15. **The UI tier never halts** — `ui_never_halts`, through `ui_view_no_require` (Phase 1967) and
+    `ui_view_no_flow` (Phase 1976: no UI arm views as a branch or a repeat; Phase 1990 adds no UI
+    arm either, so the statement stands unchanged). Unconditional; it is what keeps 11–14 at their
+    pre-1967 statements.
 
 **The conditional theorems, named:** `fold_reserved_untouched` and `reserved_untouched` (on the
 placement seam); `run_action_blind` (on the witness's blindness); `reverse_run` and
@@ -461,6 +485,22 @@ host's file citations move with the code in those commits.
   `Assign` did something other than write one key is outside the model. Mitigated by the
   differential host projecting the domain store onto that channel and comparing it key by key.
 - **The placement seam.** An arm's store, effects and diagnostics are its own.
+- **The lowering of an `Each` preserves the body's shape** (Phase 1990). `ActionWitness.Substitute`
+  and `StateWitness.Substitute` are NOT model members: the model's `VEach` and `OEach` carry the
+  elements already substituted, because a substitution into an abstract action or op is not a thing
+  the model can define, and the F# fold applies the witness's arrow before it views. What the
+  theorems then say of an `Each` is exactly what they say of the sequence of its elements, and that
+  reading is faithful to production only if the substituted body VIEWS as the original does — the
+  placeholder replaced in every operand, nothing else moved, a nested `Each` keeping its own
+  collection and placeholder. Mitigated by the differential hosts, which hand the model the elements
+  substituted through the production `Substitute` and run production, which substitutes as it folds,
+  beside it over a corpus of empty, single, several, halting, nested and flow-wrapped iterations; and
+  by `EachTests`, which checks an `Each` against its hand-written unrolling over generated
+  collections through every walk, and that on a tree with no `Each` the arrow is never invoked.
+- **The scope rule is decided from the tree and refused at entry** (Phase 1990). The model's
+  expressions and ops read no names, so a placeholder bound by no `Each` is outside it; production
+  refuses such a program before its first step (`BoundedActions.run`) or before its first op plans
+  (the handler), naming the placeholder, and `EachTests` pins both refusals and that nothing ran.
 - **The toolchain.** The extractor and the F# compiler are trusted. The theorem is about the
   model; what runs in the differential is the extraction, and nothing verifies that extraction
   preserves semantics. Mitigated by the differential running the EXTRACTION, and by step 4's
@@ -882,11 +922,18 @@ The denial sink (`OnDenied`) is a unit-returning observer and is not modelled.
     `durable_resume` (Phase 1980).
 19. **With nothing recorded, the durable run's outcome is the direct run's** —
     `empty_journal_is_direct` (Phase 1980).
+20. **An `Each` over ops plans as its lowered elements written out one after another** —
+    `each_plans_as_lowered` (Phase 1990): state and staged list, so every sequence law is a law about
+    it, and the trail, the gate and the undo ladders take its case through their list lemmas
+    (`trail_each`, `plan_each_admitted`, `trail_agrees_each`, `trail_chain_each`,
+    `defects_clear_each`). Unconditional over the view; the substitution that lowers the body is the
+    state witness's, with the obligation the fold theorem states.
 
 Since Phase 1976 the op view is taken to EXHAUSTION (`op_view o`, `views`), as the action view has
-been since Phase 1898: `plan_ops` plans the views (`plan_views` / `plan_view` / `plan_repeat`), so
-planning terminates structurally and the obligation that `View` unfolds finitely sits on the
-witness. Every earlier theorem keeps its statement over the op sequence.
+been since Phase 1898: `plan_ops` plans the views (`plan_views` / `plan_view` / `plan_repeat`, and
+since Phase 1990 `plan_each` over `OEach`'s already-substituted elements), so planning terminates
+structurally and the obligation that `View` unfolds finitely sits on the witness. Every earlier
+theorem keeps its statement over the op sequence.
 
 No `admit`, no `assume`; `--report_assumes error` is on for this module exactly as it is for
 the other two.

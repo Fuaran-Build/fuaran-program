@@ -254,6 +254,7 @@ type ActionView<'Action, 'Expr> =
     | Require  of condition: 'Expr                           // the HALTING guard (Phase 1967, D19); no UI arm
     | Choose   of entry: 'Expr * whenTrue: 'Action * whenFalse: 'Action * exit: 'Expr option   // SELECTION (Phase 1976, D21); no UI arm
     | Repeat   of bound: Bound<'Expr> * body: 'Action        // BOUNDED ITERATION (Phase 1976, D21); no UI arm
+    | Each     of collection: JVal list * placeholder: string * body: 'Action   // PER-ELEMENT ITERATION over a literal collection (Phase 1990, D29); no UI arm
     | Leaf     of LeafDeclaration                            // every other domain act
 
 type Bound<'Expr> =                                          // D2's bound (Phase 1976)
@@ -270,9 +271,11 @@ type LeafOutcome<'Effect> =
     | Decline                                                // -> BoundedDiagnostic.UnsupportedOnBoundedPath
 
 type ActionWitness<'Action, 'Expr, 'Store, 'Effect> =
-    { View:     'Action -> ActionView<'Action, 'Expr>
-      Lower:    nodeId: string -> 'Action -> 'Store -> LeafOutcome<'Effect>   // Leaf only
-      Describe: 'Action -> string }                          // today: Validation.describeAction
+    { View:         'Action -> ActionView<'Action, 'Expr>
+      Lower:        nodeId: string -> 'Action -> 'Store -> LeafOutcome<'Effect>   // Leaf only
+      Describe:     'Action -> string                        // today: Validation.describeAction
+      Substitute:   placeholder: string -> JVal -> 'Action -> 'Action   // an Each's lowering (Phase 1990, D29)
+      Placeholders: 'Action -> string list }                 // the names this level's own operands read
 ```
 
 The fold keeps its current form. It is one `match` in one file, now over `ActionView`. It owns
@@ -311,6 +314,25 @@ nothing, and the inverse of a run (`reverse`, `runReversed`) restores the starti
 (`reverse_run`, proved; `proofs/README.md` section 6). No UI arm views as either shape
 (`ui_view_no_flow`, proved and tested).
 
+**`Each` is the eighth shape, added by Phase 1990 (D29) — per-element iteration over a LITERAL
+collection, the loop D21's index-free repeat could not express.** The body runs once per element of
+the collection, in order, with that element substituted for the placeholder — an expression of the
+domain's that reads it by name — through the witness's `Substitute`. It is VOCABULARY that lowers to
+the core by substitution (D1): what runs is the sequence of the substituted bodies (`each_is_lowering`,
+proved), so no walk learns a new shape — the budget sums the lowered elements' costs, the demanded
+projection and the replay classification read the lowered form, the trace records the elements that
+ran (`Trace.Each`), and the inverse of an `Each` run is the sequence of its elements' inverses. The
+substitution is the WITNESS's, because the core cannot see inside an action; the obligation that it
+preserves the body's shape sits beside the obligation that `View` unfolds finitely, and the differential
+host checks it at the toy witness. The bound is the collection's length, fixed by the tree (D2); the
+element is a value in the tree and not a cell in the store, so the body cannot overwrite it, which is
+the case D21 refused an index for. A placeholder is bound lexically by exactly one `Each`; a body that
+reads one no enclosing `Each` binds, or an `Each` that rebinds a name an enclosing one binds, is
+refused at VALIDATION — `BoundedActions.run` refuses at entry, before its first step, naming the
+placeholder (`ActionWitness.Placeholders` says which names a node's own operands read;
+`BoundedActions.scopeDefects` is the static walk). An empty collection runs nothing. No UI arm views
+as it (`ui_view_no_flow`, unchanged).
+
 The UI adapter's `View` is the total match over the closed 14-case `Action` DU. It carries the
 `#nowarn "44"` scope that `BoundedActions.fs` holds today. Exhaustiveness is still checked by the
 compiler; the check now sits in the adapter. `Confirm`, `Notify`, `AiTool`, `Invoke`, `Dispatch` and
@@ -322,14 +344,17 @@ declare their host channels in `HostCalls`, so `Demanded` sees them exactly as i
 
 - `Budget.actionCascadeCost` counts `Sequence`; since Phase 1976 it prices a `Choose` at one step
   plus the dearer arm and a `Repeat` at one step plus its body times its bound (a parameter bound at
-  the top of its range), and `fold_steps_within_cost` proves a run stays within the price.
+  the top of its range), and `fold_steps_within_cost` proves a run stays within the price; since
+  Phase 1990 an `Each` at its lowered elements' costs summed, no step for a bound.
 - `Demanded` reads `Assign`, `Call`, `Require` and `LeafDeclaration`; since Phase 1976 a `Choose`
-  demands the union of its entry, BOTH arms and its exit, and a `Repeat` its bound and its body once.
+  demands the union of its entry, BOTH arms and its exit, and a `Repeat` its bound and its body once;
+  since Phase 1990 an `Each` the union over its lowered elements.
 - The replay classification maps `Call` to no defect, `Sequence` to the distinct union of its
   parts, a literal `Assign` to no defect, `Assign … from` to `NonLiteralWrite`, `Require` to
   `UndecidableAction`, and `Leaf` to `UndecidableAction`; since Phase 1976 a `Choose` to
   `UndecidableAction` beside both arms' defects, and a `Repeat` to its body's (plus
-  `UndecidableAction` for a parameter bound).
+  `UndecidableAction` for a parameter bound); since Phase 1990 an `Each` to the distinct union of its
+  lowered elements' defects.
 
 For every action the encoder can produce, that classification returns the same defects as today's
 tag walk. Today's walk only ever runs on `encodeAction`'s output (`HandlerWire.fs`), and a `Chain`
@@ -481,6 +506,22 @@ reach is still reach and the document and the enforcement stay one enumeration. 
 `choose_plans_the_taken_arm`, `exit_violation_halts`, `repeat_plans_as_unrolling`,
 `staged_from_the_final_state` (`Staging.fst`).
 
+**The op-channel `Each` (Phase 1990, D29).** `OpView<'Op>` has a fifth shape, `Each(collection,
+placeholder, body)`: the body plans once per element of a LITERAL collection, in order, each op with
+that element substituted for the placeholder in its operands through the state witness's
+`Substitute: string -> JVal -> 'Op -> 'Op` — the loop a spreadsheet's automation writes, one fixed
+array of addresses and one body. What plans is the sequence of the substituted bodies
+(`each_plans_as_lowered`, proved), so the arm learns no new shape: `OpView.beneath` lists the
+substituted ops, and the argument policy and the demanded document therefore see EVERY address a
+placeholder stands for — an element off an allow-list refuses the effect before anything performs;
+the undo defects read the substituted ops' classes; the replay classification reads them too; the
+outcome reports `FlowDecision.Iterated` with the element count. A placeholder is bound lexically by
+exactly one `Each`; `StateWitness.Placeholders` answers the names an op's own operands read, and the
+handler refuses an `ApplyOps` effect whose ops read one no enclosing `Each` binds — or whose `Each`
+rebinds an enclosing name — BEFORE its first op plans, naming the placeholder
+(`StateWitness.scopeDefects`). A domain with no placeholders fills the two members with the identity
+and `[]`.
+
 **The performer is handed the state (Phase 1974 — F-PERFORM).** `OpPerformance.Performed` is
 `'Node -> 'Op -> Result<JVal, string>` (a receipt since Phase 1981; `unit` when this was written):
 each edit is staged with the planned state WITH THAT EDIT
@@ -542,7 +583,7 @@ with the evidence that would show it to be wrong.
 | # | Assumption kept | Why it is kept | What would falsify it |
 |---|---|---|---|
 | K1 | **Node ids are strings.** | The wire fixes it. `invocation.nodeId`, a scenario event's `nodeId`, `ClientEffect.ReadFileBody`'s node and every diagnostic carry a string. A generic `'Id` would be converted to a string at every one of those boundaries and buy nothing. | A second domain whose ids have no faithful string form. Core's `IdWitness` is then where the conversion goes. |
-| K2 | **Control structure is sequence + assign + call + require + choose + repeat, and everything else is a leaf.** _(Amended by Phase 1967: the second witness found halting missing — a verb's refusal must stop the sequence where a UI event handler's never needs to — and `Require` is the shape that halts. Amended again by Phase 1976: the second witness's re-run found the selection and the bounded iteration D1 and D2 charter missing, and carried a two-arm branch beside the core; `Choose` and `Repeat` are the shapes, on both axes, designed for reversal — D21.)_ | This is D1: control structure belongs to the evaluator, and vocabulary lowers to it. Today's fold already treats ten of the fourteen UI cases as leaves, and none of them as a guard. | A domain act that must thread the store through sub-actions, the way `Confirm`'s continuations would with a return leg, or a conditional with two non-refusal arms. That is a new view case plus a model change under D14, never a leaf that recurses. |
+| K2 | **Control structure is sequence + assign + call + require + choose + repeat + each, and everything else is a leaf.** _(Amended by Phase 1967: the second witness found halting missing — a verb's refusal must stop the sequence where a UI event handler's never needs to — and `Require` is the shape that halts. Amended again by Phase 1976: the second witness's re-run found the selection and the bounded iteration D1 and D2 charter missing, and carried a two-arm branch beside the core; `Choose` and `Repeat` are the shapes, on both axes, designed for reversal — D21. Amended a third time by Phase 1990: a loop whose body depends on which iteration it is in could not be written, because D21 gave `Repeat` no index for the reversal argument; `Each` over a literal collection is the shape, on both axes, lowered by the witness's substitution to the sequence of its elements — D29.)_ | This is D1: control structure belongs to the evaluator, and vocabulary lowers to it. Today's fold already treats ten of the fourteen UI cases as leaves, and none of them as a guard. | A domain act that must thread the store through sub-actions, the way `Confirm`'s continuations would with a return leg, or a conditional with two non-refusal arms. That is a new view case plus a model change under D14, never a leaf that recurses. |
 | K3 | **A leaf emits at most one effect, and it never writes the store.** | `run_total` in `proofs/README.md` proves "at most one client effect and … one key" per non-composite step. A leaf that could write, or emit a list, would make the theorem false without making it fail. | A leaf that needs two effects. It has to be written as a `Sequence` of two leaves. |
 | K4 | **One mutable state channel plus one query-result channel.** | That is everything the fold and the handler write today (`SetState`; `RunQuery`'s landing; a handler's `into`). The other fields of `BindingSources` (filters, selections, i18n) are read only by UI resolution, which sits behind `ExprWitness`. Since Phase 1967 the channel is also what a GUARD reads: a verb's arguments and read results land there, and a domain that keeps its model in the tree exposes what its guards need through the channel. | A second domain that writes somewhere other than a keyed state channel. The first second witness used no state channel at all and so could not have had a guard; that is a reading of K4, not a falsification. |
 | K5 | **A reserved key namespace exists, and the fold refuses to write into it.** | The refusal is a property of the program loop: "the tree is untrusted" does not depend on the domain. Only the namespace's *spelling* (`host.`) is the UI tier's policy, so the witness supplies the predicate and the core owns the refusal. | A domain with no reserved keys. It supplies `fun _ -> false`, which is legal. |
@@ -557,7 +598,7 @@ verb and the document pipeline have read it since. What each assumption is now a
 | # | Reading after three witnesses |
 |---|---|
 | K1 | **Holds, and is a walk/state fact.** The document pipeline's ids are TYPED and have a faithful string form through the domain's own id witness; the verb names files by path. Neither is the falsifier. |
-| K2 | **Holds as amended (1967, 1976), on both axes.** Control structure in the ACTION view is the fold's; since Phase 1976 the op channel has the same three structures (`OpView.Require`, `.Choose`, `.Repeat`), mirrored rather than shared because the two axes' condition channels differ (D21). A domain with no actions meets K2 on the op channel alone. |
+| K2 | **Holds as amended (1967, 1976, 1990), on both axes.** Control structure in the ACTION view is the fold's; since Phase 1976 the op channel has the same three structures (`OpView.Require`, `.Choose`, `.Repeat`), mirrored rather than shared because the two axes' condition channels differ (D21), and since Phase 1990 the same fourth (`.Each`), mirrored because what the placeholder stands in differs per axis — an expression there, an operand here (D29). A domain with no actions meets K2 on the op channel alone. |
 | K3 | **Dispatch fact.** Not reached by either non-UI witness — neither has leaves. |
 | K4 | **A dispatch-axis fact, not a Program fact.** The verb uses no binding store; the document pipeline keeps its bound values INSIDE the document. The state channel is what an event-driven fold writes beside its tree, and only a domain that fills the dispatch axis has one. The 1967 sentence "a domain that keeps its model in the tree exposes what its guards read through the channel" is withdrawn: such a domain now guards on the op channel, against the state itself. |
 | K5 | **Dispatch fact.** The reserved namespace is a namespace of the binding store; a composition without one has nothing reserved and refuses every landing slot instead. |
@@ -640,6 +681,23 @@ And the flow algebra itself (Phase 1976, D21), forced by the second witness's re
 - **The budget prices the shapes** (one step plus the dearer arm; one step plus bound times body),
   and `fold_steps_within_cost` proves a run stays within the price. No wire member moved; the
   demanded document stays at version 5.
+
+And per-element iteration (Phase 1990, D29), forced by the first loop whose body depends on its
+iteration — a spreadsheet importer's fixed array of addresses:
+
+- **`ActionView` has `Each`; `OpView<'Op>` has `Each`** (§3.2, §3.5), each over a literal
+  `JVal list` with a named placeholder. Mirrored per axis: the placeholder stands in an expression on
+  one and an operand on the other.
+- **`ActionWitness` gains `Substitute` and `Placeholders`; `StateWitness` gains the same two.** The
+  lowering is the witness's — the core cannot see inside an action or an op — and is called only when
+  an `Each` is met; the scope check asks which names a node's own operands read. The UI adapter fills
+  all four with the identity and `[]`.
+- **`OpView.beneath` takes the substitution**, so the policy and the demanded document see every
+  element's address. `Trace` gains `Each`, `FlowDecision` gains `Iterated`, and `ScopeDefect` with the
+  static walks (`BoundedActions.scopeDefects`, `StateWitness.scopeDefects`) is the one new vocabulary.
+- **The budget prices an `Each` as its lowered elements summed**, with no step for a bound; the
+  demanded projection, the replay classification, the undo defects and the inverse all read the
+  lowered form. No wire member moved; the demanded document stays at version 6.
 
 ### 3.8 How D14 applies to this cut
 
@@ -963,3 +1021,18 @@ of a version-6 document before it could declare one, and a reader built before i
 that carries one at the clause.
 `DemandedCorpusTests` fails, naming the stale vector's line, whenever the committed file differs from
 what the codec emits.
+
+**Phase 1990 moved nothing in the specification, and the phase that filed it had asked it to.** The
+phase's task list named `ProgramWire`, `HandlerWire`, the specification's text, schemas, emitter,
+manifest and new fixtures as one change-set. Checked against the three facts at the head of this
+section: `Each` is a shape of the action algebra and of the op algebra, which the specification
+references and does not spell (its §3, rule 2); a compute stage's action and an `ApplyOps` effect's
+ops are carried by the DOMAIN's own codec, spliced verbatim (K6); and the UI adapter's codec — the
+only codec the specification's corpus exercises — is the UI specification's, whose tier adopts no
+`Each`. So the construct reaches the wire exactly as `Choose` and `Repeat` do: inside the referenced
+vocabulary's own encoding, which here the toy's and the verb's test codecs gain a case for and
+round-trip. `ProgramWire`'s only touch is the replay classification, a walk over the view. No schema,
+fixture byte, refusal class or rule moved; the demanded document stays at version 6 and no byte of
+it moves for a program that uses no `Each`; the codec families, the driver scenarios, the parity
+suite and the Fable leg pass byte for byte. A scope-defect refusal class was weighed and declined as a
+specification act this phase does not need (D29 item 6).

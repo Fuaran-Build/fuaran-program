@@ -1741,3 +1741,145 @@ as an absence without a change to `Fuaran.Program.Bounded`; item 2 names the tri
 uncontrolled host coverage (`ServerSession`, read off the registry with no controls) as it was — with
 no controls there is nothing withdrawn to report. No wire member, fixture byte, demanded-document
 byte, control-stream byte or proof statement moves.
+
+## D29 — `Each` over a literal collection is vocabulary that lowers to the core by SUBSTITUTION, on both axes; the substitution is the witness's and the fold runs the sequence; a placeholder is bound lexically by one `Each` and refused at validation; the specification does not move (2026-10-02)
+
+**2026-10-02. Phase 1990. Fulfils the per-element case D1 and D2 charter and D21 could not express;
+the first of three phases on per-element iteration (1991 extends the collection to one the store
+holds, 1992 is the grid-shaped witness that exercises both). Under D14: `proofs/BoundedFold.fst`,
+`proofs/Staging.fst`, `proofs/Undo.fst` and `proofs/EffectGate.fst` were restated and re-proved
+before a `.fs` moved. Amends K2 of `docs/generic-tier.md` §3.7 a third time.**
+
+D21 gave the core `Repeat(bound, body)` and deliberately gave its body no index: an index the body
+could overwrite would not be a function of the bound alone, which running the inverse the same number
+of times rests on. The consequence is that a loop whose body depends on WHICH iteration it is in
+cannot be written. The first domain to need one is a spreadsheet's automation, whose importer resolves
+`For i = 2 To 100: Cells(i, 3)` into a fixed array of cell identities; today that array can only be
+run unrolled — one copy of the body per element, total, and growing the wire with the data. This
+entry adds `Each(collection, placeholder, body)`, where the collection is a LITERAL list in the tree
+and the body reads the current element through a placeholder, and records what the model argued for.
+
+**1. The shape, on both axes, mirrored.** `ActionView` gains `Each of collection: JVal list *
+placeholder: string * body: 'Action`; `OpView<'Op>` gains `Each of collection: JVal list *
+placeholder: string * body: 'Op list`. Mirrored rather than shared, as D21 item 1 mirrored `Choose`
+and `Repeat`, because what the placeholder stands in differs per axis: on the dispatch axis an
+EXPRESSION of the domain's that reads the placeholder by name, resolved like any expression once the
+element has been written over it; on the state axis an OPERAND of the domain's op — a path, a target,
+an address. The collection is a list of `JVal`, the one value vocabulary the core owns, and a literal:
+its length is the bound, fixed by the tree (D2), and no store is consulted to read it.
+
+**2. It lowers by substitution, and the SUBSTITUTION IS THE WITNESS'S.** D1 says richer control
+structure is vocabulary that lowers to the core, never a second evaluator. The core cannot see
+inside an action or an op — that is the whole of D18 — so it cannot write an element over a
+placeholder in one. What it can do is ask: `ActionWitness.Substitute: string -> JVal -> 'Action ->
+'Action` and `StateWitness.Substitute: string -> JVal -> 'Op -> 'Op` are the two new arrows, each the
+domain's own recursion over its own type, and each is called ONLY when an `Each` is met — a domain
+with none fills them with the identity (the UI adapter does, and the toy's one op). The fold lowers
+an `Each` to the body with each element substituted, in collection order, and folds the results as
+it folds a `Sequence`'s members: the store threaded, the lists concatenated, the first halt the whole
+answer. The handler plans an op-channel `Each` the same way, element by element. There is no new
+evaluator, no new channel to state and no new case for anything downstream to price: the budget sums
+the lowered elements' costs (no step for a bound, because a literal collection is not read), the
+demanded projection and the replay classification read the lowered form, `OpView.beneath` lists the
+substituted ops so the argument policy sees every address a placeholder stands for, the undo defects
+read the substituted ops' classes (which the unsubstituted body cannot show — a publish to `{t}` is
+compensable for one element and one-way for another), the trace records the elements that ran under
+`Trace.Each` so a reader sees how many (`FlowDecision.Iterated`), and the inverse of an `Each` run
+is the SEQUENCE of its elements' inverses in reverse order — each element overwrote different values,
+exactly as D21 said of a repeat's iterations. Reversal is inherited, not re-proved.
+
+**3. What the model owns, and what the witness does.** The model's `VEach act elements` and `OEach
+elements` carry the elements ALREADY LOWERED — the body once per element, substituted — because the
+model's action and op types are abstract and substitution into them is not a thing the model can
+define; the witness's `View`, applied to exhaustion, is where the element meets the body, exactly as
+it is where an action meets its shape. Over that view `each_is_lowering` (`BoundedFold.fst`) is an
+EQUATION: an `Each` folds to the same outcome and placement as the sequence of its elements, traces
+the same steps under its own constructor, is in the reversible fragment exactly when the sequence is,
+and is priced as the sequence is; `each_reverse_is_sequence_reverse` says its inverse is the
+sequence's; on the op axis `each_plans_as_lowered` (`Staging.fst`) says it plans as its elements
+concatenated. Every existing theorem — totality, blindness, the reserved-key invariant, the halting
+clause, `traced_agrees`, `reverse_run`, `fold_steps_within_cost`, the staging, gate and undo ladders
+— extends over the shape as over a sequence, with no new lemma beyond the mechanical `_each` cases
+that mirror the `_repeat` ones. **The obligation this leaves on the witness, stated rather than
+assumed away:** `Substitute` preserves the body's SHAPE — the substituted action or op views as the
+original does, with the placeholder replaced in every operand and nothing else moved; a nested `Each`
+keeps its own collection and placeholder. It sits beside the obligation that `View` unfolds finitely,
+and it is TESTED where the model cannot prove it: the differential hosts hand the model the elements
+substituted through the production `Substitute` and run production, which substitutes as it folds,
+beside it, over a toy corpus that covers an empty collection, one element, several, a halt inside an
+element, nested iterations with distinct placeholders, and an `Each` inside the other two flow shapes;
+a `Substitute` that moved the shape would show as a divergence there. A property the ladder also
+records: on a tree containing no `Each` the lowering is never invoked — a witness whose `Substitute`
+throws runs the Each-free corpus to the same answers through every walk.
+
+**4. The element cannot be overwritten, so the case D21 refused an index for does not arise.** The
+element is a value in the TREE — written over the placeholder before the body runs — and not a cell
+in the store the body writes. A body that assigns to a key cannot change what the placeholder stood
+for in its own or any later element; the inverse runs the elements' inverses in reverse order against
+exactly the elements the forward run saw, because the elements are the collection's, fixed by the
+tree. This is what D21's reversal argument required of an index and could not have from one.
+
+**5. The binding rule, and where it is enforced.** An `Each` binds exactly ONE placeholder,
+LEXICALLY, over its body. An `Each` nested inside another names its OWN placeholder, and a name an
+enclosing `Each` already binds is REFUSED rather than shadowed — so no body ever reads a placeholder
+two binders could mean, and the substitution order of nested lowerings (the inner lowered first, the
+outer written over the result) can never change what an element stands for. A body that reads a
+placeholder no enclosing `Each` binds is refused. Both are decided from the TREE alone: the core walks
+the view with the set of bound names, and asks the witness only which placeholders a node's OWN
+operands read (`ActionWitness.Placeholders`, `StateWitness.Placeholders` — the two other new arrows;
+`[]` for a domain with none). The refusal is at VALIDATION, never at run time: `BoundedActions.run`
+and `runTraced` refuse an ill-scoped program at entry, before its first step, as a halt naming the
+placeholder with nothing run, written or emitted; `Handler.planOps` refuses an `ApplyOps` effect
+before its first op plans, naming the placeholder as the arm's `Failed`. The static walks are public
+(`BoundedActions.scopeDefects`, `StateWitness.scopeDefects`) so a host that validates a program at
+registration reads the same answer. The run-time fallback — a placeholder reaching a resolver
+unsubstituted — is a domain error the scope check exists to make unreachable, and the toy's resolver
+says so if it ever is. Not modelled: the model's expressions and ops are abstract and read no names;
+the ladder carries the refusal as tested.
+
+**6. The specification does NOT move, and the phase's wire task is answered rather than performed.**
+The phase as filed asked for `ProgramWire` and `HandlerWire` to encode `Each`, with the
+specification's normative text, schemas, emitter, manifest and new fixtures in the same change-set.
+Checked against `docs/generic-tier.md` §6: the program wire specification never spells a shape of the
+action algebra — its §3 names the action and op vocabularies as referenced, "specified elsewhere", and
+its rule 2 forbids restating their cases; a compute stage's `action` and an `ApplyOps` effect's ops are
+carried by the DOMAIN's own codec (`ActionWitness.Encode`, `Stream.Encode`), spliced verbatim (K6).
+`Choose` and `Repeat` moved no wire member for the same reason (D21: "no wire member moved"), and so
+`Each` moves none: where the wire carries an `Each` compactly, it is the domain's codec that carries it
+— the toy's and the verb's test codecs gain a case and round-trip it; the UI adapter's codec is the UI
+specification's and the UI tier adopts no `Each`. `ProgramWire`'s one touch is the replay
+classification, which is a walk over the view and not an encoding. No schema, fixture byte, refusal
+class or rule of the specification moves, the five-artefact forward coupling is not engaged, and the
+codec families and the driver scenarios pass byte for byte. A refusal class for the scope defect was
+weighed — it would make the scope check a decode-time refusal across the specification's vocabulary —
+and declined as a specification act this phase has no need of: the refusal lands at the fold's entry
+and the handler's plan, through vocabularies that exist.
+
+**7. D14 applied a sixth time, and what the restatement found.** The model's `VEach` and `OEach`
+fold, trace, plan and walk as a sequence does — their cases in every lemma call the list lemma that
+already exists — so termination stays structural (an element is a subterm of the list of elements)
+and the four modules re-check in their usual time with no change to any `decreases` clause and no new
+proof technique. The finding worth recording is the one that shaped item 3: a model that substituted
+itself — a witness whose `w_resolve` pre-substitutes, or a syntactic `subst` over the view — was
+designed first and set aside. Both need the fold's `VEach` case to recurse into a term that is not a
+subterm (the substituted body), which costs either a size measure on every lemma in the module or a
+commutation law for nested placeholders stated as a hypothesis; and both put into the model a
+substitution the model's abstract `e` and `a` cannot define, so the obligation on the witness would
+have been the same law under a longer proof. Carrying the lowered elements in the view puts the
+obligation where D18 already puts `View`'s, and leaves the proofs saying exactly what they say.
+
+**Version.** Rides the `0.7.0` draft: the slot is untagged, publicly unpinned and already breaking,
+and this is breaking of the same class — a case on `ActionView` and on `OpView<'Op>`, two members on
+`ActionWitness` and two on `StateWitness`, a case on `Trace` and on `FlowDecision`, and
+`OpView.beneath` taking the substitution. No wire member, fixture byte or demanded-document byte
+moves for any program that uses no `Each`; the demanded document stays at version 6. `STABILITY.md`
+has the consumer's account and `docs/migrations/phase-1990.md` the diff.
+
+**What this forecloses, and what it leaves.** The collection is LITERAL: a collection the store
+holds — a region's extent read once, recorded in the trace, replayed from the record — is Phase 1991's,
+under the operator's four conditions, and nothing here presumes its shape. A placeholder stands for a
+VALUE: a placeholder in a key of the dispatch axis's store (`Assign`'s key is a string the view
+carries) is not expressible, by design — on that axis an address-dependent write is a leaf or an op,
+and the op axis carries it. Shadowing is refused rather than defined; a later need for it is a change
+to item 5, with the substitution order then load-bearing. The UI adapter adopts neither shape; a UI
+handler that would genuinely benefit lands as a finding against `ui_view_no_flow`'s test.

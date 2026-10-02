@@ -156,11 +156,12 @@ why, is [`DECISIONS.md`](../../DECISIONS.md) **D10**.
 
 The algebra's shape — a pipeline core, with richer control structure expressed as vocabulary atop it
 rather than as a second evaluator — is [`DECISIONS.md`](../../DECISIONS.md) **D1**. The core's view
-of an action has seven shapes: `Sequence`, `Assign`, `Call`, `Require` — the halting guard a second
+of an action has eight shapes: `Sequence`, `Assign`, `Call`, `Require` — the halting guard a second
 domain needed and the UI tier never produces (**D19**) — `Choose` and `Repeat` — the selection and
 the bounded iteration D1 and D2 charter, designed for reversal, which the same domain's re-run found
 missing (**D21**; the reversible fragment, its trace and its inverse are `BoundedActions.runTraced` /
-`reversible` / `reverse` / `runReversed`) — and `Leaf`. The closed
+`reversible` / `reverse` / `runReversed`) — `Each` — per-element iteration over a literal collection,
+lowered by the witness's substitution to the sequence of its elements (**D29**) — and `Leaf`. The closed
 per-placement effect vocabulary and its registered host-performer seam is **D3**. The UI-typed first
 instantiation, and the dependency direction that follows from it, are **D4** and **D5**. This README
 cites those decisions rather than restating them; `DECISIONS.md` is authoritative.

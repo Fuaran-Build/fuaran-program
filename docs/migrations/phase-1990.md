@@ -1,0 +1,120 @@
+# Migration — Phase 1990: `Each` over a literal collection, on both axes
+
+Rides the `0.7.0` draft slot (`STABILITY.md`). Breaking for every consumer that **matches
+exhaustively** on `ActionView`, `OpView`, `Trace` or `FlowDecision`, **constructs** an
+`ActionWitness` or a `StateWitness`, or **calls** `OpView.beneath`. A consumer that only calls the UI
+adapter's aliases changes nothing: the UI tier views no action and no op as an `Each`.
+
+## What changes
+
+| Before (0.7.0 as Phase 1986 shipped it) | After |
+|---|---|
+| `ActionView`: seven shapes | plus `Each of collection: JVal list * placeholder: string * body: 'Action` |
+| `OpView<'Op>`: `Edit \| Require \| Choose \| Repeat` | plus `Each of collection: JVal list * placeholder: string * body: 'Op list` |
+| `ActionWitness` = `{ View; Lower; Describe; Encode; Decode }` | plus `Substitute: string -> JVal -> 'Action -> 'Action` and `Placeholders: 'Action -> string list` |
+| `StateWitness`: seven members | plus `Substitute: string -> JVal -> 'Op -> 'Op` and `Placeholders: 'Op -> string list` |
+| `OpView.beneath view op` | `OpView.beneath view substitute op` |
+| `Trace`: `Nothing \| Wrote \| Seq \| Choose \| Repeat` | plus `Each of elements: Trace list` |
+| `FlowDecision`: `Chose \| Repeated` | plus `Iterated of count: int` |
+| — | `ScopeDefect`; `BoundedActions.scopeDefects`, `StateWitness.scopeDefects`; `ActionWitness.lowered`, `StateWitness.lowered`, `OpView.lowered` |
+| `BoundedActions.run` / `runTraced` fold at once | refuse an ill-scoped program at entry, naming the placeholder, with nothing run |
+| `Handler`'s op planning plans at once | refuses an `ApplyOps` effect with a scope defect before its first op plans |
+
+## The diff, per file
+
+**A witness with no placeholders** (the identity, and nothing — the UI adapter's answers):
+
+```diff
+ Action =
+     { View = view
+       Lower = lower
+       Describe = describe
+       Encode = encode
+-      Decode = decode }
++      Decode = decode
++      Substitute = fun _ _ action -> action
++      Placeholders = fun _ -> [] }
+
+ State =
+     { Stream = stream
+       ...
+-      Undo = undo }
++      Undo = undo
++      Substitute = fun _ _ op -> op
++      Placeholders = fun _ -> [] }
+```
+
+**A domain whose actions carry a placeholder** (an expression that reads it by name; the toy's `Hole`):
+
+```diff
++/// Write the element over the placeholder in every expression of the action and
++/// of the actions beneath it — the shape untouched, so the result views as the
++/// original does. A nested `ForEach` keeps its own collection and placeholder.
++let rec substitute (placeholder: string) (element: JVal) (action: MyAction) : MyAction = …
++
++/// The placeholders THIS level's own operands read — not the children's.
++let placeholders (action: MyAction) : string list = …
+
+ let view (action: MyAction) : ActionView<MyAction, MyExpr> =
+     match action with
+     | Seq items -> ActionView.Sequence items
++    | ForEach(collection, placeholder, body) -> ActionView.Each(collection, placeholder, body)
+     | …
+```
+
+**A domain whose ops carry a placeholder in an operand** (the verb's `{name}` tokens in a path):
+
+```diff
+ View =
+     fun op ->
+         match op with
+         | Check _ -> OpView.Require
++        | ForEach(collection, placeholder, body) -> OpView.Each(collection, placeholder, body)
+         | _ -> OpView.Edit
++Substitute = substituteOp      // `{p}` in every path, target and content → the element
++Placeholders = placeholdersOf  // the `{…}` names an op's own operands carry
+```
+
+**Any exhaustive walk over the view** (a consumer's own budget, projection or classification) reads
+the LOWERED form:
+
+```diff
+ match view action with
+ | ActionView.Sequence xs -> …
++| ActionView.Each(collection, placeholder, body) ->
++    ActionWitness.lowered witness.Action collection placeholder body |> List.collect walk
+ | …
+```
+
+**A direct caller of `beneath`:**
+
+```diff
+-OpView.beneath state.View op
++OpView.beneath state.View state.Substitute op
+```
+
+**A reader of the trace or the flow:**
+
+```diff
+ match trace with
+ | Trace.Repeat iterations -> …
++| Trace.Each elements -> …        // the elements that ran, in order
+
+ match decision with
+ | FlowDecision.Repeated n -> …
++| FlowDecision.Iterated n -> …    // an Each ran over n elements
+```
+
+## Verification
+
+1. `pwsh ./run.ps1` — format, pins, build, every suite, the Fable parity leg.
+2. `pwsh ./proofs/check.ps1` — the four restated models check, extract byte-identically to the
+   committed oracles, and the differential hosts agree over the widened corpus.
+3. A consumer's own test that an `Each` and its hand-written unrolling agree — `tests/Fuaran.Program.Tests/EachTests.fs`
+   is the shape — and that a program reading a placeholder outside its `Each` is refused at entry.
+
+## Rollback
+
+Revert the three commits of Phase 1990 together (proofs, feature, docs). The oracles under
+`proofs/oracle/` are regenerated by the proof leg and must move with the models; nothing on the
+wire, in the demanded document or in the signed envelope moved, so no re-signing follows a revert.

@@ -146,8 +146,11 @@ reach beside the capability. Since Phase 1976 (D21) an op the state witness view
 (`OpView.Choose`) plans as the arm its entry condition picks — the condition is an op applied for its
 answer, `Ok` the true arm and `Error` the false — and is refused, with the assertion named, when its
 exit assertion disagrees with the arm it took; one viewed as a repeat (`OpView.Repeat`) plans its
-body that many times. The policy and the demanded document read an op's reach over itself and every
-op beneath it, both arms included.
+body that many times. Since Phase 1990 (D29) one viewed as a per-element iteration (`OpView.Each`)
+plans its body once per element of a literal collection, each op with the element substituted for the
+placeholder through the state witness's `Substitute`, and an op sequence reading a placeholder no
+`Each` binds is refused before its first op plans. The policy and the demanded document read an op's
+reach over itself and every op beneath it, both arms and every substituted element included.
 
 The question the note left open — **idempotency on replay** — is answered by the second interpreter
 below, and answered with its boundary attached rather than in general. The note itself
