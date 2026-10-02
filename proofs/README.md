@@ -67,7 +67,7 @@ anything about that witness.
 | `Staging.fst` | `guard_holds_moves_nothing`, `guard_refusal_halts` (the op-channel guard, F-GUARD) | `w_apply`, `w_op_view` | **state** only |
 | `Staging.fst` | `performer_handed_the_plan` (F-PERFORM) | `w_apply`, `w_op_view`, and the registry's `r_op_perform` | **state** only |
 | `Staging.fst` | `replay_unrun_is_perform`, `replay_serves_completed`, `resume_performs_only_the_rest`, `indeterminate_refused_by_default`, `indeterminate_reinvoked_only_by_name`, `divergence_refused`, `durable_resume`, `empty_journal_is_direct` (the durable discipline, Phase 1980) | `d_subject` → `Stream.Encode`, the op's canonical form content-addressed as an op stage's journal SUBJECT (**state**); `w_assign` → `Store.Assign`, for a served landing slot (**dispatch**); the journal snapshot and the declarations are `DurableServices`, not witness members | **state**, with `w_assign` as the hypothesis a dispatch-less witness discharges (nothing lands, so it is never asked) |
-| `EffectGate.fst` | `gate_before_perform`, `gate_refusal_halts_run`, `policy_sufficient`, `return_contract` | the staging witness, quantified over every one, plus the registry | **state**, on the staging theorem's terms |
+| `EffectGate.fst` | `gate_before_perform`, `gate_refusal_halts_run`, `policy_sufficient`, `return_contract`, `op_return_contract`, `uncontracted_is_direct` (Phase 1981) | the staging witness, quantified over every one, plus the registry; `op_return_contract` reads the registry's `r_op_perform` (**state**) and the contract keyed on the token it stages | **state**, on the staging theorem's terms |
 
 **A witness filling ONLY the state axis satisfies every theorem that names no dispatch member.**
 Read off the table: the budget's walk theorems do not apply to it (it has no walk to price, and the
@@ -1031,6 +1031,43 @@ first `k` staged capabilities, and its last diagnostic is `PerformFailed` naming
 capability and the contract's NAME — a typed refusal, never a silent accept, and never the value
 (`violation_refuses`, `perform_diag`, with 1717's `residual_is_prefix` for the rollback).
 
+### 4. `op_return_contract` — an op performer's receipt is checked against the op it is a receipt for (Phase 1981)
+
+Since Phase 1967 the staged list holds op stages beside host calls, each an opaque token the
+perform phase applies through `r_perf`, so `return_contract` already quantified over them — but it
+said nothing in the op's own vocabulary, and production composed no contract on the op performer.
+Phase 1981 adds the runtime definition and makes the reading visible. `OpContract` (`ServerEffect.fs`)
+is a host-declared post-condition on an op performer's RECEIPT — a name and a predicate over the
+planned state the performer was handed, the op, and what it answered — and
+`OpPerformance.performedChecked` composes `OpContract.check` with the performer at registration, as
+`registerChecked` composes `ReturnContract.check`. The model's `check_op` is that wrapper clause for
+clause, `op_at` is the return contract an op contract IS at one state and one op, and
+`check_op_is_check_return` says the two wrappers are one check with two keyings. The bridge from
+production to the model is `op_contract_keyed`: production composes the contract INTO the closure the
+plan phase stages as the op's token (`Handler.stagedOp`), and in the model that is the hypothesis
+that the token `r_op_perform` answers for (state, op) carries the contract at (state, op) — every op
+theorem is conditional on it, and it is exactly what the closure makes true. Under it,
+`op_token_checked` says the behaviour the perform phase sees for an op token is `check_op` over the
+raw behaviour, and **`op_return_contract`** says, for a registry with a registered op performer and
+the contract so keyed, the three clauses of `return_contract` and two more: every landed receipt of
+an op stage honours the contract at the state and the op it was staged from (`op_receipts_honour`,
+from `all_honour` through the keying), and when the first rejected result is an op stage's — its
+`violator` is a token staged for some state and op — the `PerformFailed` at that position names THIS
+contract (`violator_named`), the handler is rolled back and `Performed` is exactly the stages before
+it, so the op is never reported as performed. The op stage is identified by its TOKEN and not by its
+capability string, because the prover reasons about neither string contents nor `strcat`
+inequalities (`strcat "host:" fn =!= "ApplyOps"` does not discharge), and a token is what a staged
+call carries anyway.
+
+### 5. `uncontracted_is_direct` — a performer with no contract runs exactly as it did (Phase 1981)
+
+The handler's outcome under the wrapper that declares nothing (`checked_by (fun _ -> ONone)`) is its
+outcome under the raw registry, as an equation: `plan_pure` for the plan phase, and `perform_ext` —
+two registries whose behaviours agree on every token and argument perform identically — for the
+perform phase. This is "a performer with no contract behaves exactly as today" as a theorem rather
+than a reading, and it is why every staging and gate theorem holds of an uncontracted performer
+unchanged: the registry they are stated over IS the uncontracted one.
+
 ### What the effect-gate model does NOT own
 
 The same two records of arrows as the staging model — the witness and the registry's gate,
@@ -1049,9 +1086,16 @@ is a unit-returning observer, not modelled; the differential host compares its l
 3. **A performer's result is checked against its contract before it enters the state, and a
    rejected one is a typed refusal** — `return_contract`, with `perform_store`, `landed_honour`
    and `violation_refuses`.
+4. **An op performer's receipt is checked against the contract at the state and the op it was
+   staged from, and a rejected receipt is a typed refusal naming that contract with the op never
+   reported as performed** (Phase 1981) — `op_return_contract`, with `op_token_checked`,
+   `check_op_is_check_return`, `all_honour_ops` and `violator_named`; conditional on
+   `op_contract_keyed`, the bridge production's composed closure makes true.
+5. **A performer with no contract runs exactly as it did** (Phase 1981) — `uncontracted_is_direct`,
+   with `perform_ext` and `plan_pure`.
 
 No `admit`, no `assume`; `--report_assumes error` is on for this module exactly as for the
-other three. "Formally verified" is spent on these three and nothing else in this section.
+other three. "Formally verified" is spent on these five and nothing else in this section.
 
 #### Differentially tested
 
@@ -1080,11 +1124,30 @@ mutant lands `Unregistered`, because it asked about the performer before asking 
 A second probe, run while the host was built and not committed: production's wrapper edited to
 accept every result lost three of the seven cases.
 
+Phase 1981 adds an eighth case: the extracted `check_op` beside `OpContract.check` over 48
+(state, op, performer behaviour, contract verdict) cases — the receipt admitted, rejected with the
+contract's name, or the raw refusal through — with the (state, op) handed to the contract recorded
+on both sides and compared, and `check_op_is_check_return` asserted as an instance on each. The
+handler-level reading for op stages is `op_return_contract`'s and is reached through the staging
+host, which runs `Handler.run` under a registered op performer beside the model's `r_op_perform`;
+the verb witness (`tests/Fuaran.Program.Tests/VerbWitnessTests.fs`) is where a checked op performer
+and its adversary run end to end. A go-red probe during authoring, not committed: `check_op` edited
+to accept every receipt fails `op_token_checked` on the prover.
+
 #### Assumed, and stated
 
 - **The witness and the registry's gate, policy and lookup**, on the staging theorem's terms. In
   the host the gate and the policy are production's own members, and a contract is keyed by the
   function NAME, which is how `registerChecked` keys it.
+- **`op_contract_keyed`** (Phase 1981): the token the plan phase stages for a state and an op
+  carries the op contract at that state and op. In production the token IS the closure
+  `fun _ -> check contract perform state op`, so the hypothesis is true by construction; the model
+  states it as a hypothesis because the token is opaque there, and every op-stage theorem is
+  conditional on it.
+- **An op's reach covers what its performer touches** (D24): an obligation on the witness, stated
+  both ways since Phase 1981, which a receipt and an `OpContract` make CHECKABLE where the domain
+  can say how — and the theorem claims the check of the performer's account, never the coverage
+  itself (`docs/performer-boundary.md`).
 - **The performer is a function of the call**, as the staging theorem assumes, with the same
   mitigation.
 - **The toolchain**, on the same terms as the fold theorem's.

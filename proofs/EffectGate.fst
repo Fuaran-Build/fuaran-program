@@ -161,6 +161,67 @@ let checked_by (#v: Type0) (#p: Type0) (ct: p -> opt (contract v)) (perf: p -> v
     | OSome c -> check_return c perf tok args
 
 (* ───────────────────────────────────────────────────────────────────
+   The op performer's receipt — `OpContract` and `OpContract.check`
+   (Phase 1981): the return contract, keyed by the state and the op.
+   ─────────────────────────────────────────────────────────────────── *)
+
+/// F#: `OpContract` — a host-declared post-condition on an op performer's
+/// RECEIPT, over the planned state the performer was handed, the op, and
+/// what it answered: a name, which is the host's own vocabulary and safe
+/// to surface, and the check. Where `contract` reads a host call's
+/// result alone, this reads the receipt beside the op it is a receipt
+/// FOR — which is what lets a domain check that what the performer says
+/// it touched is within the op's reach.
+noeq type op_contract (t: Type0) (o: Type0) (v: Type0) = {
+  oc_name: string;
+  oc_holds: t -> o -> v -> bool;
+}
+
+/// F#: `OpContract.describe` — the refusal's text, in the ONE vocabulary
+/// a return contract's refusal has: the name, never the receipt.
+let op_contract_reason (#t: Type0) (#o: Type0) (#v: Type0) (c: op_contract t o v) : string =
+  strcat "return-contract:" c.oc_name
+
+/// The return contract an op contract IS at one state and one op.
+let op_at (#t: Type0) (#o: Type0) (#v: Type0) (c: op_contract t o v) (tree: t) (op: o) : contract v =
+  { ct_name = c.oc_name; ct_holds = c.oc_holds tree op }
+
+/// F#: `OpContract.check` — the wrapper `OpPerformance.performedChecked`
+/// composes with an op performer at registration, clause for clause
+/// `check_return` with the state and the op in hand: a receipt the
+/// contract rejects becomes `RErr` carrying the contract's name, a raw
+/// refusal passes through unchanged, and a receipt that holds is the
+/// receipt.
+let check_op (#t: Type0) (#o: Type0) (#v: Type0) (c: op_contract t o v) (perform: t -> o -> res v)
+  : t -> o -> res v =
+  fun tree op ->
+    match perform tree op with
+    | RErr reason -> RErr reason
+    | ROk receipt -> if c.oc_holds tree op receipt then ROk receipt else RErr (op_contract_reason c)
+
+/// The raw op performer as the perform phase RUNS it, through the
+/// staging model's split: the token and argument `r_op_perform` answers
+/// for the state and the op, applied to the behaviour.
+let op_behaviour (#t: Type0) (#o: Type0) (#v: Type0) (#p: Type0)
+                 (f: t -> o -> (p & v)) (perf: p -> v -> res v)
+  : t -> o -> res v =
+  fun tree op -> let (tok, args) = f tree op in perf tok args
+
+/// The bridge from production's composition to the model's keying. In
+/// production the contract is composed INTO the op performer before the
+/// plan phase splits it into a staged token (the closure over the state
+/// and the op) and an inert argument; in the model the behaviour is
+/// `r_perf` keyed by token, and a contract is `ct` keyed by token. The
+/// two meet here: the token staged for a state and an op carries the op
+/// contract AT that state and op. This is a hypothesis every op-stage
+/// theorem below is conditional on, and it is exactly what the closure
+/// `fun _ -> check contract perform state op` makes true.
+let op_contract_keyed (#t: Type0) (#o: Type0) (#v: Type0) (#p: Type0)
+                      (f: t -> o -> (p & v)) (ct: p -> opt (contract v)) (c: op_contract t o v)
+  : prop =
+  forall (tree: t) (op: o). ct (fst (f tree op)) == OSome (op_at c tree op)
+
+(* ───────────────────────────────────────────────────────────────────
    Σ, the monitor state and `abstracts` — SCIO*'s pieces, ghost.
    ─────────────────────────────────────────────────────────────────── *)
 
@@ -800,3 +861,215 @@ let return_contract (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) 
    | OSome (k, cap, name) ->
      violation_refuses ct reg.r_perf staged 0 k cap name;
      residual_is_prefix w wrapped node_id stages s k)
+
+(* ───────────────────────────────────────────────────────────────────
+   The op performer's receipt — Phase 1981. `return_contract` is stated
+   over every staged call, and since Phase 1967 the staged list holds op
+   stages beside host calls, each an opaque token the perform phase
+   applies through `r_perf`; so the theorem already covers an op stage
+   whose token carries a contract. What follows makes that reading
+   VISIBLE and USABLE in the op's own vocabulary — the planned state, the
+   op and the receipt — and proves that the uncontracted performer is the
+   performer there was.
+   ─────────────────────────────────────────────────────────────────── *)
+
+/// An op contract is a return contract at the state and the op: the
+/// wrapper `performedChecked` composes is `check_return` with the
+/// contract instantiated at the op it checks, and nothing else. ONE
+/// check, two keyings.
+let check_op_is_check_return (#t: Type0) (#o: Type0) (#v: Type0)
+                             (c: op_contract t o v) (perform: t -> o -> res v) (tree: t) (op: o) (args: v)
+  : Lemma
+      (ensures
+        check_op c perform tree op ==
+        check_return (op_at c tree op) (fun (_: unit) (_: v) -> perform tree op) () args) = ()
+
+/// Under the keying, the behaviour the perform phase sees for an op token
+/// is exactly `check_op` over the raw behaviour: the receipt when the
+/// contract holds at the state and the op, `return-contract:<name>` when
+/// it does not, and a raw refusal unchanged.
+let op_token_checked (#t: Type0) (#o: Type0) (#v: Type0) (#p: Type0)
+                     (f: t -> o -> (p & v)) (ct: p -> opt (contract v)) (c: op_contract t o v)
+                     (perf: p -> v -> res v) (tree: t) (op: o)
+  : Lemma
+      (requires op_contract_keyed f ct c)
+      (ensures
+        (let (tok, args) = f tree op in
+         checked_by ct perf tok args == check_op c (op_behaviour f perf) tree op)) = ()
+
+/// Every landed receipt of an op stage honours the op contract at the
+/// state and the op it was staged from — `all_honour`, read through the
+/// keying in the op's own vocabulary.
+[@@ noextract_to "FSharp"]
+let rec op_receipts_honour (#t: Type0) (#o: Type0) (#v: Type0) (#p: Type0)
+                           (f: t -> o -> (p & v)) (c: op_contract t o v)
+                           (xs: list (p & opt string & v))
+  : Tot prop (decreases xs) =
+  match xs with
+  | [] -> True
+  | (tok, _, receipt) :: rest ->
+    (forall (tree: t) (op: o). tok == fst (f tree op) ==> c.oc_holds tree op receipt) /\
+    op_receipts_honour f c rest
+
+let rec all_honour_ops (#t: Type0) (#o: Type0) (#v: Type0) (#p: Type0)
+                       (f: t -> o -> (p & v)) (ct: p -> opt (contract v)) (c: op_contract t o v)
+                       (xs: list (p & opt string & v))
+  : Lemma
+      (requires op_contract_keyed f ct c /\ all_honour ct xs)
+      (ensures op_receipts_honour f c xs)
+      (decreases xs) =
+  match xs with
+  | [] -> ()
+  | (tok, _, receipt) :: rest ->
+    (match ct tok with
+     | ONone -> ()
+     | OSome _ -> ());
+    all_honour_ops f ct c rest
+
+/// The token of the first violation — `violation`'s companion, so a
+/// violation can be read back to the stage it was at.
+[@@ noextract_to "FSharp"]
+let rec violator (#v: Type0) (#p: Type0) (ct: p -> opt (contract v)) (perf: p -> v -> res v)
+                 (calls: list (staged_call v p))
+  : Tot (opt p) (decreases calls) =
+  match calls with
+  | [] -> ONone
+  | c :: rest ->
+    (match perf c.sc_performer c.sc_args with
+     | RErr _ -> ONone
+     | ROk result ->
+       (match ct c.sc_performer with
+        | ONone -> violator ct perf rest
+        | OSome con -> if con.ct_holds result then violator ct perf rest else OSome c.sc_performer))
+
+/// A violation and its violator agree: the name a violation carries is
+/// the name of the contract on the violator's token.
+let rec violator_named (#v: Type0) (#p: Type0) (ct: p -> opt (contract v)) (perf: p -> v -> res v)
+                       (calls: list (staged_call v p)) (k0: nat)
+  : Lemma
+      (ensures
+        (match violation ct perf calls k0, violator ct perf calls with
+         | ONone, ONone -> True
+         | OSome (_, _, name), OSome tok ->
+           (match ct tok with
+            | OSome con -> con.ct_name == name
+            | ONone -> False)
+         | _, _ -> False))
+      (decreases calls) =
+  match calls with
+  | [] -> ()
+  | c :: rest ->
+    (match perf c.sc_performer c.sc_args with
+     | RErr _ -> ()
+     | ROk result ->
+       (match ct c.sc_performer with
+        | ONone -> violator_named ct perf rest (k0 + 1)
+        | OSome con -> if con.ct_holds result then violator_named ct perf rest (k0 + 1) else ()))
+
+/// **`op_return_contract`.** With a contract declared on the op
+/// performer — `reg` carries the raw behaviour and a registered op
+/// performer `f`, `ct` keys the contract as the composed closure does,
+/// and `wrapped` is production's registry — the three clauses of
+/// `return_contract` hold, and two more say what they mean for an op
+/// stage. (4) Every landed receipt of an op stage honours the contract
+/// AT THE STATE AND THE OP it was staged from (`op_receipts_honour`):
+/// what the performer says it did is checked against the op it did it
+/// for, before anything re-enters the interpreter's state. (5) When the
+/// first rejected result is an op stage's — its violator is the token
+/// staged for some state and op — the refusal names THIS contract:
+/// `PerformFailed` at that position carries `return-contract:<its name>`,
+/// the handler is rolled back, and `Performed` is exactly the stages
+/// before it, so the op is never reported as performed. A performer with
+/// no contract is `uncontracted_is_direct`, below.
+let op_return_contract (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                       (w: witness t b v o q a eff d) (reg: registry t v o q p)
+                       (f: t -> o -> (p & v)) (ct: p -> opt (contract v)) (c: op_contract t o v)
+                       (node_id: string) (stages: list (stage a v o q)) (s: store t b)
+  : Lemma
+      (requires
+        reg.r_op_perform == OSome f /\
+        op_contract_keyed f ct c /\
+        not (plan w reg node_id stages (start s)).ac_halted)
+      (ensures
+        (let wrapped = { reg with r_perf = checked_by ct reg.r_perf } in
+         let planned = plan w wrapped node_id stages (start s) in
+         let staged = rev planned.ac_staged in
+         let out = run w wrapped node_id stages s in
+         let lands = landed wrapped.r_perf staged in
+         all_honour ct lands /\
+         op_receipts_honour f c lands /\
+         (out.oc_committed ==> out.oc_store.st_bindings == fold_assign w lands planned.ac_store.st_bindings) /\
+         (match violation ct reg.r_perf staged 0, violator ct reg.r_perf staged with
+          | ONone, _ -> True
+          | OSome (k, cap, name), OSome tok ->
+            k < length staged /\
+            out.oc_store == s /\
+            out.oc_committed == false /\
+            out.oc_performed == take k (caps staged) /\
+            out.oc_diagnostics ==
+              app (rev planned.ac_diagnostics) [PerformFailed cap (strcat "return-contract:" name)] /\
+            (forall (tree: t) (op: o). tok == fst (f tree op) ==> name == c.oc_name)
+          | OSome _, ONone -> False))) =
+  return_contract w reg ct node_id stages s;
+  let wrapped = { reg with r_perf = checked_by ct reg.r_perf } in
+  plan_pure w reg wrapped.r_perf node_id stages (start s);
+  let planned = plan w wrapped node_id stages (start s) in
+  let staged = rev planned.ac_staged in
+  let lands = landed wrapped.r_perf staged in
+  landed_honour ct reg.r_perf staged;
+  all_honour_ops f ct c lands;
+  violator_named ct reg.r_perf staged 0
+
+/// The wrapper with no contract anywhere is the identity on the
+/// performer's behaviour.
+let unchecked_is_raw (#v: Type0) (#p: Type0) (perf: p -> v -> res v) (tok: p) (args: v)
+  : Lemma (ensures checked_by (fun (_: p) -> ONone) perf tok args == perf tok args) = ()
+
+/// The perform phase reads the performer only by applying it: two
+/// registries whose behaviours agree on every token and argument perform
+/// identically.
+let rec perform_ext (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                    (w: witness t b v o q a eff d) (reg: registry t v o q p) (perf': p -> v -> res v)
+                    (staged: list (staged_call v p)) (acc: accumulator t b v o eff d p)
+  : Lemma
+      (requires forall (tok: p) (args: v). perf' tok args == reg.r_perf tok args)
+      (ensures perform w ({ reg with r_perf = perf' }) staged acc == perform w reg staged acc)
+      (decreases staged) =
+  match staged with
+  | [] -> ()
+  | call :: rest ->
+    (match reg.r_perf call.sc_performer call.sc_args with
+     | RErr _ -> ()
+     | ROk result ->
+       let recorded = { acc with ac_externally = call.sc_capability :: acc.ac_externally } in
+       let landed =
+         (match call.sc_into with
+          | ONone -> recorded
+          | OSome key ->
+            { recorded with
+              ac_store =
+                { recorded.ac_store with
+                  st_bindings = w.w_assign key result recorded.ac_store.st_bindings } }) in
+       perform_ext w reg perf' rest landed)
+
+/// **`uncontracted_is_direct`.** A performer registered with NO contract —
+/// host functions and op performer alike — runs exactly as it did before
+/// contracts existed: the handler's outcome under the wrapper that
+/// declares nothing is the handler's outcome under the raw registry, as an
+/// equation. The staging and gate theorems therefore hold of an
+/// uncontracted performer unchanged, which is the statement "a performer
+/// with no contract behaves exactly as today" as a theorem rather than a
+/// reading.
+let uncontracted_is_direct (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                           (w: witness t b v o q a eff d) (reg: registry t v o q p)
+                           (node_id: string) (stages: list (stage a v o q)) (s: store t b)
+  : Lemma
+      (ensures
+        run w ({ reg with r_perf = checked_by (fun (_: p) -> ONone) reg.r_perf }) node_id stages s ==
+        run w reg node_id stages s) =
+  let none : p -> opt (contract v) = fun _ -> ONone in
+  let perf' = checked_by none reg.r_perf in
+  plan_pure w reg perf' node_id stages (start s);
+  let planned = plan w reg node_id stages (start s) in
+  assert (forall (tok: p) (args: v). perf' tok args == reg.r_perf tok args);
+  (if planned.ac_halted then () else perform_ext w reg perf' (rev planned.ac_staged) planned)

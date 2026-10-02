@@ -26,7 +26,7 @@
   "kind": "proofs",
   "version": 1,
   "subject": "Fuaran-Program",
-  "$scope": "the proved models under proofs/: the shared bounded fold — BoundedActions.runBoundedActionWith, the one interpreter every placement runs, over the closed Action union, its State store, its closure-free client effects and its diagnostics (Phase 1715), restated over the generic tier's ActionView and the fold-read members of the ProgramWitness contract (DECISIONS.md D18) and re-proved there before the generic core is written, with the fourteen-arm union kept as the UI witness seen through the view (Phase 1898), and restated over the view's fifth shape — the halting guard Require the second witness needed — before the port that added it, with a fifth theorem that only a guard halts and the UI tier never does (Phase 1967); and the interaction budget — Budget.satAdd/satMul, Budget.actionCascadeCost, Budget.treeCost and the G2 stage of BoundedDriver.step that refuses on them (Phase 1716); and two-phase staging — Handler.run's plan phase, phase boundary and perform phase with the performer abstract, DECISIONS.md D8's law that the residual of a failed handler is exactly the prefix of staged calls that ran (Phase 1717), over a staged list that since Phase 1967 holds ops as well as host calls under a registered op performer, and since Phase 1974 over an ApplyOps arm that carries the op-channel guard and hands the performer the planned state, and since Phase 1980 beside the durable discipline — Durable.runWith's replay over a journal snapshot, which serves a completed prefix, performs only the rest, refuses an undecided step by default and re-invokes it only by name, for an op stage exactly as for a host call (DECISIONS.md D12, restated by D23); and the effect gate — ServerEffectRegistry.Gate consulted before any performer, the policy an operator declares over the trace of performed effects, and the return contract ServerEffectRegistry.registerChecked composes with a performer, proved over the staging model with the performer abstract (Phase 1759). Bounded code and bounded cost, the two halves of running an untrusted generated tree on shared infrastructure; bounded residue, what a handler that reaches outside can leave behind; and a constrained boundary, what reaches a performer and what it can hand back.",
+  "$scope": "the proved models under proofs/: the shared bounded fold — BoundedActions.runBoundedActionWith, the one interpreter every placement runs, over the closed Action union, its State store, its closure-free client effects and its diagnostics (Phase 1715), restated over the generic tier's ActionView and the fold-read members of the ProgramWitness contract (DECISIONS.md D18) and re-proved there before the generic core is written, with the fourteen-arm union kept as the UI witness seen through the view (Phase 1898), and restated over the view's fifth shape — the halting guard Require the second witness needed — before the port that added it, with a fifth theorem that only a guard halts and the UI tier never does (Phase 1967); and the interaction budget — Budget.satAdd/satMul, Budget.actionCascadeCost, Budget.treeCost and the G2 stage of BoundedDriver.step that refuses on them (Phase 1716); and two-phase staging — Handler.run's plan phase, phase boundary and perform phase with the performer abstract, DECISIONS.md D8's law that the residual of a failed handler is exactly the prefix of staged calls that ran (Phase 1717), over a staged list that since Phase 1967 holds ops as well as host calls under a registered op performer, and since Phase 1974 over an ApplyOps arm that carries the op-channel guard and hands the performer the planned state, and since Phase 1980 beside the durable discipline — Durable.runWith's replay over a journal snapshot, which serves a completed prefix, performs only the rest, refuses an undecided step by default and re-invokes it only by name, for an op stage exactly as for a host call (DECISIONS.md D12, restated by D23); and the effect gate — ServerEffectRegistry.Gate consulted before any performer, the policy an operator declares over the trace of performed effects, and the return contract ServerEffectRegistry.registerChecked composes with a performer, proved over the staging model with the performer abstract (Phase 1759), and since Phase 1981 the op performer's receipt and the OpContract OpPerformance.performedChecked composes with it, checked against the planned state and the op before the op is reported as performed (DECISIONS.md D24). Bounded code and bounded cost, the two halves of running an untrusted generated tree on shared infrastructure; bounded residue, what a handler that reaches outside can leave behind; and a constrained boundary, what reaches a performer and what it can hand back.",
   "claims": [
     {
       "id": "fold-totality",
@@ -914,6 +914,89 @@
       }
     },
     {
+      "id": "effect-gate-op-return-contract",
+      "level": "proved",
+      "phase": "Phase 1981",
+      "claim": "With a contract declared on the op performer — the registry carrying a registered op performer f and a raw behaviour, the contract keyed on the token the plan phase stages for each (state, op) as the composed closure keys it (op_contract_keyed), and the raw behaviour wrapped by checked_by as performedChecked composes it in production — the three clauses of return_contract hold, and two more in the op's own vocabulary: every landed receipt of an op stage honours the contract AT THE STATE AND THE OP it was staged from (op_receipts_honour), and when the raw performer's first rejected result is an op stage's, the handler rolls back to the entry store, commits nothing, reports Performed as exactly the staged capabilities before it, and its last diagnostic is PerformFailed naming the call's capability and THIS contract's NAME — the op is never reported as performed and the receipt is never echoed.",
+      "evidence": {
+        "theorem": "op_return_contract",
+        "model": "proofs/EffectGate.fst",
+        "prover": "proofs/fstar-pin.json",
+        "supporting": [
+          "return_contract",
+          "op_token_checked",
+          "check_op_is_check_return",
+          "all_honour_ops",
+          "violator_named",
+          "landed_honour",
+          "plan_pure"
+        ],
+        "definitions": [
+          "op_contract",
+          "op_contract_reason",
+          "op_at",
+          "check_op",
+          "op_behaviour",
+          "op_contract_keyed",
+          "op_receipts_honour",
+          "violator",
+          "checked_by",
+          "landed",
+          "all_honour",
+          "violation",
+          "run"
+        ],
+        "note": "the runtime definition this phase adds is check_op, which is OpContract.check in src/Fuaran.Program.Server/ServerEffect.fs, composed by OpPerformance.performedChecked exactly as registerChecked composes ReturnContract.check. The theorem is conditional on op_contract_keyed, the bridge between production's composition (the contract inside the staged closure) and the model's keying (a contract per token); production makes it true by construction, and the model states it rather than assuming it silently. An op stage is identified by its TOKEN, not its capability string, because the prover reasons about neither string contents nor strcat inequalities — a capability-keyed statement was tried and does not discharge"
+      }
+    },
+    {
+      "id": "effect-gate-uncontracted-is-direct",
+      "level": "proved",
+      "phase": "Phase 1981",
+      "claim": "A performer registered with NO contract — host functions and op performer alike — runs exactly as it did before contracts existed: the handler's outcome under the wrapper that declares nothing is its outcome under the raw registry, as an equation, so every staging and gate theorem holds of an uncontracted performer unchanged.",
+      "evidence": {
+        "theorem": "uncontracted_is_direct",
+        "model": "proofs/EffectGate.fst",
+        "prover": "proofs/fstar-pin.json",
+        "supporting": [
+          "perform_ext",
+          "unchecked_is_raw",
+          "plan_pure"
+        ],
+        "definitions": [
+          "checked_by",
+          "perform",
+          "run"
+        ],
+        "note": "the acceptance's 'a performer with no contract behaves exactly as today', discharged as an equation rather than re-read off the earlier theorems; perform_ext is the one new lemma, that the perform phase reads a performer only by applying it"
+      }
+    },
+    {
+      "id": "op-contract-wrapper-agrees-with-shipped-code",
+      "level": "tested",
+      "phase": "Phase 1981",
+      "claim": "The extracted check_op and OpContract.check answer the same result over 48 (state, op, performer behaviour, contract verdict) cases — the receipt admitted, the receipt rejected with return-contract:<name>, the raw refusal passed through — with the (state, op) handed to the contract recorded on both sides and compared, and check_op_is_check_return holding as an instance on each.",
+      "evidence": {
+        "family": "Phase 1759 - the proved effect gate as oracle",
+        "host": "tests/Fuaran.Program.Server.Tests/ProofOracleTests.fs",
+        "cases": [
+          "the op contract wrapper agrees with the extracted check_op over every receipt, verdict and refusal (Phase 1981)"
+        ],
+        "runner": "proofs/check.ps1 step 6, in the effect-gate host's list",
+        "note": "a wrapper-level differential: the staging and effect-gate hosts' token type is production's own closure, which the model's checked_by cannot key a contract on, so the handler-level reading for op stages rests on op_token_checked (proved) plus the staging host running Handler.run under a registered op performer; the end-to-end run of a checked op performer and its adversary is the verb witness, tests/Fuaran.Program.Tests/VerbWitnessTests.fs ('ADVERSARY 1981')"
+      }
+    },
+    {
+      "id": "op-reach-covers-what-the-performer-touches",
+      "level": "assumed",
+      "phase": "Phase 1981",
+      "claim": "An op's reach (StateWitness.Reach) covers what its performer touches when handed the op — the second direction of the reach obligation (D24), beside D19's 'a reach is never a payload'. It is an obligation on the witness, stated in docs/generic-tier.md section 3.5; a receipt and an OpContract make it CHECKABLE where the domain can say how, and the theorem above claims the check of the performer's account, never the coverage itself.",
+      "evidence": {
+        "assumption": "the domain's performer, handed an op, touches only what the op's reach names; where the domain declares a contract over the receipt, a performer whose receipt names more is refused, and a performer that touched more and said less is outside what any contract can see",
+        "mitigation": "the in-repo verb witness answers the paths and targets it touched and checks each against the reach's arguments (Receipt.withinReach), with an adversary that writes outside the reach and says so refused by name; docs/performer-boundary.md records the account-not-coverage boundary and names what would close it (a host-computed receipt, a sandboxed performer) as host territory"
+      }
+    },
+    {
       "id": "effect-gate-model-agrees-with-shipped-code",
       "level": "tested",
       "phase": "Phase 1759",
@@ -928,7 +1011,8 @@
           "the gate is consulted before any performer, and every performed capability is one the gate admitted",
           "a refused capability lands exactly one denial carrying the capability, and nothing after it is planned or performed",
           "a result the return contract rejects is a typed refusal naming the contract, the handler rolls back, and the store never sees it",
-          "GO RED: a model that looks up the performer before consulting the gate loses the differential"
+          "GO RED: a model that looks up the performer before consulting the gate loses the differential",
+          "the op contract wrapper agrees with the extracted check_op over every receipt, verdict and refusal (Phase 1981)"
         ],
         "runner": "proofs/check.ps1 step 6, which asserts a CASE COUNT because a filter matching nothing reports success",
         "note": "the host is in Fuaran.Program.Server.Tests beside the staging host, because it runs Handler.run; the shard named Fuaran.Program.Parity.Tests. The go-red case is a model whose HostCall arm consults the lookup BEFORE the gate with every other clause the extraction's: it agrees with production whenever the gate admits and loses on an unregistered function the gate refuses — Unregistered where GateRefused should be. A second probe during authoring, not committed: production's wrapper edited to accept every result lost three of the seven cases"
