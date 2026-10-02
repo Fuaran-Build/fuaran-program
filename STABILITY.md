@@ -428,6 +428,36 @@ entry for entry.
 `Controls.revoke actor reason OpPerformance.RegistrationKey`. A host that drives the direct
 interpreter under its own controls adds `Controls.performance` beside its `Controls.apply`.
 
+### Rides the draft: coverage reads the op performer (Phase 1986)
+
+**Class: breaking, for one member** — `Controls.coverage` gains a parameter. It rides the draft
+rather than advancing it: the draft is already of the breaking class (see the head of this entry),
+`v0.6.0` is the newest tag and nothing public pins `0.7.0`. `DECISIONS.md` D28 records what was
+decided and why, including why the parameter was preferred to a second function.
+
+- **`Controls.coverage state registry performance`** — the placement's `OpPerformance` is the new
+  third argument. A call site that passed two arguments stops compiling until it names how its
+  placement performs ops; `OpPerformance.InMemory` reproduces the old answer exactly.
+- **`DurableControls.coverage controls host` keeps its signature** and reads `host.OpPerformance`
+  from the host record it already took.
+- **A behaviour a host can observe:** under `OpPerformance.Performed`, once the op performer is
+  revoked (`Controls.revoke actor reason OpPerformance.RegistrationKey`), coverage's gate refuses
+  `ApplyOps`, so a demanded-effect check over a handler that carries an op reports
+  `CoverageFinding.ServerGateRefusesCapability "ApplyOps"` where it reported nothing. That is the
+  revoke's effect being reported, not a new effect: the op stage was already refused at run time
+  (Phase 1983). Under `OpPerformance.InMemory` nothing changes — the apply is the effect and there
+  is nothing to withdraw.
+
+**What did NOT change:** `ServerCoverage`, `CoverageFinding` and `Demanded.checkProjection` (no
+member, no arm), no wire member, no fixture byte, no demanded-document byte, the control stream,
+`Controls.step` and its monotonicity, no proof statement. With the op performer not revoked, coverage
+is the registry's coverage under the controls exactly as before, whatever else is in force.
+
+**What a consumer does about it:** a direct caller of `Controls.coverage` passes its placement's
+op performance as the third argument (`OpPerformance.InMemory` if it performs none). A consumer that
+branches on coverage findings should expect `ApplyOps` in a gate finding when an operator has
+withdrawn the op performer; D28 says why it is a gate finding rather than an absence.
+
 ## 0.6.0 — RELEASED (tagged `v0.6.0`, 2026-09-28) — the core becomes domain-generic (Phase 1896)
 
 **Class: breaking**, for `Fuaran.Program.Bounded`, `Fuaran.Program.Runtime` and

@@ -980,6 +980,14 @@ let private dyingBefore (step: int) (inner: EffectJournal) : EffectJournal =
                 | JournalPhase.Attempted when entry.Step = step -> raise (ProcessDied "between steps")
                 | _ -> inner.Append entry }
 
+/// The demanded document for the one endpoint a test session exposes.
+let private coverageProjection (services: ServerServices) =
+    ServerDemanded.ofTreeAndHandlers services.Handlers (treeNode (Action.Call(endpoint, None, None)))
+
+/// A host whose only declaration is its server tier.
+let private serverHost (coverage: ServerCoverage) =
+    HostCoverage.nothing |> HostCoverage.withServer coverage
+
 [<Tests>]
 let opPerformerRevocation =
     testList
@@ -1330,4 +1338,183 @@ let opPerformerRevocation =
 
               Expect.equal (project directControlled) (project direct) "and the direct interpreter likewise"
               Expect.isEmpty refusals "with nothing refused"
+          } ]
+
+// ─── Phase 1986: coverage reads the op performer ─────────────────────────────
+//
+// The revoke above WORKS; until 1986 the report an operator reads to see what a
+// placement still covers said it had not, because coverage was read off the
+// registry and the op performer is not a member of it.
+
+[<Tests>]
+let opPerformerCoverage =
+    testList
+        "Phase 1986 — control coverage reads the op performer"
+        [
+
+          test "COVERAGE reports a revoked op performer: ApplyOps is withdrawn, and the controls name who and why" {
+              let opsRun = OpCounter()
+              let controls = controlsOn (Controls.inMemory ())
+
+              let services =
+                  { servicesOf (registryOf (Counter()).Performer) editsOnly with
+                      OpPerformance = opsRun.Performance }
+
+              let projection = coverageProjection services
+
+              Expect.isEmpty
+                  (Demanded.checkProjection (serverHost (DurableControls.coverage controls services)) projection)
+                  "before the withdrawal the placement covers the edit"
+
+              revokeOps controls "ops reach the world; withdrawn"
+
+              let coverage = DurableControls.coverage controls services
+
+              Expect.equal
+                  (Demanded.checkProjection (serverHost coverage) projection)
+                  [ CoverageFinding.ServerGateRefusesCapability OpPerformance.RegistrationKey ]
+                  "afterwards ApplyOps is withdrawn, under the key the revoke named"
+
+              Expect.isFalse (coverage.Gate "ApplyOps") "the arm's one coverage fact is closed"
+              Expect.isTrue (coverage.Gate "host:audit") "and nothing else is"
+
+              Expect.equal
+                  coverage.HostFunctions
+                  (Set.ofList [ "audit" ])
+                  "the host performers are untouched: the op performer was never one of them"
+
+              // Coverage carries no actor; the control state the coverage was
+              // read from does, and it is the same fold.
+              match Controls.opPerformerRevocation (DurableControls.stateOf controls) with
+              | Some(actor, reason) ->
+                  Expect.equal (ControlActor.tag actor) "operator" "withdrawn by the operator"
+                  Expect.equal reason "ops reach the world; withdrawn" "with the raiser's reason"
+              | None -> failtest "the revocation behind the finding is named by the controls"
+
+              Expect.equal opsRun.Count 0 "asking the question performs nothing"
+          }
+
+          test "COVERAGE: revoking a HOST performer leaves ApplyOps covered" {
+              let controls = controlsOn (Controls.inMemory ())
+
+              let services =
+                  { servicesOf (registryOf (Counter()).Performer) editsThenAudit with
+                      OpPerformance = (OpCounter()).Performance }
+
+              DurableControls.record controls (Controls.revoke ops "withdrawn" "audit")
+              |> ignore
+
+              let coverage = DurableControls.coverage controls services
+
+              Expect.equal
+                  (Demanded.checkProjection (serverHost coverage) (coverageProjection services))
+                  [ CoverageFinding.UnregisteredServerFunction "audit" ]
+                  "the host function is absent, and ApplyOps is not named"
+
+              Expect.isTrue (coverage.Gate "ApplyOps") "the op performer still stands"
+          }
+
+          test "COVERAGE with no op performer revoked is the registry's coverage, unchanged, whatever else is in force" {
+              let capabilities =
+                  [ "ApplyOps"
+                    "EmitPatch"
+                    "host:audit"
+                    "host:ApplyOps"
+                    "Notify"
+                    "RunQuery"
+                    "SetState" ]
+
+              let registry = registryOf (Counter()).Performer
+
+              // The pre-1986 formula, spelled out: the registry with the
+              // controls applied, and nothing else.
+              let registryOnly (state: ControlState) =
+                  ServerDemanded.coverageOfRegistry (Controls.apply ignore state registry)
+
+              let sameAs (expected: ServerCoverage) (actual: ServerCoverage) (label: string) =
+                  Expect.equal actual.HostFunctions expected.HostFunctions $"{label}: the same host functions"
+                  Expect.equal actual.Channels expected.Channels $"{label}: the same channel surface"
+
+                  Expect.equal
+                      (capabilities |> List.map actual.Gate)
+                      (capabilities |> List.map expected.Gate)
+                      $"{label}: the same gate, capability by capability"
+
+              let stateAfter (requests: ControlRequest list) =
+                  let controls = controlsOn (Controls.inMemory ())
+
+                  for request in requests do
+                      DurableControls.record controls request |> ignore
+
+                  DurableControls.stateOf controls
+
+              let states =
+                  [ "nothing recorded", stateAfter []
+                    "a host performer revoked", stateAfter [ Controls.revoke ops "withdrawn" "audit" ]
+                    "suspended", stateAfter [ Controls.suspend ops "halt" ]
+                    "throttled",
+                    stateAfter
+                        [ Controls.throttle
+                              ops
+                              "slow"
+                              { Capability = "ApplyOps"
+                                MaxPerInvocation = 2 } ] ]
+
+              let inMemory: OpPerformance<Node<obj>, TreeOp<obj>> = OpPerformance.InMemory
+
+              for label, state in states do
+                  sameAs
+                      (registryOnly state)
+                      (Controls.coverage state registry (OpCounter()).Performance)
+                      $"{label}, ops performed"
+
+                  sameAs (registryOnly state) (Controls.coverage state registry inMemory) $"{label}, ops in memory"
+          }
+
+          test "COVERAGE in memory: a revoke of the key withdraws nothing, so ApplyOps stays covered" {
+              let controls = controlsOn (Controls.inMemory ())
+
+              let services =
+                  { servicesOf (registryOf (Counter()).Performer) editsOnly with
+                      OpPerformance = OpPerformance.InMemory }
+
+              revokeOps controls "withdrawn"
+
+              let coverage = DurableControls.coverage controls services
+
+              Expect.isEmpty
+                  (Demanded.checkProjection (serverHost coverage) (coverageProjection services))
+                  "the apply IS the effect in memory, and nothing reaches outside to withdraw (D26 item 5)"
+
+              Expect.isTrue (coverage.Gate "ApplyOps") "the arm is covered"
+          }
+
+          test "COVERAGE: a Resume does not restore a withdrawn op performer, on any prefix of the stream" {
+              let services =
+                  { servicesOf (registryOf (Counter()).Performer) editsOnly with
+                      OpPerformance = (OpCounter()).Performance }
+
+              let journal = Controls.inMemory ()
+              let controls = controlsOn journal
+
+              for request in
+                  [ Controls.revoke ops "withdrawn" OpPerformance.RegistrationKey
+                    Controls.suspend ops "halt"
+                    Controls.resume ops "reviewed" ] do
+                  DurableControls.record controls request |> ignore
+
+              let entries = entriesOf journal
+              Expect.equal (List.length entries) 3 "the stream holds the three acts"
+
+              for prefix in prefixes entries |> List.filter (List.isEmpty >> not) do
+                  let coverage =
+                      Controls.coverage (Controls.fold prefix) services.Effects services.OpPerformance
+
+                  Expect.isFalse
+                      (coverage.Gate "ApplyOps")
+                      $"ApplyOps stays withdrawn after {List.length prefix} control(s)"
+
+              Expect.isTrue
+                  ((DurableControls.coverage controls services).Gate "host:audit")
+                  "the resume lifted the suspend, and only the suspend"
           } ]

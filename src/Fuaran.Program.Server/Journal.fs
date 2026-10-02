@@ -682,7 +682,8 @@ module Controls =
     ///             it. The OP performer is not a member of the registry — it
     ///             is the placement's `OpPerformance` — so its revocation is
     ///             not this function's work: see `performance` and
-    ///             `opStageRefusal` below (Phase 1983).
+    ///             `opStageRefusal` below (Phase 1983), and `coverage`, which
+    ///             reports it (Phase 1986).
     ///   RESUME    is the ABSENCE of a suspend and needs nothing here.
     ///
     /// The counter is per CALL of this function, which is what makes a throttle
@@ -737,18 +738,6 @@ module Controls =
                 |> Map.fold (fun functions performer _ -> Map.remove performer functions) registry.HostFunctions
             Gate = gate
             OnDenied = onDenied }
-
-    /// This host's server-tier coverage **with the controls in force** — what a
-    /// demanded-effect check is asked, so a withdrawn performer is reported as
-    /// `CoverageFinding.UnregisteredServerFunction` and a suspended session as a
-    /// gate refusal.
-    ///
-    /// It wraps a throwaway registry, so asking the question never spends a
-    /// throttle window. A capability that is throttled but not yet spent reads
-    /// as COVERED, which is the honest answer: a throttle is a limit on a
-    /// capability the host has, not the absence of one.
-    let coverage (state: ControlState) (registry: ServerEffectRegistry) : ServerCoverage =
-        ServerDemanded.coverageOfRegistry (apply ignore state registry)
 
     // ─── the op performer (Phase 1983, D26) ─────────────────────────────────
     //
@@ -812,6 +801,41 @@ module Controls =
         | OpPerformance.Performed _, Some(actor, reason) ->
             OpPerformance.Performed(fun _ _ -> Error(refuseOpStage record actor reason))
         | _ -> performance
+
+    /// This host's server-tier coverage **with the controls in force** — what a
+    /// demanded-effect check is asked, so a withdrawn host performer is reported
+    /// as `CoverageFinding.UnregisteredServerFunction`, a suspended session as a
+    /// gate refusal, and a withdrawn OP performer as a gate refusal of
+    /// `ApplyOps` (Phase 1986, D28).
+    ///
+    /// It reads the placement's `performance` beside the registry because the
+    /// op performer is not a registry member: a revoke of
+    /// `OpPerformance.RegistrationKey` withdraws nothing `apply` can see, and a
+    /// coverage read off the registry alone reported `ApplyOps` covered after
+    /// the revoke had taken. The coverage vocabulary gives the arm no performer
+    /// slot — `ApplyOps` is one of the arms that "only ever meet the gate" — so
+    /// the gate is the one fact it has about the arm, and the withdrawal is
+    /// carried there. Under `OpPerformance.InMemory` the apply IS the effect,
+    /// nothing reaches outside, and a revoke of the key withdraws nothing
+    /// (D26 §5): coverage is the registry's, unchanged.
+    ///
+    /// It wraps a throwaway registry, so asking the question never spends a
+    /// throttle window. A capability that is throttled but not yet spent reads
+    /// as COVERED, which is the honest answer: a throttle is a limit on a
+    /// capability the host has, not the absence of one.
+    let coverage
+        (state: ControlState)
+        (registry: ServerEffectRegistry)
+        (performance: OpPerformance<'Node, 'Op>)
+        : ServerCoverage =
+        let ofRegistry = ServerDemanded.coverageOfRegistry (apply ignore state registry)
+
+        match performance, opPerformerRevocation state with
+        | OpPerformance.Performed _, Some _ ->
+            ofRegistry
+            |> ServerCoverage.withGate (fun capability ->
+                capability <> OpPerformance.RegistrationKey && ofRegistry.Gate capability)
+        | _ -> ofRegistry
 
     // ─── the wire ────────────────────────────────────────────────────────────
     //

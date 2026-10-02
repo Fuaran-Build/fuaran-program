@@ -97,6 +97,16 @@ exists to avoid.
 > and refuses the first it did not, and a refused stage leaves no journal entry. In memory there is
 > no op performer and a revoke of the key withdraws nothing. The control record is
 > `ControlRefusal.Revoked` for both.
+>
+> **What coverage under controls reports — amended by [D28](../DECISIONS.md) (2026-10-02).**
+> `Controls.coverage` / `DurableControls.coverage` read the placement's `OpPerformance` beside the
+> registry, so the report agrees with the effect for both performer kinds. A revoked HOST performer
+> is absent from the registry and reads as `UnregisteredServerFunction`. A revoked OP performer,
+> under a registered op performer, closes coverage's gate over `ApplyOps` and reads as
+> `ServerGateRefusesCapability "ApplyOps"` — a gate finding because coverage has no registration
+> fact for the op arm, the same arm a suspended session reports through. In memory nothing is
+> withdrawn and `ApplyOps` stays covered. Coverage names the capability; who revoked it and why is
+> on the control state and on the `ControlRefusal.Revoked` record a run produces.
 
 *Concurrency is not addressed at all.* One session, one event, one handler. Two sessions running
 handlers against the same domain tree is a question about where durable state actually lives, which

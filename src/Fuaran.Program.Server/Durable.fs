@@ -854,8 +854,11 @@ module DurableControls =
 
     /// This host's server-tier coverage with the controls in force — what a
     /// demanded-effect check is asked once a performer has been withdrawn.
+    /// Both performer kinds: the host record carries the registry AND the
+    /// placement's `OpPerformance`, so a withdrawn op performer is reported
+    /// here as surely as a withdrawn host function (Phase 1986, D28).
     let coverage
         (controls: ControlServices)
         (host: ServerServices<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
         : ServerCoverage =
-        Controls.coverage (stateOf controls) host.Effects
+        Controls.coverage (stateOf controls) host.Effects host.OpPerformance

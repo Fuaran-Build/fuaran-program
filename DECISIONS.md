@@ -1666,3 +1666,78 @@ distinction in the model as D24 left it — op tokens and host tokens are told a
 keying, not by a token-side predicate in the model — and the host-call contract keyed by function
 NAME (`effect-gate-bridge-assumed`) on the assumed rung, since `registerChecked` keys it that way and
 no closure stands between the two.
+
+## D28 — Control coverage reads the op performer: a revoked op performer closes coverage's gate over `ApplyOps`, `Controls.coverage` takes the placement's performance, and the durable form reads it from the host record (2026-10-02)
+
+D26 closed with a clause it left open: "it leaves the demanded-effect COVERAGE check unaware of a
+withdrawn op performer". `Controls.coverage` and `DurableControls.coverage` read the registry, the op
+performer was never a member of it, and so a placement whose operator had revoked
+`OpPerformance.RegistrationKey` refused every op stage at run time while its coverage still reported
+`ApplyOps` covered. The revoke worked and the report said it had not. This decision closes the clause
+(Phase 1986).
+
+**1. Coverage reads the placement's `OpPerformance` beside the registry.** Under
+`OpPerformance.Performed`, with the key in `Revoked`, coverage's gate refuses `ApplyOps`; in every
+other case coverage is exactly the registry's under the controls, as before. The rule is the one
+`Controls.performance` already applies to the run, so the report and the effect are decided from the
+same two facts — the folded control state and the placement's performance — and cannot disagree.
+
+**2. The withdrawal is carried by the GATE, so the finding is
+`CoverageFinding.ServerGateRefusesCapability "ApplyOps"`, not an absence.** This is the call that
+needed deciding, and it is decided against the reading that looks more natural. A withdrawn HOST
+performer reads as `UnregisteredServerFunction` because the coverage vocabulary has a registration
+fact for host functions (`ServerCoverage.HostFunctions`) and a revoke removes the function from it.
+It has NO registration fact for the op arm: `ApplyOps` is one of the arms that need no performer and
+"only ever meet the gate" (`Demanded.fs`, `ServerCoverage`), so the gate is the one fact coverage
+holds about it, and a withdrawal of the arm can only be said there. Saying it as an absence would
+need a new `ServerCoverage` member (an op-performer slot) and a new `CoverageFinding` arm — a record
+gaining a field breaks every full-literal construction and a closed DU gaining a case breaks every
+exhaustive match, both in `Fuaran.Program.Bounded`, whose coverage model is placement-generic and
+knows nothing of an op performer. That is a larger change to a different package for a distinction
+no consumer branches on today. **The cost, stated rather than hidden:** `CoverageFinding`'s note says
+only the gate arm "is resolved by changing policy", and a revoke is monotone — no `Resume` lifts it.
+The suspend already reports through this arm (a suspended session has the capability and refuses
+it), so the gate finding already means "refused by policy OR by an operator's control", and the
+op-performer revoke joins the suspend there. **The trigger to revisit** is a consumer that must tell
+a revoked op performer from a policy refusal from the coverage report alone; the revisit is an
+op-performer slot on `ServerCoverage` with its own finding, filed against `Fuaran.Program.Bounded`.
+
+**3. Coverage carries no actor and no reason, for either kind of performer — the phase's premise
+that a withdrawn host capability is reported "naming the actor and reason" was checked and is false
+of coverage.** `ServerCoverage` is a vocabulary and a gate; a withdrawn host function's finding names
+the function and nothing else. The actor and reason live in the control state coverage was read from
+— `Controls.opPerformerRevocation` for the op performer, `ControlState.Revoked` for both — and on the
+`ControlRefusal.Revoked` record a run produces. The tests assert both from one fold: the finding names
+the key the revoke used, and the state it was computed from names who and why. Putting the actor into
+`ServerCoverage` would be item 2's breaking change to `Fuaran.Program.Bounded` again, and for a host
+function as much as for the op performer — a widening of the coverage question beyond this phase,
+not a gap in its answer.
+
+**4. `Controls.coverage` gains the performance as a parameter; `DurableControls.coverage` keeps its
+signature and reads `host.OpPerformance`.** For the durable form the host record already carries the
+performance, so the input arrives through a value the caller passes today and nothing breaks. For
+`Controls.coverage` a second function beside the old one was weighed and refused: the old one's
+contract is "coverage with the controls in force", and left registry-only it would go on answering
+that question wrongly for every performing placement — a function that lies by omission is debt, and
+this side's doctrine forbids it. Its one in-repository caller is `DurableControls.coverage`; a direct
+caller passes `OpPerformance.InMemory` to reproduce the old answer exactly. The change rides the
+`0.7.0` draft, which is already of the breaking class; `STABILITY.md` has the consumer's account.
+
+**5. In memory there is nothing to withdraw, and coverage says so by covering `ApplyOps`.** Under
+`OpPerformance.InMemory` the apply is the effect, performed while planning, and nothing reaches
+outside (D26 §5); a revoke of the key changes nothing at run time, so coverage reports the arm
+covered. The phase's wording ("coverage says so rather than claiming `ApplyOps`") is read in that
+sense — coverage does not claim a withdrawal that did not happen — because reporting `ApplyOps`
+withdrawn in memory would contradict the run, which is the defect this decision exists to remove.
+
+**6. Monotonicity is inherited, not re-implemented.** The rule reads `Revoked`, which no
+`Controls.step` arm shrinks, so a withdrawn op performer is reported withdrawn on every prefix of the
+stream after the revoke, a `Resume` included; the tests assert it prefix by prefix. With the op
+performer not revoked, coverage is the registry-only formula, compared capability by capability under
+an empty stream, a host revoke, a suspend and a throttle of `ApplyOps`, for both performances.
+
+**What this forecloses, and what it leaves.** It forecloses reporting the op performer's withdrawal
+as an absence without a change to `Fuaran.Program.Bounded`; item 2 names the trigger. It leaves the
+uncontrolled host coverage (`ServerSession`, read off the registry with no controls) as it was — with
+no controls there is nothing withdrawn to report. No wire member, fixture byte, demanded-document
+byte, control-stream byte or proof statement moves.
