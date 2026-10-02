@@ -313,6 +313,44 @@ calls `Durable.runWith` with the performance it already hands `Handler.runWith`,
 performer's idempotency, and passes the same performance to the facet derivation; a UI-tier consumer
 changes nothing.
 
+### Rides the draft: an op performer's claim is checked (Phase 1981)
+
+**Class: breaking**, for every consumer that registers an op performer — the payload of
+`OpPerformance.Performed` changes type — which is the class this slot already carries, so it rides
+rather than advancing. `v0.6.0` is the newest tag and nothing public pins `0.7.0`. `DECISIONS.md` D24
+records what was decided and why the specification does not move; this entry records what a consumer
+pays.
+
+- **`OpPerformance.Performed` carries `'Node -> 'Op -> Result<Fuaran.Core.JVal, string>`** — the
+  performer answers a RECEIPT, what it says it did, instead of `unit`. `OpPerformance.performedBy`
+  takes the receipt-answering shape. A performer with nothing to say registers through the new
+  `OpPerformance.performedWithoutReceipt`, whose receipt is the inert empty object the staged call
+  always answered — the one-line migration for every existing caller.
+- **`OpContract<'Node, 'Op>` is new** — `{ Name; Holds: 'Node -> 'Op -> JVal -> bool }` — with
+  `OpContract.describe` (`return-contract:<name>`, the vocabulary `ReturnContract.describe` has) and
+  `OpContract.check`. **`OpPerformance.performedChecked contract perform`** registers a performer with
+  its contract composed, on `ServerEffectRegistry.registerChecked`'s terms: a receipt the contract
+  rejects is `PerformFailed("ApplyOps", "return-contract:<name>")`, the handler rolled back and the op
+  absent from `Performed`.
+- **The durable journal records the receipt** as an op stage's `Completed` value, and a
+  contract-rejected receipt as `Refused` at its ordinal; a host reading its journal's values for op
+  stages sees the receipt where it saw `{}`. `Durable.runWith`'s signature is unchanged.
+- **`Handler.runWith` / `Handler.run` / `Durable.run` / the facet derivation** are unchanged in
+  signature; the facets read `Performed _` and are indifferent to the payload.
+
+**What did NOT change:** no wire member, no fixture byte, no demanded-document byte, no envelope
+needs re-signing, and the UI tier byte for byte through the parity suite and the Fable leg —
+`InMemory` is untouched. The program wire specification is unchanged (D24 item 6). Every earlier proof
+statement keeps its form; `EffectGate.fst` gains `op_contract` / `check_op` and the theorems
+`check_op_is_check_return`, `op_token_checked`, `op_return_contract` and `uncontracted_is_direct`, and
+its extraction is re-emitted for them.
+
+**What a consumer does about it:** a domain whose op performer answered `Ok ()` wraps it in
+`OpPerformance.performedWithoutReceipt` and changes nothing else; a domain whose policy is enforced
+against reach has its performer answer what it touched and registers through `performedChecked` with
+a contract that reads the receipt against the op's reach (the in-repo verb witness's
+`Receipt.withinReach` is the pattern); a UI-tier consumer changes nothing.
+
 ## 0.6.0 — RELEASED (tagged `v0.6.0`, 2026-09-28) — the core becomes domain-generic (Phase 1896)
 
 **Class: breaking**, for `Fuaran.Program.Bounded`, `Fuaran.Program.Runtime` and

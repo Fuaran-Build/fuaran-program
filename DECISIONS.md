@@ -1316,3 +1316,107 @@ function and cannot withdraw the op performer, which has no name; that is a find
 The journal's writes are two acts to two systems and the indeterminate window stays declared, not
 closed, exactly as D12 left it — what this decision adds is that the window is now the same window
 for an op stage, read, refused and overridden by the same code.
+
+## D24 — An op performer's claim is CHECKED: it answers a receipt, a contract over (planned state, op, receipt) is declared at registration in the `registerChecked` shape, the reach obligation runs both ways, and no specification act is taken (2026-10-02)
+
+Phase 1759 gave host functions a checked return — `ReturnContract`, composed with a performer by
+`ServerEffectRegistry.registerChecked`, proved by `return_contract` — and D19 (Phase 1967), landing
+the same day, gave ops a registered performer and said it is "trusted on the terms a host function
+is". It was trusted on weaker ones: `OpPerformance.Performed` answered `Result<unit, string>`, so a
+performer could say only that it succeeded, and no contract could check what it did. D19 decision 2
+stated the reach obligation in one direction only — a reach must never be a payload — and nothing
+stated the other: that the reach covers what the performer touches, which is the direction a policy
+enforced against reach (a lease, a deny-list, a worker grant — the plane's planned use,
+roadmap-engine#703) actually depends on. This decision amends both. **The op performer is
+constrained on the terms a host function is**, and **the reach obligation is stated both ways and is
+checkable through the receipt where the domain can say how.**
+
+**1. The performer answers a RECEIPT, and `Performed` is widened rather than doubled.**
+`OpPerformance.Performed` carries `'Node -> 'Op -> Result<Fuaran.Core.JVal, string>`: the value a host
+call's contract already reads, so one contract vocabulary serves both arms. The receipt is what the
+performer says it did — the paths it wrote, the sha it committed, the blocks it rendered — in the
+domain's own shape; it lands in no slot (`Into = None`, as an op always has), reaches no wire, and is
+recorded by the durable journal as the step's completed value (D23: "a receipt rides there when it
+exists"). A second `OpPerformance` case was refused for the reason D23 refused a second journal: the
+contract is a WRAPPER over the performer, and composing it at registration — `performedChecked
+contract perform = Performed (OpContract.check contract perform)` — is exactly the `registerChecked`
+shape, so every match site (the handler's plan fold, the durable wrapper, the facet derivation, the
+oracle bridge) keeps ONE arm and ONE perform loop, where a second case would have put the same
+wrapper into each of them by hand. A performer with nothing to say registers through
+`performedWithoutReceipt`, whose receipt is the inert empty object the staged call always answered.
+
+**2. The contract is over (planned state, op, receipt), and is a return contract AT the op.**
+`OpContract<'Node, 'Op>` is `{ Name; Holds: 'Node -> 'Op -> JVal -> bool }`; `OpContract.describe` is
+`return-contract:<name>`, the ONE refusal vocabulary a return contract has — the op axis coins no
+second prefix, so a reader of a `PerformFailed` reason learns which contract and not which arm, which
+is what a denial has always told them. `OpContract.check` is `ReturnContract.check` with the state and
+the op in hand, clause for clause: a raw refusal through unchanged, a receipt that holds through, a
+receipt that does not become the contract's name and never the receipt. The three arguments are the
+whole point: a contract that could not see the op could not know its reach, and one that could not
+see the state could not check a receipt against what the plan produced.
+
+**3. Proved first (D14), as a reading of `return_contract` made visible, plus the identity for the
+uncontracted case.** `EffectGate.fst` gains `op_contract`, `check_op` (production's wrapper),
+`op_at` (the return contract an op contract IS at one state and op), and the bridge
+`op_contract_keyed`: in production the contract is composed INTO the closure the plan phase stages
+as the op's token, and in the model that is the hypothesis that the token staged for (state, op)
+carries the contract at (state, op). Four theorems: `check_op_is_check_return` (one check, two
+keyings); `op_token_checked` (under the keying, the behaviour the perform phase sees for an op token
+IS `check_op` over the raw behaviour); **`op_return_contract`** — the three clauses of
+`return_contract` and two more in the op's own vocabulary: every landed receipt of an op stage
+honours the contract at the state and the op it was staged from (`op_receipts_honour`), and when the
+first rejected result is an op stage's, `PerformFailed` at that position names THIS contract, the
+handler is rolled back and `Performed` is exactly the stages before it; and
+**`uncontracted_is_direct`** — the handler's outcome under the wrapper that declares nothing is its
+outcome under the raw registry, as an equation, which is "a performer with no contract behaves
+exactly as today" as a theorem rather than a reading, and is why the staging and gate theorems
+re-prove unchanged for it. The model identifies an op stage by its TOKEN, not by its capability
+string, because the prover reasons about neither string content nor `strcat` inequalities
+(`strcat "host:" fn =!= "ApplyOps"` is unprovable there), and a token is what the staged call
+carries anyway. A go-red mutant — `check_op` accepting a rejected receipt — fails `op_token_checked`
+as it should. The differential host runs the extracted `check_op` beside `OpContract.check` over 48
+(state, op, behaviour, verdict) cases, with the (state, op) handed to the contract recorded and
+compared on both sides.
+
+**4. The reach obligation, both ways.** D19's direction stands: a reach is a NAME and never a payload.
+The new direction is on the witness beside it: **an op's reach covers what its performer touches when
+handed the op** (`docs/generic-tier.md` §3.5). The receipt is the domain's route to checking it — the
+in-repo verb witness answers the paths and targets it touched and `Receipt.withinReach` checks each
+against the reach's `path` and `target` arguments; its `Escaping` adversary, which writes a path the
+op's reach does not name and says so, is refused with `return-contract:within-reach`, the op absent
+from `Performed`, the escaped path in no diagnostic. What is checked is the performer's ACCOUNT, and
+`docs/performer-boundary.md` says so: a performer that overreached and reported only what was within
+reach passes, exactly as a host function whose result satisfies its contract passes whatever else it
+did — which is why the obligation is stated on the witness and the theorem claims the check, not the
+coverage. The document witness is unchanged: `Fuaran.Doc`'s sink has nothing to say beyond success,
+and registers through `performedWithoutReceipt`.
+
+**5. The durable tier records a refusal, never a false completion.** `Durable.runWith`'s wrapper
+hands the op stage's performer through unchanged — the contract is inside the performer as registered
+— so a receipt the contract rejects reaches the wrapper as `Error "return-contract:<name>"` and is
+journaled as `Refused` at its ordinal: a decided step, served on replay as the same refusal, never a
+`Completed` value and never the indeterminate window. `DurableInterpreterTests` pins the journal's
+rendering for both the receipt (the completed value IS the receipt) and the refusal.
+
+**6. The specification act is DECIDED: none.** Return contracts are host-declared and never specified
+(Phase 1759 added none). A receipt reaches no wire member — it lands in no binding, appears in no
+outcome document, and the journal that records it is the host-internal port D23 item 5(a) already
+found outside the specification. Its contract's refusal rides PROGRAM WIRE §6.4's `PerformFailed`
+`reason`, which already carries "the performer's own text": `return-contract:<name>` has been that
+text for a host call since Phase 1759, and an op stage's `PerformFailed` under `ApplyOps` has been D19's
+since Phase 1967. No specified member moves, no fixture byte moves, and the one sentence a registered
+performer reads past is still §6.2's, on D19's and D23's terms.
+
+**Version.** Rides the `0.7.0` draft: the slot is untagged, publicly unpinned and already breaking of
+this class. `OpPerformance.Performed`'s payload type changes (every registered performer and every
+`performedBy` caller — in this repository the two witnesses and three test suites); `OpContract`,
+`OpPerformance.performedChecked` and `performedWithoutReceipt` are new. No wire member, no fixture
+byte, and the UI tier byte for byte: `InMemory` is untouched and `Handler.run` unchanged.
+`STABILITY.md` has the consumer's account.
+
+**What this forecloses, and what it leaves.** A receipt that lands in a binding slot — the op arm
+gaining an `Into` — is NOT taken: it would make `ApplyOps` a dispatch-axis consumer, and a domain that
+wants a receipt in its state can write it as an op. The operator controls' inability to withdraw the
+op performer (D23's finding) stands. A contract keyed by capability STRING in the model is foreclosed
+by the prover (item 3); a model that distinguishes op tokens from host tokens by a token-side
+predicate is the shape a stronger statement would take, and nothing yet needs it.

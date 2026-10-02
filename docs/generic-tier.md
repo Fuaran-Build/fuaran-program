@@ -410,6 +410,29 @@ document's silence about deny-lists is true under every producer that ever wrote
 reader built before the clause refuses a document carrying one at the clause rather than misreading
 it.
 
+**The reach obligation runs BOTH ways (Phase 1981, D24).** D19 stated one direction: a reach is a
+NAME and must never be a payload. The other direction is the one a policy enforced against reach
+depends on, and it is now stated: **an op's reach covers what its performer touches when handed the
+op.** A domain that admits an op because its reach is within a lease, a deny-list or a worker grant is
+admitting what the performer will DO, and the declaration is only as good as that coverage. The
+obligation sits on the witness, as the first direction does, and it is checkable where the domain can
+say how: the op performer answers a **receipt** (`OpPerformance.Performed` is
+`'Node -> 'Op -> Result<JVal, string>`) — what it says it did, in the domain's own vocabulary, landing
+in no slot and reaching no wire — and an **`OpContract`** declared at registration
+(`OpPerformance.performedChecked contract perform`) is a predicate over the planned state, the op and
+the receipt that the perform phase checks before the op is reported as performed. The route is the
+domain's to choose: a verb's receipt names the paths it wrote and the targets it published, and the
+contract checks each against the reach's `path` and `target` arguments (the in-repo verb witness,
+`Receipt.withinReach`); a commit's receipt names the resulting sha; a document pipeline's names the
+blocks it rendered. A receipt the contract rejects is a typed `PerformFailed` under `ApplyOps` naming
+`return-contract:<name>` — the contract's name, never the receipt — with the handler rolled back and
+`Performed` exactly the stages before it, on the terms a host call's return contract has had since
+Phase 1759 (`op_return_contract` in `proofs/EffectGate.fst`; `uncontracted_is_direct` says a performer
+with no contract runs as it always did). What the contract checks is the performer's ACCOUNT: a
+performer that overreached and said nothing is outside what any contract can see, which is the
+boundary [`performer-boundary.md`](performer-boundary.md) records, and the reason the obligation is
+stated on the witness rather than claimed by the theorem.
+
 **The rejection stays `string` (W5, decided in D19).** `StreamWitness`'s `'Rej` is fixed at `string`
 here and stays so: a seventh type parameter would reach every public type that names the witness, the
 handler's halt vocabulary and the outcome wire — where a reason is a string by specification — to
@@ -449,7 +472,8 @@ reach is still reach and the document and the enforcement stay one enumeration. 
 `staged_from_the_final_state` (`Staging.fst`).
 
 **The performer is handed the state (Phase 1974 — F-PERFORM).** `OpPerformance.Performed` is
-`'Node -> 'Op -> Result<unit, string>`: each edit is staged with the planned state WITH THAT EDIT
+`'Node -> 'Op -> Result<JVal, string>` (a receipt since Phase 1981; `unit` when this was written):
+each edit is staged with the planned state WITH THAT EDIT
 APPLIED, and the state handed with the last edit performed is the state the plan produced
 (`performer_handed_the_plan`). A tail that renders or commits what the plan produced is handed it,
 rather than folding the ops a second time from the entry state in the trusted base. `Performed` and
@@ -567,11 +591,15 @@ And four more since 0.7.0 (Phase 1967, D19), each forced by the second witness r
   call is its own atomicity unit.
 - **`OpWitness` has `Reach`** (§3.5), and `ServerArgumentPolicy.arguments` / `payloadBytes` / `check`
   take the op witness, because an op sequence now has arguments and a size.
-- **`Handler.runWith` takes an `OpPerformance<'Op>`** — `InMemory`, the apply is the effect, or
-  `Performed of ('Op -> Result<unit, string>)`, under which `ApplyOps` is a staged arm performed after
-  the plan commits, one staged call per op in plan order beside the host calls. `Handler.run` is
-  `runWith` in memory; `ServerServices` carries the performance for the session loop. The durable
-  interpreter runs in memory and journals no performed op — stated, not covered.
+- **`Handler.runWith` takes an `OpPerformance<'Node, 'Op>`** — `InMemory`, the apply is the effect, or
+  `Performed of ('Node -> 'Op -> Result<JVal, string>)` (handed the planned state since Phase 1974,
+  answering a receipt since Phase 1981), under which `ApplyOps` is a staged arm performed after the
+  plan commits, one staged call per op in plan order beside the host calls. `Handler.run` is
+  `runWith` in memory; `ServerServices` carries the performance for the session loop. Since Phase
+  1980 (D23) the durable interpreter journals a performed op stage exactly as a host call — at its
+  ordinal in the one sequence, under the op's content address — and since Phase 1981 (D24) the
+  performer's receipt is checked by an `OpContract` declared at registration
+  (`OpPerformance.performedChecked`) before the op is reported as performed.
 - **The demanded document is at version 5**, with `reach` on the server tier (§6).
 
 And the cut itself (Phase 1974, D20), forced by the third witness:
@@ -877,7 +905,12 @@ performer changes no wire; and the codec families and the twelve driver scenario
 The one sentence of the specification a registered op performer reads past — §6.2's "only `HostCall`
 is staged" — describes the in-memory placement every conformant host had and every UI host still has.
 Carrying the performer case into the normative text would be a specification act across all five
-artefacts, and it is not taken here; it is recorded as the specification's own follow-on.
+artefacts, and it is not taken here; it is recorded as the specification's own follow-on. Two later
+phases re-asked the question and each decided it the same way on its own evidence: the durable
+journal's op stage is a host-internal record and not a wire artefact (Phase 1980, D23 item 5), and
+an op performer's receipt lands in no slot and reaches no wire member, its contract's refusal riding
+§6.4's `PerformFailed` reason as "the performer's own text" exactly as a host call's return contract
+has since Phase 1759 (Phase 1981, D24).
 
 **Phase 1974 moved nothing at all.** The three-way cut is a cut of the package surface: no schema,
 no fixture byte, no rule of the program wire specification and no byte of the demanded document
