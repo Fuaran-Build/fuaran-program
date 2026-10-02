@@ -143,8 +143,8 @@ $modules = @(
         Oracle       = "oracle/EffectGate.fs"
         HostProject  = "Fuaran.Program.Server.Tests"
         HostList     = "Phase 1759 - the proved effect gate as oracle"
-        HostMinCases = 7
-        HostSubject  = "the ServerEffectTests registry shapes and the generated (capability, gate, performer) triples, comparing the denial stream, the performed set and the post-state against Handler.run with ReturnContract-wrapped performers; the go-red lookup-before-gate mutant"
+        HostMinCases = 12
+        HostSubject  = "the ServerEffectTests registry shapes and the generated (capability, gate, performer) triples, comparing the denial stream, the performed set and the post-state against Handler.run with ReturnContract-wrapped performers; the go-red lookup-before-gate mutant; and the op-contract handler host (Phase 1984) — an op token carrying the planned state and the op, the model's contract keyed on it beside Handler.runWith under OpPerformance.performedChecked and the extracted durable_run beside Durable.runWith, over op stages that pass, fail their contract first, and fail after a host call, with the go-red entry-state mis-keying"
     }
     @{
         Name         = "Undo"

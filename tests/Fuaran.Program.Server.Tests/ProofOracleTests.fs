@@ -2072,6 +2072,495 @@ let private lookupFirstRun
 
     productionShaped outcome
 
+// ─── Phase 1984 — the op contract at the handler, keyed on the op token ─────
+//
+//  `op_return_contract` (Phase 1981) is a statement about a whole handler run
+//  under a contract keyed on the token the plan phase stages for each op, and
+//  it is conditional on `op_contract_keyed`: the token staged for (state, op)
+//  carries the op contract AT (state, op). The hosts above cannot run it,
+//  because their op token is production's own closure and the model's
+//  `checked_by` cannot key a contract on a closure. So this host stages a
+//  token that CARRIES what the model keys on — the planned state and the op —
+//  and keys the model's contract on it, beside production's handler under
+//  `OpPerformance.performedChecked`, where the contract is composed into the
+//  closure instead. That is the bridge hypothesis exercised rather than
+//  assumed: if the keying the model is handed were not the one production's
+//  composition amounts to, the two would diverge, and the go-red case below is
+//  a keying that is wrong in exactly one way.
+//
+//  The token differs from production's on purpose (DECISIONS.md D27):
+//  production's types are unchanged, and the host's token is TEST typing — a
+//  closure is opaque to the model, and the (state, op) pair is what the
+//  hypothesis is stated over.
+
+/// The performer token this host stages: a host call's (the function name
+/// and the raw closure, as the effect-gate host's `GateToken`) or an op
+/// stage's (the planned state handed to the performer, and the op).
+type private KeyedToken =
+    | HostToken of fn: string * performer: Performer
+    | OpToken of state: Node<obj> * op: TreeOp<obj>
+
+type private KeyedModelRegistry = Staging.registry<Node<obj>, Fuaran.Core.JVal, TreeOp<obj>, Query, KeyedToken>
+
+/// The receipt an honest op performer answers: the planned state's canonical
+/// hash beside the op's content address. Both halves are in it so that a
+/// contract keyed on the wrong state, or on the wrong op, rejects it.
+let private receiptText (state: Node<obj>) (op: TreeOp<obj>) : string =
+    Fuaran.Core.Hash.sha256Hex (CanonicalJson.encodeNode state)
+    + "/"
+    + Durable.opSubject witness.State op
+
+let private receiptFor (state: Node<obj>) (op: TreeOp<obj>) : Fuaran.Core.JVal = jstr (receiptText state op)
+
+/// The op contract both sides declare: the receipt names the planned state
+/// and the op it is a receipt for.
+let private opContractName = "names-the-planned-op"
+
+let private plannedOpContract: OpContract<Node<obj>, TreeOp<obj>> =
+    { Name = opContractName
+      Holds = fun state op receipt -> receipt = receiptFor state op }
+
+let private modelOpContract: EffectGate.op_contract<Node<obj>, TreeOp<obj>, Fuaran.Core.JVal> =
+    { EffectGate.oc_name = opContractName
+      EffectGate.oc_holds = fun state op receipt -> receipt = receiptFor state op }
+
+/// The op performer's behaviours.
+type private OpBehaviour =
+    /// Every receipt names the planned state and the op.
+    | Honest
+    /// Every receipt names something else — the contract rejects the first.
+    | Elsewhere
+    /// The first receipt is honest and every later one names something else —
+    /// the contract rejects a LATER op, after one has landed.
+    | HonestThenElsewhere
+    /// Refuses outright, with the performer's own reason.
+    | RefusesOps
+
+/// What a run's performers did, in invocation order on ONE list:
+/// `host:<fn>` for a host call, `ApplyOps:<state hash>/<op address>` for an
+/// op — the (state, op) the op performer was HANDED, compared across sides.
+type private KeyedLog = System.Collections.Generic.List<string>
+
+let private keyedHost (log: KeyedLog) (fn: string) : Performer =
+    fun _ ->
+        log.Add("host:" + fn)
+        Ok(jstr ("ran:" + fn))
+
+/// One op performer per run — its counter is the run's own.
+let private keyedOp
+    (log: KeyedLog)
+    (receipts: System.Collections.Generic.List<Node<obj> * TreeOp<obj> * Fuaran.Core.JVal>)
+    (behaviour: OpBehaviour)
+    : Node<obj> -> TreeOp<obj> -> Result<Fuaran.Core.JVal, string> =
+    let calls = ref 0
+
+    fun state op ->
+        let n = calls.Value
+        calls.Value <- n + 1
+        log.Add("ApplyOps:" + receiptText state op)
+
+        let answer =
+            match behaviour with
+            | Honest -> Ok(receiptFor state op)
+            | Elsewhere -> Ok(jstr "elsewhere")
+            | HonestThenElsewhere ->
+                if n = 0 then
+                    Ok(receiptFor state op)
+                else
+                    Ok(jstr "elsewhere")
+            | RefusesOps -> Error "op performer refused"
+
+        match answer with
+        | Ok receipt -> receipts.Add((state, op, receipt))
+        | Error _ -> ()
+
+        answer
+
+/// How the model keys a contract on an op token. `KeyedOnToken` is the
+/// keying `op_contract_keyed` states; `Uncontracted` declares nothing on the
+/// op performer (`uncontracted_is_direct`); `KeyedOnEntryState` is the
+/// go-red mis-keying — the right contract, the right op, the WRONG state.
+type private OpKeying =
+    | KeyedOnToken
+    | Uncontracted
+    | KeyedOnEntryState of Node<obj>
+
+/// The model's per-token contract: `audit` behind the text contract (as the
+/// effect-gate host keys it), the op token by `keying`.
+let private keyedContract (keying: OpKeying) (token: KeyedToken) : Staging.opt<EffectGate.contract<Fuaran.Core.JVal>> =
+    match token, keying with
+    | HostToken("audit", _), _ ->
+        Staging.OSome
+            { EffectGate.ct_name = textContract.Name
+              EffectGate.ct_holds = textContract.Holds }
+    | HostToken _, _ -> Staging.ONone
+    | OpToken(state, op), KeyedOnToken -> Staging.OSome(EffectGate.op_at modelOpContract state op)
+    | OpToken _, Uncontracted -> Staging.ONone
+    | OpToken(_, op), KeyedOnEntryState entry -> Staging.OSome(EffectGate.op_at modelOpContract entry op)
+
+/// The plan shapes: an op stage that passes or fails its contract FIRST, two
+/// ops in one stage (so a later op can fail after one landed), and op stages
+/// that fail AFTER a host call has run.
+let private keyedPlans: (string * HandlerStage list) list =
+    [ "an op alone", [ Effect(ServerEffect.ApplyOps [ TreeOp.RemoveNode(NodeId "refresh") ]) ]
+      "two ops in one stage",
+      [ Effect(ServerEffect.ApplyOps [ TreeOp.RemoveNode(NodeId "refresh"); TreeOp.RemoveNode(NodeId "readout") ]) ]
+      "an op, then a checked host call landing",
+      [ Effect(ServerEffect.ApplyOps [ TreeOp.RemoveNode(NodeId "refresh") ])
+        Effect(ServerEffect.HostCall("audit", jstr "note", Some "audited")) ]
+      "a checked host call, then an op",
+      [ Effect(ServerEffect.HostCall("audit", jstr "note", Some "audited"))
+        Effect(ServerEffect.ApplyOps [ TreeOp.RemoveNode(NodeId "refresh") ]) ]
+      "host call, op, host call, op",
+      [ Effect(ServerEffect.HostCall("audit", jstr "one", None))
+        Effect(ServerEffect.ApplyOps [ TreeOp.RemoveNode(NodeId "refresh") ])
+        Compute(Action.SetState("status", Some(jstr "planned"), None))
+        Effect(ServerEffect.HostCall("raw", jstr "two", None))
+        Effect(ServerEffect.ApplyOps [ TreeOp.RemoveNode(NodeId "readout") ]) ] ]
+
+type private KeyedCase =
+    { Plan: string
+      Stages: HandlerStage list
+      Behaviour: OpBehaviour
+      Contracted: bool }
+
+let private keyedCases: KeyedCase list =
+    [ for plan, stages in keyedPlans do
+          for behaviour in [ Honest; Elsewhere; HonestThenElsewhere; RefusesOps ] do
+              for contracted in [ true; false ] do
+                  { Plan = plan
+                    Stages = stages
+                    Behaviour = behaviour
+                    Contracted = contracted } ]
+
+let private describeKeyed (c: KeyedCase) =
+    sprintf "%s / %A / %s" c.Plan c.Behaviour (if c.Contracted then "contracted" else "uncontracted")
+
+/// One side's performers for one run: a fresh log, a fresh receipt list, a
+/// fresh op counter.
+type private KeyedSide =
+    { Log: KeyedLog
+      Receipts: System.Collections.Generic.List<Node<obj> * TreeOp<obj> * Fuaran.Core.JVal>
+      Op: Node<obj> -> TreeOp<obj> -> Result<Fuaran.Core.JVal, string> }
+
+let private keyedSide (behaviour: OpBehaviour) : KeyedSide =
+    let log = KeyedLog()
+    let receipts = System.Collections.Generic.List<_>()
+
+    { Log = log
+      Receipts = receipts
+      Op = keyedOp log receipts behaviour }
+
+/// Production: `audit` through `registerChecked`, `raw` through `register`,
+/// the op performer through `performedChecked` — the contract composed into
+/// the closure the plan phase stages — or bare when uncontracted.
+let private keyedProduction (c: KeyedCase) (side: KeyedSide) =
+    let registry =
+        ServerEffectRegistry.denyAll
+        |> ServerEffectRegistry.registerChecked "audit" textContract (keyedHost side.Log "audit")
+        |> ServerEffectRegistry.register "raw" (keyedHost side.Log "raw")
+        |> ServerEffectRegistry.permissive
+
+    let performance =
+        if c.Contracted then
+            OpPerformance.performedChecked plannedOpContract side.Op
+        else
+            OpPerformance.Performed side.Op
+
+    registry, performance
+
+/// The model: the lookup answers a `HostToken`, the op performer stages an
+/// `OpToken` carrying the planned state and the op, and the behaviour is the
+/// EXTRACTED `checked_by` over the raw behaviours, keyed per token by
+/// `keying`. `answers` records what the wrapped behaviour answered, in
+/// invocation order — the model's half of the journal comparison.
+let private keyedModel
+    (keying: OpKeying)
+    (side: KeyedSide)
+    (answers: System.Collections.Generic.List<Staging.res<Fuaran.Core.JVal>>)
+    : KeyedModelRegistry =
+    let bridge =
+        ServerEffectRegistry.denyAll
+        |> ServerEffectRegistry.permissive
+        |> modelRegistry OpPerformance.InMemory
+
+    let raw (token: KeyedToken) (args: Fuaran.Core.JVal) : Staging.res<Fuaran.Core.JVal> =
+        match token with
+        | HostToken(_, performer) -> performer args |> modelRes
+        | OpToken(state, op) -> side.Op state op |> modelRes
+
+    let checkedBehaviour = EffectGate.checked_by (keyedContract keying) raw
+
+    { r_gate = bridge.r_gate
+      r_policy = bridge.r_policy
+      r_lookup =
+        fun fn ->
+            if fn = "audit" || fn = "raw" then
+                Staging.OSome(HostToken(fn, keyedHost side.Log fn))
+            else
+                Staging.ONone
+      r_perf =
+        fun token args ->
+            let answer = checkedBehaviour token args
+            answers.Add answer
+            answer
+      r_op_perform = Staging.OSome(fun state op -> OpToken(state, op), Fuaran.Core.JObj []) }
+
+let private keyedModelStore: Staging.store<Node<obj>, BindingSources> =
+    { st_tree = durableStore.Tree
+      st_bindings = durableStore.Bindings }
+
+let private keyedHandler (c: KeyedCase) : Handler = { Name = c.Plan; Stages = c.Stages }
+
+type private KeyedRun =
+    { Production: HandlerOutcome
+      ProductionLog: string list
+      ProductionReceipts: (Node<obj> * TreeOp<obj> * Fuaran.Core.JVal) list
+      Model: HandlerOutcome
+      ModelLog: string list }
+
+/// One case on both sides, directly: `Handler.runWith` beside the
+/// extraction's `Staging.run`.
+let private runKeyed (keying: OpKeying) (c: KeyedCase) : KeyedRun =
+    let productionSide = keyedSide c.Behaviour
+    let modelSide = keyedSide c.Behaviour
+    let registry, performance = keyedProduction c productionSide
+
+    let production =
+        Handler.runWith
+            witness
+            registry
+            performance
+            Fuaran.Core.DataFrame.noResolve
+            "call"
+            (keyedHandler c)
+            durableStore
+
+    let keyingFor = if c.Contracted then keying else Uncontracted
+
+    let model =
+        Staging.run
+            (modelWitness witness Fuaran.Core.DataFrame.noResolve)
+            (keyedModel keyingFor modelSide (System.Collections.Generic.List<_>()))
+            "call"
+            (c.Stages |> List.map modelStage)
+            keyedModelStore
+        |> productionShaped
+
+    { Production = production
+      ProductionLog = List.ofSeq productionSide.Log
+      ProductionReceipts = List.ofSeq productionSide.Receipts
+      Model = model
+      ModelLog = List.ofSeq modelSide.Log }
+
+let private keyedDivergence (c: KeyedCase) (run: KeyedRun) : string option =
+    let where = describeKeyed c
+    let production = projectionOf run.Production
+    let model = projectionOf run.Model
+
+    if production <> model then
+        Some(sprintf "%s: the outcomes differ\n production: %A\n model:      %A" where production model)
+    elif run.ProductionLog <> run.ModelLog then
+        Some(
+            sprintf
+                "%s: the performers were asked different things\n production: %A\n model:      %A"
+                where
+                run.ProductionLog
+                run.ModelLog
+        )
+    else
+        None
+
+/// A journal record reduced to what both sides can say about a DECIDED step:
+/// the ordinal, the capability, the subject, and the answer.
+let private decidedOf (entries: JournalEntry list) =
+    entries
+    |> List.filter (fun e -> e.Step <> Journal.InvocationStep)
+    |> List.choose (fun e ->
+        match e.Phase with
+        | JournalPhase.Completed value -> Some(e.Step, e.Capability, e.Subject, Ok value)
+        | JournalPhase.Refused reason -> Some(e.Step, e.Capability, e.Subject, Error reason)
+        | _ -> None)
+
+/// The production journal snapshot, read as the model's `journal`.
+let private keyedJournal (entries: JournalEntry list) : Staging.journal<Fuaran.Core.JVal> =
+    { j_step =
+        fun k ->
+            match Journal.stepOf entries (int k) with
+            | JournaledStep.Unrun -> Staging.JUnrun
+            | JournaledStep.Value v -> Staging.JValue v
+            | JournaledStep.Refusal r -> Staging.JRefusal r
+            | JournaledStep.Indeterminate _ -> Staging.JIndeterminate
+      j_recorded =
+        fun k ->
+            match Journal.capabilityOf entries (int k), Journal.subjectOf entries (int k) with
+            | Some capability, Some subject -> Staging.OSome(capability, modelOpt subject)
+            | _ -> Staging.ONone }
+
+/// The subject a staged call is journaled under: the op's content address for
+/// an op stage — read off the token, which carries the op — and none for a
+/// host call.
+let private keyedSubject (call: Staging.staged_call<Fuaran.Core.JVal, KeyedToken>) : Staging.opt<string> =
+    match call.sc_performer with
+    | OpToken(_, op) -> Staging.OSome(Durable.opSubject witness.State op)
+    | HostToken _ -> Staging.ONone
+
+type private DurableKeyedRun =
+    { Production: DurableOutcome<Node<obj>, BindingSources, TreeOp<obj>, ClientEffect>
+      ProductionDecided: (int * string * string option * Result<Fuaran.Core.JVal, string>) list
+      Model:
+          Staging.durable_outcome<
+              Node<obj>,
+              BindingSources,
+              Fuaran.Core.JVal,
+              TreeOp<obj>,
+              ClientEffect,
+              BoundedDiagnostic
+           >
+      ModelDecided: (int * string * string option * Result<Fuaran.Core.JVal, string>) list
+      Resumed: DurableOutcome<Node<obj>, BindingSources, TreeOp<obj>, ClientEffect>
+      ModelResumed:
+          Staging.durable_outcome<
+              Node<obj>,
+              BindingSources,
+              Fuaran.Core.JVal,
+              TreeOp<obj>,
+              ClientEffect,
+              BoundedDiagnostic
+           > }
+
+/// One case under `Durable.runWith` beside the extraction's `durable_run`,
+/// over an empty journal; then the same invocation RESUMED on both sides over
+/// the journal production left. The model's decided steps are its invoked
+/// ordinals with the capability and subject of the call staged there and
+/// what the wrapped behaviour answered — the writes `Durable.runWith`
+/// performs, read off the model rather than modelled in it.
+let private runKeyedDurably (c: KeyedCase) : DurableKeyedRun =
+    let journal = Journal.inMemory ()
+    let services = DurableServices.create |> DurableServices.withJournal journal
+
+    let durableFor (entries: JournalEntry list) : Staging.durable<Fuaran.Core.JVal, KeyedToken> =
+        { d_journal = keyedJournal entries
+          d_subject = keyedSubject
+          d_idempotent =
+            fun call ->
+                match call.sc_performer with
+                | OpToken _ -> PerformerFacets.opPerformerFacet services.Performers = IdempotencyFacet.Idempotent
+                | HostToken(fn, _) -> PerformerFacets.facetOf fn services.Performers = IdempotencyFacet.Idempotent
+          d_reinvoke = services.ReinvokeIndeterminate }
+
+    let keying = if c.Contracted then KeyedOnToken else Uncontracted
+    let mw = modelWitness witness Fuaran.Core.DataFrame.noResolve
+    let stages = c.Stages |> List.map modelStage
+
+    let runProduction () =
+        let side = keyedSide c.Behaviour
+        let registry, performance = keyedProduction c side
+
+        Durable.runWith
+            witness
+            services
+            "inv"
+            registry
+            performance
+            Fuaran.Core.DataFrame.noResolve
+            "call"
+            (keyedHandler c)
+            durableStore
+
+    let runModel (entries: JournalEntry list) =
+        let answers = System.Collections.Generic.List<Staging.res<Fuaran.Core.JVal>>()
+        let registry = keyedModel keying (keyedSide c.Behaviour) answers
+
+        let outcome =
+            Staging.durable_run mw registry (durableFor entries) "call" stages keyedModelStore
+        // The staged list the perform phase walked, read off the plan — the
+        // plan phase never applies a behaviour, so this asks no performer.
+        let staged =
+            (Staging.plan mw registry "call" stages (Staging.start keyedModelStore)).ac_staged
+            |> Staging.rev
+            |> Array.ofList
+
+        let decided =
+            List.zip (outcome.do_invoked |> List.map int) (List.ofSeq answers)
+            |> List.map (fun (k, answer) ->
+                let call = staged.[k]
+
+                k,
+                call.sc_capability,
+                (match keyedSubject call with
+                 | Staging.OSome s -> Some s
+                 | Staging.ONone -> None),
+                (match answer with
+                 | Staging.ROk v -> Ok v
+                 | Staging.RErr r -> Error r))
+
+        outcome, decided
+
+    let production = runProduction ()
+    let first = journal.Read "inv"
+    let model, modelDecided = runModel []
+    let resumed = runProduction ()
+    let modelResumed, _ = runModel first
+
+    { Production = production
+      ProductionDecided = decidedOf first
+      Model = model
+      ModelDecided = modelDecided
+      Resumed = resumed
+      ModelResumed = modelResumed }
+
+let private durableKeyedDivergence (c: KeyedCase) (run: DurableKeyedRun) : string option =
+    let where = describeKeyed c
+    let ordinals (xs: bigint list) = xs |> List.map int
+
+    let compareOne
+        (leg: string)
+        (production: DurableOutcome<Node<obj>, BindingSources, TreeOp<obj>, ClientEffect>)
+        (model:
+            Staging.durable_outcome<
+                Node<obj>,
+                BindingSources,
+                Fuaran.Core.JVal,
+                TreeOp<obj>,
+                ClientEffect,
+                BoundedDiagnostic
+             >)
+        =
+        let p = projectionOf production.Outcome
+        let m = projectionOf (productionShaped model.do_outcome)
+
+        if p <> m then
+            Some(sprintf "%s (%s): the outcomes differ\n production: %A\n model:      %A" where leg p m)
+        elif
+            (production.Replayed, production.Invoked, production.Indeterminate)
+            <> (ordinals model.do_replayed, ordinals model.do_invoked, ordinals model.do_indeterminate)
+        then
+            Some(
+                sprintf
+                    "%s (%s): the ordinal lists differ\n production: %A\n model:      %A"
+                    where
+                    leg
+                    (production.Replayed, production.Invoked, production.Indeterminate)
+                    (model.do_replayed, model.do_invoked, model.do_indeterminate)
+            )
+        else
+            None
+
+    match compareOne "first run" run.Production run.Model with
+    | Some report -> Some report
+    | None ->
+        if run.ProductionDecided <> run.ModelDecided then
+            Some(
+                sprintf
+                    "%s: the decided steps differ\n production's journal: %A\n model:                %A"
+                    where
+                    run.ProductionDecided
+                    run.ModelDecided
+            )
+        else
+            compareOne "resumed" run.Resumed run.ModelResumed
+
 // ─── The tests ──────────────────────────────────────────────────────────────
 
 [<Tests>]
@@ -2416,4 +2905,264 @@ let effectGateTests =
                               cases <- cases + 1
 
               Expect.equal cases 48 "the corpus is two states, two ops, four behaviours and three verdicts"
+          }
+
+          test
+              "the op-contract host reaches every verdict at the handler - a receipt landed, refused by its contract first, refused after a host call ran, and a raw refusal (Phase 1984)" {
+              // A corpus whose contracted runs all committed, or all failed
+              // at the first stage, would exercise one clause of
+              // `op_return_contract`. The floor is each of the three plan
+              // shapes the shard names, under a contract production composes
+              // and the model keys on the token.
+              let runs =
+                  keyedCases
+                  |> List.filter _.Contracted
+                  |> List.map (fun c -> c, runKeyed KeyedOnToken c)
+
+              let refusedByContract (r: KeyedRun) =
+                  match List.tryLast r.Production.Diagnostics with
+                  | Some(ServerDiagnostic.PerformFailed("ApplyOps", reason)) ->
+                      reason = OpContract.describe plannedOpContract
+                  | _ -> false
+
+              Expect.equal (List.length keyedCases) 40 "five plans, four behaviours, contracted and not"
+
+              Expect.isTrue
+                  (runs
+                   |> List.exists (fun (_, r) -> r.Production.Committed && not (List.isEmpty r.ProductionReceipts)))
+                  "no contracted run landed an op receipt"
+
+              Expect.isTrue
+                  (runs
+                   |> List.exists (fun (_, r) -> refusedByContract r && List.isEmpty r.Production.Performed))
+                  "no run had its FIRST stage refused by the op contract"
+
+              Expect.isTrue
+                  (runs
+                   |> List.exists (fun (_, r) ->
+                       refusedByContract r
+                       && r.Production.Performed
+                          |> List.exists (fun c -> c.StartsWith("host:", StringComparison.Ordinal))))
+                  "no run had an op refused by its contract AFTER a host call ran"
+
+              Expect.isTrue
+                  (runs
+                   |> List.exists (fun (_, r) -> refusedByContract r && List.contains "ApplyOps" r.Production.Performed))
+                  "no run had a LATER op refused after an earlier op landed"
+
+              Expect.isTrue
+                  (runs
+                   |> List.exists (fun (_, r) ->
+                       match List.tryLast r.Production.Diagnostics with
+                       | Some(ServerDiagnostic.PerformFailed("ApplyOps", "op performer refused")) -> true
+                       | _ -> false))
+                  "no run had the op performer refuse outright"
+          }
+
+          test
+              "the extracted handler under an op contract keyed on the op token agrees with production's handler under performedChecked - outcome, performer log, the refusal and the rollback (Phase 1984)" {
+              // `op_return_contract` at the level it is stated: the model's
+              // `Staging.run` with the EXTRACTED `checked_by` keying the
+              // contract on each staged token beside `Handler.runWith` with
+              // the contract composed into the staged closure. Then the
+              // theorem's clauses as instances against production, and the
+              // bridge `op_contract_keyed` as an instance against the model.
+              let divergences =
+                  keyedCases |> List.choose (fun c -> keyedDivergence c (runKeyed KeyedOnToken c))
+
+              Expect.isEmpty
+                  divergences
+                  (sprintf
+                      "the extracted handler and production diverged on %d case(s); the first: %s"
+                      (List.length divergences)
+                      (divergences |> List.truncate 1 |> String.concat " | "))
+
+              for c in keyedCases |> List.filter _.Contracted do
+                  let run = runKeyed KeyedOnToken c
+                  let where = describeKeyed c
+                  let outcome = run.Production
+
+                  // op_receipts_honour: a receipt that landed honours the
+                  // contract at the state and the op it was staged from.
+                  if outcome.Committed then
+                      for state, op, receipt in run.ProductionReceipts do
+                          Expect.isTrue
+                              (plannedOpContract.Holds state op receipt)
+                              (sprintf "%s: a committed run landed a receipt its contract rejects" where)
+
+                  match List.tryLast outcome.Diagnostics with
+                  | Some(ServerDiagnostic.PerformFailed("ApplyOps", reason)) when
+                      reason = OpContract.describe plannedOpContract
+                      ->
+                      // The refusal: rolled back, nothing committed, and
+                      // Performed exactly the stages before the rejected one —
+                      // the log's prefix, the rejected op never reported.
+                      Expect.isFalse outcome.Committed (sprintf "%s: committed past a contract refusal" where)
+
+                      Expect.isTrue
+                          (LanguagePrimitives.PhysicalEquality outcome.Store.Tree durableStore.Tree)
+                          (sprintf "%s: the tree is not the entry tree" where)
+
+                      Expect.equal
+                          outcome.Performed
+                          (run.ProductionLog
+                           |> List.take (List.length run.ProductionLog - 1)
+                           |> List.map (fun e -> if e.StartsWith "host:" then e else "ApplyOps"))
+                          (sprintf "%s: Performed is not exactly the stages before the rejected op" where)
+
+                      Expect.isTrue
+                          ((List.last run.ProductionLog).StartsWith "ApplyOps:")
+                          (sprintf "%s: the perform phase did not stop at the rejected op" where)
+
+                      Expect.isFalse
+                          (outcome.Diagnostics
+                           |> List.exists (fun d -> (sprintf "%A" d).Contains "elsewhere"))
+                          (sprintf "%s: the rejected receipt is echoed in a diagnostic" where)
+                  | _ ->
+                      Expect.isFalse
+                          (c.Behaviour = Elsewhere && outcome.Committed)
+                          (sprintf "%s: a receipt naming nothing was accepted" where)
+
+              // op_contract_keyed, as an instance: every token the model's op
+              // performer stages for a (state, op) carries THIS contract at
+              // that state and op — the honest receipt holds, another fails.
+              for c in keyedCases do
+                  let staged =
+                      let planned =
+                          Staging.plan
+                              (modelWitness witness Fuaran.Core.DataFrame.noResolve)
+                              (keyedModel KeyedOnToken (keyedSide c.Behaviour) (System.Collections.Generic.List<_>()))
+                              "call"
+                              (c.Stages |> List.map modelStage)
+                              (Staging.start keyedModelStore)
+
+                      Staging.rev planned.ac_staged
+
+                  for call in staged do
+                      match call.sc_performer with
+                      | OpToken(state, op) ->
+                          match keyedContract KeyedOnToken call.sc_performer with
+                          | Staging.OSome contract ->
+                              Expect.equal contract.ct_name opContractName "the op token is keyed to another contract"
+
+                              Expect.isTrue
+                                  (contract.ct_holds (receiptFor state op))
+                                  (sprintf "%s: the keyed contract rejects the honest receipt" (describeKeyed c))
+
+                              Expect.isFalse
+                                  (contract.ct_holds (jstr "elsewhere"))
+                                  (sprintf "%s: the keyed contract admits a foreign receipt" (describeKeyed c))
+                          | Staging.ONone -> failtest "an op token carries no contract"
+                      | HostToken _ -> ()
+          }
+
+          test
+              "under Durable.runWith a contract-rejected receipt journals as Refused at its ordinal in the model's durable_run and in production alike, and a resume serves that refusal (Phase 1984)" {
+              // 1980 + 1981 at the handler: the op stage's ordinal is shared
+              // with the host calls, the contract is inside the performer as
+              // registered, and the wrapper journals what it answered. The
+              // model's `durable_run` over the same keyed registry decides the
+              // same steps with the same answers, and resumed over the journal
+              // production left, both serve the refusal without invoking.
+              let runs = keyedCases |> List.map (fun c -> c, runKeyedDurably c)
+
+              let divergences = runs |> List.choose (fun (c, run) -> durableKeyedDivergence c run)
+
+              Expect.isEmpty
+                  divergences
+                  (sprintf
+                      "the extracted durable run and production diverged on %d case(s); the first: %s"
+                      (List.length divergences)
+                      (divergences |> List.truncate 1 |> String.concat " | "))
+
+              let refused =
+                  [ for c, run in runs do
+                        match List.tryLast run.ProductionDecided with
+                        | Some(k, "ApplyOps", Some _, Error reason) when reason = OpContract.describe plannedOpContract ->
+                            yield c, k, run
+                        | _ -> () ]
+
+              Expect.isTrue (List.length refused >= 3) "fewer than three durable runs journal a contract refusal"
+
+              Expect.isTrue
+                  (refused |> List.exists (fun (_, k, _) -> k > 0))
+                  "no contract refusal was journaled past ordinal 0"
+
+              for c, k, run in refused do
+                  let where = describeKeyed c
+
+                  Expect.isFalse
+                      run.Production.Outcome.Committed
+                      (sprintf "%s: committed past a journaled refusal" where)
+
+                  Expect.equal
+                      (List.last run.Production.Invoked)
+                      k
+                      (sprintf "%s: the refusal is not at the last invoked ordinal" where)
+
+                  Expect.isFalse
+                      (run.ProductionDecided
+                       |> List.exists (fun (step, _, _, answer) ->
+                           step = k
+                           && (match answer with
+                               | Ok _ -> true
+                               | Error _ -> false)))
+                      (sprintf "%s: the refused ordinal is journaled as completed" where)
+
+                  Expect.isEmpty run.Resumed.Invoked (sprintf "%s: the resume invoked a performer" where)
+
+                  Expect.equal
+                      run.Resumed.Replayed
+                      [ 0..k ]
+                      (sprintf "%s: the resume did not serve every decided step" where)
+
+                  Expect.equal
+                      run.Resumed.Outcome.Diagnostics
+                      run.Production.Outcome.Diagnostics
+                      (sprintf "%s: the resume did not serve the same refusal" where)
+          }
+
+          test
+              "GO RED: a model whose op contract is keyed on the entry state rather than the op token's own loses the handler-level differential (Phase 1984)" {
+              // The right contract on the right op at the WRONG state — the
+              // one way a keying can be wrong that the wrapper-level
+              // differential cannot see, because there the state is handed
+              // in by the test. It agrees wherever no receipt reaches the
+              // contract — a raw refusal — so the case run first is one it
+              // agrees on; it loses wherever a receipt is checked, because
+              // the state an op is staged with is the state the plan reached
+              // AT that op, never the entry state.
+              let misKeyed = KeyedOnEntryState durableStore.Tree
+
+              let single =
+                  keyedCases
+                  |> List.find (fun c -> c.Plan = "an op alone" && c.Behaviour = RefusesOps && c.Contracted)
+
+              Expect.isNone
+                  (keyedDivergence single (runKeyed misKeyed single))
+                  "the mis-keyed model diverges even where no receipt reaches the contract"
+
+              let honestTwo =
+                  keyedCases
+                  |> List.find (fun c -> c.Plan = "two ops in one stage" && c.Behaviour = Honest && c.Contracted)
+
+              Expect.isNone
+                  (keyedDivergence honestTwo (runKeyed KeyedOnToken honestTwo))
+                  "production and the honestly keyed model disagree on the very case the mis-keying is run against"
+
+              let run = runKeyed misKeyed honestTwo
+              Expect.isTrue run.Production.Committed "production refused an honest receipt"
+              Expect.isFalse run.Model.Committed "the mis-keyed model accepted every receipt"
+
+              match keyedDivergence honestTwo run with
+              | Some report ->
+                  Expect.stringContains report "differ" "the harness reported a divergence, but not the outcome one"
+              | None ->
+                  failtest
+                      "the comparison harness did not report a contract keyed on the wrong state - a harness that cannot lose is not evidence"
+
+              let misKeyedDivergences =
+                  keyedCases |> List.choose (fun c -> keyedDivergence c (runKeyed misKeyed c))
+
+              Expect.isNonEmpty misKeyedDivergences "the mis-keyed model lost no case of the corpus"
           } ]

@@ -1604,3 +1604,65 @@ not to the controls, and is left for the phase that asks it. And the staging mod
 refusal at its ordinal, which `r_perf` already quantifies over, and the journal's WRITES — the one
 thing the hook does differently from such a performer — are outside the theorem (D23 §4), so nothing a
 theorem states moves.
+
+## D27 — The proof hosts stage an op token that CARRIES the planned state and the op, so `op_return_contract` runs differentially at the handler and `op_contract_keyed` is tested rather than assumed; production's types are unchanged (2026-10-02)
+
+D24 proved `op_return_contract` for a whole handler run, conditional on the bridge `op_contract_keyed`:
+the token the plan phase stages for (state, op) carries the op contract AT (state, op). Its
+differential evidence stopped one level below the statement. The staging and effect-gate hosts in
+`tests/Fuaran.Program.Server.Tests/ProofOracleTests.fs` instantiate the model's performer token as
+production's own closure — `GateToken = string * Performer` for a host call, and for an op the
+closure over the state as of the op — and the model's `checked_by` keys a contract on a token, which a
+closure cannot be inspected for. So what ran was the wrapper (`OpContract.check` beside the extracted
+`check_op`, 48 cases) and the verb witness end to end; the bridge was true by construction in
+production and never exercised against the model. This decision records why the host's token now
+differs from production's, and what that buys.
+
+**1. The host's op token is `OpToken (state, op)` — test typing, not a production change.** The
+op-contract host's `r_op_perform` answers, for each (state, op) the plan phase stages, a token that
+carries that planned state and that op, beside a `HostToken (fn, performer)` for host calls; the
+model's per-token contract keys `OpToken (s, o)` to `op_at contract s o`, which is the keying
+`op_contract_keyed` states, and the raw behaviour applies the host's own op performer to the
+token's (s, o). Production keeps its closure: `OpPerformance`, `OpContract`, `Handler.stagedOp` and
+`Durable.runWith` are untouched, and nothing in `src/` moves. The two tokens differ ON PURPOSE. A
+closure is what production needs — the contract composed into the performer before the plan phase
+splits it, so every match site keeps one arm — and it is exactly what makes the bridge true by
+construction and therefore untestable. Data is what the model needs: a contract can be keyed on it,
+and a keying that is wrong can be written down and shown to lose. The host is where the two meet, so
+the host is where the token is chosen, and it is chosen to carry what the hypothesis quantifies over.
+Carrying the canonical forms instead (a state hash and the op's content address) was considered and
+not taken: the model's contract is handed whatever the token holds, and the state itself is what
+production's contract is handed, so carrying the value keeps the two contracts one predicate.
+
+**2. What the differential compares, and how it can lose.** Forty cases — five plans (an op alone,
+two ops in one stage, an op then a checked host call, a host call then an op, host call / op / host
+call / op) at four op-performer behaviours (honest, foreign, honest then foreign, a raw refusal),
+contracted and uncontracted — run the extracted `Staging.run` with the extracted `checked_by` beside
+`Handler.runWith` under `OpPerformance.performedChecked`, comparing the outcome and the one
+performer log on which host calls and every op's handed (state, op) are recorded. The honest receipt
+names the planned state's hash and the op's content address, so a contract keyed on the wrong state
+or the wrong op rejects it. The go-red keying is the right contract on the right op at the ENTRY
+state: run against the main differential while the host was authored it lost ten of the forty
+cases, and the committed GO RED case pins the loss. The durable reading runs the same cases under
+`Durable.runWith` beside the extracted `durable_run`, comparing the ordinals and the decided steps —
+production's journal records against the model's invoked ordinals with the staged call's capability,
+subject (read off the token's op) and wrapped answer — and resumes both over the journal production
+left. A contract-rejected receipt journals as `Refused` at its ordinal on both sides and is served
+on resume without invoking.
+
+**3. The ladder moves; no theorem does.** `proofs/README.md` moves `op_contract_keyed` from the
+assumed rung to the differentially tested one and cites the host for `op_return_contract` at the
+handler level; `proofs.json` gains `op-contract-keyed-agrees-at-the-handler` (tested);
+`proofs/check.ps1` names the host under the effect-gate module's `HostSubject` and raises that list's
+`HostMinCases` from 7 to 12. The hypothesis stays a hypothesis in `EffectGate.fst` — the token is
+opaque in the model, which is the point of the model — and no `.fst`, no extraction, no wire member
+and no fixture byte changes. The parity host (`tests/Fuaran.Program.Parity.Tests/ProofOracleTests.fs`)
+stages no op token and is unchanged.
+
+**What this forecloses, and what it leaves.** It forecloses reading "true by construction" as
+evidence: a bridge hypothesis whose production side is a closure is now tested by a host that stages
+data, and a later bridge of that shape should be tested the same way. It leaves the per-token
+distinction in the model as D24 left it — op tokens and host tokens are told apart by the host's
+keying, not by a token-side predicate in the model — and the host-call contract keyed by function
+NAME (`effect-gate-bridge-assumed`) on the assumed rung, since `registerChecked` keys it that way and
+no closure stands between the two.

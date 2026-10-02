@@ -983,7 +983,25 @@
           "the op contract wrapper agrees with the extracted check_op over every receipt, verdict and refusal (Phase 1981)"
         ],
         "runner": "proofs/check.ps1 step 6, in the effect-gate host's list",
-        "note": "a wrapper-level differential: the staging and effect-gate hosts' token type is production's own closure, which the model's checked_by cannot key a contract on, so the handler-level reading for op stages rests on op_token_checked (proved) plus the staging host running Handler.run under a registered op performer; the end-to-end run of a checked op performer and its adversary is the verb witness, tests/Fuaran.Program.Tests/VerbWitnessTests.fs ('ADVERSARY 1981')"
+        "note": "a wrapper-level differential: the staging and effect-gate hosts' token type is production's own closure, which the model's checked_by cannot key a contract on; the handler-level reading is the op-contract handler host since Phase 1984 (op-contract-keyed-agrees-at-the-handler), and the end-to-end run of a checked op performer and its adversary is the verb witness, tests/Fuaran.Program.Tests/VerbWitnessTests.fs ('ADVERSARY 1981')"
+      }
+    },
+    {
+      "id": "op-contract-keyed-agrees-at-the-handler",
+      "level": "tested",
+      "phase": "Phase 1984",
+      "claim": "op_return_contract's reading runs differentially at the handler, the level it is stated at, and its bridge hypothesis op_contract_keyed is exercised against production rather than assumed: with an op token that CARRIES the planned state and the op (test typing; production's types are unchanged, DECISIONS.md D27) and the model's contract keyed on it as op_contract_keyed states, the extracted Staging.run with the extracted checked_by and Handler.runWith under OpPerformance.performedChecked produce the same outcome and ask the performers the same things — the host calls and every op's handed (state, op) on one log — over 40 cases (five plans: an op alone, two ops in one stage, an op then a checked host call, a host call then an op, host call / op / host call / op; four op-performer behaviours: honest, foreign, honest then foreign, a raw refusal; contracted and uncontracted); the theorem's clauses hold as instances against production (landed receipts honour the contract at their state and op; a rejected one is PerformFailed naming ApplyOps and the contract, the entry store, Performed exactly the stages before it, the receipt never echoed); and under Durable.runWith beside the extracted durable_run the decided steps agree — a contract-rejected receipt journals as Refused at its ordinal on both sides — and a resume over the journal production left serves every decided step and the refusal without invoking.",
+      "evidence": {
+        "family": "Phase 1759 - the proved effect gate as oracle",
+        "host": "tests/Fuaran.Program.Server.Tests/ProofOracleTests.fs",
+        "cases": [
+          "the op-contract host reaches every verdict at the handler - a receipt landed, refused by its contract first, refused after a host call ran, and a raw refusal (Phase 1984)",
+          "the extracted handler under an op contract keyed on the op token agrees with production's handler under performedChecked - outcome, performer log, the refusal and the rollback (Phase 1984)",
+          "under Durable.runWith a contract-rejected receipt journals as Refused at its ordinal in the model's durable_run and in production alike, and a resume serves that refusal (Phase 1984)",
+          "GO RED: a model whose op contract is keyed on the entry state rather than the op token's own loses the handler-level differential (Phase 1984)"
+        ],
+        "runner": "proofs/check.ps1 step 6, in the effect-gate host's list",
+        "note": "op_contract_keyed was on the assumed rung through Phase 1981: true by construction in production (the contract is composed into the staged closure) and never run against the model, because the hosts' op token was that closure. It stays a hypothesis of the theorems — the token is opaque in the model — and is now tested: the go-red keying, the right contract on the right op at the ENTRY state, loses ten of the forty cases (run first against the main differential during authoring, before the honest keying went green; the committed case pins the loss). A second authoring probe, not committed: the model's journal subject for an op token replaced by a constant lost all forty durable cases."
       }
     },
     {
@@ -1012,7 +1030,11 @@
           "a refused capability lands exactly one denial carrying the capability, and nothing after it is planned or performed",
           "a result the return contract rejects is a typed refusal naming the contract, the handler rolls back, and the store never sees it",
           "GO RED: a model that looks up the performer before consulting the gate loses the differential",
-          "the op contract wrapper agrees with the extracted check_op over every receipt, verdict and refusal (Phase 1981)"
+          "the op contract wrapper agrees with the extracted check_op over every receipt, verdict and refusal (Phase 1981)",
+          "the op-contract host reaches every verdict at the handler - a receipt landed, refused by its contract first, refused after a host call ran, and a raw refusal (Phase 1984)",
+          "the extracted handler under an op contract keyed on the op token agrees with production's handler under performedChecked - outcome, performer log, the refusal and the rollback (Phase 1984)",
+          "under Durable.runWith a contract-rejected receipt journals as Refused at its ordinal in the model's durable_run and in production alike, and a resume serves that refusal (Phase 1984)",
+          "GO RED: a model whose op contract is keyed on the entry state rather than the op token's own loses the handler-level differential (Phase 1984)"
         ],
         "runner": "proofs/check.ps1 step 6, which asserts a CASE COUNT because a filter matching nothing reports success",
         "note": "the host is in Fuaran.Program.Server.Tests beside the staging host, because it runs Handler.run; the shard named Fuaran.Program.Parity.Tests. The go-red case is a model whose HostCall arm consults the lookup BEFORE the gate with every other clause the extraction's: it agrees with production whenever the gate admits and loses on an unregistered function the gate refuses — Unregistered where GateRefused should be. A second probe during authoring, not committed: production's wrapper edited to accept every result lost three of the seven cases"

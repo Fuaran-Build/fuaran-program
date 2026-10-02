@@ -1090,7 +1090,8 @@ is a unit-returning observer, not modelled; the differential host compares its l
    staged from, and a rejected receipt is a typed refusal naming that contract with the op never
    reported as performed** (Phase 1981) — `op_return_contract`, with `op_token_checked`,
    `check_op_is_check_return`, `all_honour_ops` and `violator_named`; conditional on
-   `op_contract_keyed`, the bridge production's composed closure makes true.
+   `op_contract_keyed`, the bridge production's composed closure makes true — differentially
+   tested at the handler since Phase 1984 (below).
 5. **A performer with no contract runs exactly as it did** (Phase 1981) — `uncontracted_is_direct`,
    with `perform_ext` and `plan_pure`.
 
@@ -1128,22 +1129,55 @@ Phase 1981 adds an eighth case: the extracted `check_op` beside `OpContract.chec
 (state, op, performer behaviour, contract verdict) cases — the receipt admitted, rejected with the
 contract's name, or the raw refusal through — with the (state, op) handed to the contract recorded
 on both sides and compared, and `check_op_is_check_return` asserted as an instance on each. The
-handler-level reading for op stages is `op_return_contract`'s and is reached through the staging
-host, which runs `Handler.run` under a registered op performer beside the model's `r_op_perform`;
-the verb witness (`tests/Fuaran.Program.Tests/VerbWitnessTests.fs`) is where a checked op performer
+verb witness (`tests/Fuaran.Program.Tests/VerbWitnessTests.fs`) is where a checked op performer
 and its adversary run end to end. A go-red probe during authoring, not committed: `check_op` edited
 to accept every receipt fails `op_token_checked` on the prover.
+
+Phase 1984 runs `op_return_contract` at the level it is STATED, the handler, where 1981's evidence
+stopped at the wrapper. The effect-gate and staging hosts above stage production's own closure as
+the op token, which the model's `checked_by` cannot key a contract on; this host stages a token
+that CARRIES the planned state and the op (`OpToken`, test typing — production's types are
+unchanged, `DECISIONS.md` D27), keys the model's contract on it as `op_contract_keyed` states
+(`op_at` at the token's own state and op), and runs the extracted `Staging.run` with the extracted
+`checked_by` beside `Handler.runWith` under `OpPerformance.performedChecked`, where the contract is
+composed into the closure instead. Forty cases: five plans — an op alone, two ops in one stage, an
+op then a checked host call, a host call then an op, and host call / op / host call / op — at four
+op-performer behaviours (every receipt honest, every receipt foreign, the first honest and the
+rest foreign, a raw refusal), contracted and uncontracted. Compared per case: the outcome as the
+staging host projects it, and the one performer log on which the host calls and every op's handed
+(state, op) are recorded in invocation order. Then the theorem's clauses as instances against
+production — a committed run's receipts all honour the contract at their (state, op); a rejected
+one is `PerformFailed` naming `ApplyOps` and `return-contract:names-the-planned-op`, the store the
+entry store, `Performed` exactly the log's prefix before it, the receipt in no diagnostic — and the
+bridge as an instance against the model: every op token the plan phase stages carries THIS
+contract at its own state and op. A floor case asserts the corpus reaches a landed receipt, a
+contract refusal at the first stage, one after a host call ran, one after an earlier op landed,
+and a raw refusal. The **durable reading** runs the same cases under `Durable.runWith` beside the
+extracted `durable_run` over an empty journal, comparing the outcome, the replayed / invoked /
+indeterminate ordinals and the DECIDED steps — production's journal records against the model's
+invoked ordinals with the staged call's capability and subject (the op's content address, read off
+the token) and what the wrapped behaviour answered — so a contract-rejected receipt journals as
+`Refused` at its ordinal on both sides; then RESUMES the invocation on both over the journal
+production left, where every decided step is served and the refusal is served without invoking.
+This moves **`op_contract_keyed`** off the assumed rung, where Phase 1981 put it: it stays a
+hypothesis of the theorems — the token is opaque in the model — but the keying it names is no
+longer only true by construction in production and never run against the model; a model keyed as
+it states agrees with production's composed closure case for case, and a model keyed otherwise
+does not.
+
+The **go-red case** is the keying `op_contract_keyed` rules out, wrong in exactly one way: the
+right contract on the right op at the ENTRY state rather than the token's own. It agrees wherever
+no receipt reaches the contract, and loses wherever one does, because an op is staged with the
+state the plan reached at that op. It was run first against the main differential during
+authoring — red on ten of the forty cases — before the honest keying went green; the committed
+case pins the same loss. A second probe, not committed: the model's journal subject for an op
+token replaced by a constant made the durable comparison lose all forty.
 
 #### Assumed, and stated
 
 - **The witness and the registry's gate, policy and lookup**, on the staging theorem's terms. In
   the host the gate and the policy are production's own members, and a contract is keyed by the
   function NAME, which is how `registerChecked` keys it.
-- **`op_contract_keyed`** (Phase 1981): the token the plan phase stages for a state and an op
-  carries the op contract at that state and op. In production the token IS the closure
-  `fun _ -> check contract perform state op`, so the hypothesis is true by construction; the model
-  states it as a hypothesis because the token is opaque there, and every op-stage theorem is
-  conditional on it.
 - **An op's reach covers what its performer touches** (D24): an obligation on the witness, stated
   both ways since Phase 1981, which a receipt and an `OpContract` make CHECKABLE where the domain
   can say how — and the theorem claims the check of the performer's account, never the coverage
