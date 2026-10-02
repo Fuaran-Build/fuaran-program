@@ -20,6 +20,7 @@ module Fuaran.Program.Tests.VerbDomain
 open Fuaran.Core
 open Fuaran.Program.Bounded
 open Fuaran.Program.Runtime
+open Fuaran.Program.Server
 
 // ─── the typed refusal, and how it crosses (W5) ─────────────────────────────
 
@@ -271,6 +272,59 @@ let witness: ProgramWitness<FileMap, FileOp, Unfilled, Unfilled> =
 
 // ─── the world, and the performer over it ───────────────────────────────────
 
+/// The receipt vocabulary the verb's performer answers in, and the contract
+/// over it (Phase 1981): a receipt names the paths and the targets the
+/// performer touched; `withinReach` is the domain's statement that an op's
+/// reach covers what its performer touches, CHECKED — every path and target a
+/// receipt names is one the op's reach names.
+module Receipt =
+    let paths (named: string list) : JVal =
+        JObj [ "paths", JArr(named |> List.map JStr) ]
+
+    let targets (named: string list) : JVal =
+        JObj [ "targets", JArr(named |> List.map JStr) ]
+
+    /// The names a receipt claims under `key`; a receipt in any other shape
+    /// claims nothing, so a contract over it refuses nothing it cannot read
+    /// and admits nothing it did not.
+    let private claimed (key: string) (receipt: JVal) : string list option =
+        match receipt with
+        | JObj members ->
+            match members |> List.tryFind (fun (k, _) -> k = key) with
+            | None -> Some []
+            | Some(_, JArr items) ->
+                items
+                |> List.map (fun item ->
+                    match item with
+                    | JStr s -> Some s
+                    | _ -> None)
+                |> List.fold
+                    (fun acc item ->
+                        match acc, item with
+                        | Some xs, Some s -> Some(xs @ [ s ])
+                        | _ -> None)
+                    (Some [])
+            | Some _ -> None
+        | _ -> None
+
+    /// The contract: every path and every target the receipt names is one
+    /// the op's reach names under the same argument, and the receipt is
+    /// readable. The reach is the DECLARATION the policy enforced against
+    /// before anything performed; this is the check that what was done
+    /// stayed inside it.
+    let withinReach: OpContract<FileMap, FileOp> =
+        { Name = "within-reach"
+          Holds =
+            fun _ op receipt ->
+                let declared (argument: string) =
+                    (reach op).Arguments |> List.filter (fun (a, _) -> a = argument) |> List.map snd
+
+                match claimed "paths" receipt, claimed "targets" receipt with
+                | Some ps, Some ts ->
+                    ps |> List.forall (fun p -> List.contains p (declared "path"))
+                    && ts |> List.forall (fun t -> List.contains t (declared "target"))
+                | _ -> false }
+
 /// The WORLD the verb's performer acts on — what the plan is performed
 /// against once the handler commits. Mutable on purpose: a performer is an
 /// effect, and the tests read the world to see what actually happened.
@@ -293,10 +347,13 @@ type World() =
     member _.Seed(path: string, content: string) = files.[path] <- content
 
     /// The performer: performs each op against the world, refusing at ONE
-    /// position (zero-based, counted over its own invocations) or never. A
-    /// check is a guard and never reaches it; one that did would be refused,
-    /// so a test would see it.
-    member _.Performer(failAt: int option) : FileMap -> FileOp -> Result<unit, string> =
+    /// position (zero-based, counted over its own invocations) or never, and
+    /// answering a RECEIPT (Phase 1981) that names what it touched — the
+    /// paths it read, wrote or deleted, the targets it published or
+    /// retracted — in the shape `Receipt` reads back. A check is a guard and
+    /// never reaches it; one that did would be refused, so a test would see
+    /// it.
+    member _.Performer(failAt: int option) : FileMap -> FileOp -> Result<JVal, string> =
         fun state op ->
             let position = invocations.Count
             invocations.Add(encodeOp op)
@@ -306,19 +363,36 @@ type World() =
             | Some k when k = position -> Error(sprintf "the world refused op %d" k)
             | _ ->
                 match op with
-                | Read _ -> Ok()
+                | Read path -> Ok(Receipt.paths [ path ])
                 | Write(path, content) ->
                     files.[path] <- content
-                    Ok()
+                    Ok(Receipt.paths [ path ])
                 | Delete path ->
                     files.Remove path |> ignore
-                    Ok()
+                    Ok(Receipt.paths [ path ])
                 | Publish target ->
                     published.Add target
-                    Ok()
+                    Ok(Receipt.targets [ target ])
                 | Retract target ->
                     published.Remove target |> ignore
-                    Ok()
+                    Ok(Receipt.targets [ target ])
                 | Check _ -> Error "a guard reached the performer"
                 | Branch _
                 | Times _ -> Error "a flow op reached the performer"
+
+    /// The ADVERSARY (Phase 1981): performs every op as `Performer` does, and
+    /// on every write ALSO writes `escape` — a path the op's reach does not
+    /// name — and says so in its receipt. The receipt is the performer's own
+    /// account, and an honest account of an overreach is exactly what a
+    /// contract over the reach refuses; a performer that overreached and
+    /// said nothing is outside what any contract can see, which is the
+    /// boundary `docs/performer-boundary.md` records.
+    member this.Escaping (escape: string) (failAt: int option) : FileMap -> FileOp -> Result<JVal, string> =
+        let honest = this.Performer failAt
+
+        fun state op ->
+            match honest state op, op with
+            | Ok _, Write(path, content) ->
+                files.[escape] <- content
+                Ok(Receipt.paths [ path; escape ])
+            | answer, _ -> answer

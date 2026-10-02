@@ -108,4 +108,81 @@ let tests =
                   (ServerEffectDenial.describe (ServerEffectDenial.Unregistered "Notify"))
                   (ServerEffectDenial.describe (ServerEffectDenial.GateRefused "Notify"))
                   "and the two arms read differently — absent capability and refused use are different facts"
+          }
+
+          // ── Phase 1981: an op performer's receipt is checked like a host call's result ──
+
+          test
+              "an op contract admits a receipt that holds, refuses one that does not NAMING THE CONTRACT, and passes a raw refusal through" {
+              let contract: OpContract<string, string> =
+                  { Name = "names-the-op"
+                    Holds = fun state op receipt -> receipt = Fuaran.Core.JStr(state + "/" + op) }
+
+              let honest: string -> string -> Result<Fuaran.Core.JVal, string> =
+                  fun state op -> Ok(Fuaran.Core.JStr(state + "/" + op))
+
+              let overreaching: string -> string -> Result<Fuaran.Core.JVal, string> =
+                  fun _ _ -> Ok(Fuaran.Core.JStr secret)
+
+              let refusing: string -> string -> Result<Fuaran.Core.JVal, string> =
+                  fun _ _ -> Error "the world refused"
+
+              Expect.equal
+                  (OpContract.check contract honest "planned" "op")
+                  (Ok(Fuaran.Core.JStr "planned/op"))
+                  "a receipt the contract holds of is the receipt, unchanged"
+
+              Expect.equal
+                  (OpContract.check contract overreaching "planned" "op")
+                  (Error "return-contract:names-the-op")
+                  "a receipt the contract rejects is the host's own refusal, naming the contract"
+
+              Expect.equal
+                  (OpContract.describe contract)
+                  (ReturnContract.describe
+                      { Name = contract.Name
+                        Holds = fun _ -> true })
+                  "in the ONE vocabulary a return contract's refusal has — the op axis coins no second prefix"
+
+              match OpContract.check contract overreaching "planned" "op" with
+              | Error reason -> Expect.isFalse (reason.Contains secret) "and the refusal never carries the receipt"
+              | Ok _ -> failtest "the rejected receipt was admitted"
+
+              Expect.equal
+                  (OpContract.check contract refusing "planned" "op")
+                  (Error "the world refused")
+                  "a raw refusal passes through with the performer's own reason — the contract is not consulted"
+          }
+
+          test
+              "the contract is handed the planned state and the op, and performedChecked composes it into the performer" {
+              let seen = ResizeArray<string * string>()
+
+              let contract: OpContract<string, string> =
+                  { Name = "recording"
+                    Holds =
+                      fun state op _ ->
+                          seen.Add(state, op)
+                          true }
+
+              match OpPerformance.performedChecked contract (fun _ _ -> Ok(Fuaran.Core.JObj [])) with
+              | OpPerformance.Performed perform ->
+                  Expect.equal
+                      (perform "planned" "write")
+                      (Ok(Fuaran.Core.JObj []))
+                      "the composed performer answers the receipt the raw one did"
+
+                  Expect.equal
+                      (List.ofSeq seen)
+                      [ "planned", "write" ]
+                      "and the contract saw the state and the op the performer was handed"
+              | OpPerformance.InMemory -> failtest "a checked performer is a registered performer"
+
+              match OpPerformance.performedWithoutReceipt (fun (_: string) (_: string) -> Ok()) with
+              | OpPerformance.Performed perform ->
+                  Expect.equal
+                      (perform "planned" "write")
+                      (Ok(Fuaran.Core.JObj []))
+                      "a performer with nothing to say answers the inert empty object"
+              | OpPerformance.InMemory -> failtest "a receipt-less performer is still a registered performer"
           } ]

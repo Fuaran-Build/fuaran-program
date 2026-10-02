@@ -74,7 +74,7 @@ let private run (sink: Sink) (handler: DocHandler) (doc: Document) : HandlerOutc
     Handler.runWith
         witness
         registry
-        (OpPerformance.performedBy sink.Perform)
+        (OpPerformance.performedWithoutReceipt sink.Perform)
         DataFrame.noResolve
         "doc"
         handler

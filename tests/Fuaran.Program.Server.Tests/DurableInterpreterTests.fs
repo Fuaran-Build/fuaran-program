@@ -309,7 +309,7 @@ type private OpLog() =
 
 /// An op performer that records and succeeds.
 let private performing (log: OpLog) : OpPerformance<Node<obj>, TreeOp<obj>> =
-    OpPerformance.performedBy (fun _ op ->
+    OpPerformance.performedWithoutReceipt (fun _ op ->
         log.Record op
         Ok())
 
@@ -317,7 +317,7 @@ let private performing (log: OpLog) : OpPerformance<Node<obj>, TreeOp<obj>> =
 /// crash inside the indeterminate window, where the effect happened and the
 /// record of it did not.
 let private performingThenDyingAt (victim: string) (log: OpLog) : OpPerformance<Node<obj>, TreeOp<obj>> =
-    OpPerformance.performedBy (fun _ op ->
+    OpPerformance.performedWithoutReceipt (fun _ op ->
         log.Record op
 
         match op with
@@ -1197,6 +1197,112 @@ let tests =
                     Expect.equal replay.Replayed [] "nothing was served"
                     Expect.equal resumeLog.Performed [] "and no op was performed"
                     Expect.equal audit.Count 1 "nor the host call, a second time"
+                }
+
+                test
+                    "an op stage's RECEIPT is what the journal records as its completed value, and a replay serves it (Phase 1981)" {
+                    let journal = Journal.declaringDurable (Journal.inMemory ())
+                    let audit = Counter()
+                    let services = DurableServices.create |> DurableServices.withJournal journal
+
+                    let receipted: OpPerformance<Node<obj>, TreeOp<obj>> =
+                        OpPerformance.performedBy (fun _ op -> Ok(jstr ("did:" + enc op)))
+
+                    let first = runEdits services (auditRegistry audit) receipted editsThenAudit
+                    Expect.isTrue first.Outcome.Committed "committed"
+
+                    let completed =
+                        journal.Read "inv"
+                        |> List.choose (fun entry ->
+                            match entry.Phase with
+                            | JournalPhase.Completed value when entry.Capability = Durable.OpStageCapability ->
+                                Some value
+                            | _ -> None)
+
+                    Expect.equal
+                        completed
+                        [ jstr ("did:" + enc removeRefresh); jstr ("did:" + enc removeReadout) ]
+                        "the receipt the performer answered is the step's completed value — not the inert object"
+
+                    let resumed =
+                        runEdits
+                            services
+                            (auditRegistry audit)
+                            (OpPerformance.performedBy (fun _ _ -> failwith "a replay reaches no performer"))
+                            editsThenAudit
+
+                    Expect.equal resumed.Replayed [ 0; 1; 2 ] "every step served from the journal"
+                    Expect.isTrue resumed.Outcome.Committed "and the resumed run committed on the served receipts"
+                }
+
+                test
+                    "a receipt the contract rejects is journaled as REFUSED, never as a completed performance, and the op is not reported as performed (Phase 1981)" {
+                    let journal = Journal.declaringDurable (Journal.inMemory ())
+                    let audit = Counter()
+                    let services = DurableServices.create |> DurableServices.withJournal journal
+                    let log = OpLog()
+
+                    // The contract admits the first op's receipt and rejects the
+                    // second's — a performer that did the first thing it said and
+                    // then claimed more than its op reaches.
+                    let withinReach: OpContract<Node<obj>, TreeOp<obj>> =
+                        { Name = "within-reach"
+                          Holds = fun _ op _ -> enc op = enc removeRefresh }
+
+                    let overreaching =
+                        OpPerformance.performedChecked withinReach (fun _ op ->
+                            log.Record op
+                            Ok(jstr ("did:" + enc op)))
+
+                    let outcome = runEdits services (auditRegistry audit) overreaching editsThenAudit
+
+                    Expect.isFalse outcome.Outcome.Committed "rolled back"
+
+                    Expect.equal
+                        outcome.Outcome.Performed
+                        [ "ApplyOps" ]
+                        "the op whose receipt held is reported; the one the contract refused is NOT"
+
+                    Expect.equal
+                        (outcome.Outcome.Diagnostics |> List.last)
+                        (ServerDiagnostic.PerformFailed("ApplyOps", "return-contract:within-reach"))
+                        "a PerformFailed naming the contract"
+
+                    Expect.equal log.Performed [ enc removeRefresh; enc removeReadout ] "the performer DID run for both"
+                    Expect.equal audit.Count 0 "and the host call after the refused op never ran"
+
+                    let s0 = subjectOf removeRefresh
+                    let s1 = subjectOf removeReadout
+
+                    Expect.equal
+                        (Journal.describe (journal.Read "inv"))
+                        [ sprintf "0 ApplyOps %s attempted" s0
+                          sprintf "0 ApplyOps %s completed" s0
+                          sprintf "1 ApplyOps %s attempted" s1
+                          sprintf "1 ApplyOps %s refused" s1
+                          "-1 Invocation completed" ]
+                        "the rejected receipt is journaled as a REFUSAL at its ordinal — a contract refusal is a \
+                         decided step, not a completed performance and not an indeterminate one"
+
+                    let replayLog = OpLog()
+
+                    let replayed =
+                        runEdits
+                            services
+                            (auditRegistry audit)
+                            (OpPerformance.performedChecked withinReach (fun _ op ->
+                                replayLog.Record op
+                                Ok(jstr "never")))
+                            editsThenAudit
+
+                    Expect.equal replayLog.Performed [] "a replay reaches no performer: the refusal is served"
+                    Expect.equal replayed.Replayed [ 0; 1 ] "both decided steps served, the refusal included"
+                    Expect.isFalse replayed.Outcome.Committed "and the served refusal halts where it halted"
+
+                    Expect.equal
+                        (replayed.Outcome.Diagnostics |> List.last)
+                        (ServerDiagnostic.PerformFailed("ApplyOps", "return-contract:within-reach"))
+                        "naming the same contract"
                 }
 
                 test "in memory, nothing new is journaled — the UI tier's journal is what it was" {

@@ -252,9 +252,7 @@ let private modelRegistry
         match performance with
         | OpPerformance.InMemory -> Staging.ONone
         | OpPerformance.Performed perform ->
-            Staging.OSome(fun state op ->
-                (fun (_: Fuaran.Core.JVal) -> perform state op |> Result.map (fun () -> Fuaran.Core.JObj [])),
-                Fuaran.Core.JObj []) }
+            Staging.OSome(fun state op -> (fun (_: Fuaran.Core.JVal) -> perform state op), Fuaran.Core.JObj []) }
 
 let private productionDiagnostic (diagnostic: Staging.diagnostic<BoundedDiagnostic>) : ServerDiagnostic =
     match diagnostic with
@@ -326,7 +324,7 @@ type private Log = System.Collections.Generic.List<string>
 type private Scripted =
     {
         Host: string -> Performer
-        Op: Node<obj> -> TreeOp<obj> -> Result<unit, string>
+        Op: Node<obj> -> TreeOp<obj> -> Result<Fuaran.Core.JVal, string>
         /// The state the op performer was handed with each op, canonically
         /// encoded, in invocation order (Phase 1974) — compared across the two
         /// sides, so the model's `staged_from` and production's staged op agree
@@ -355,7 +353,7 @@ let private scripted (log: Log) (failAt: int option) : Scripted =
       Op =
         fun state _ ->
             handed.Add(Fuaran.UI.OpStream.Abstractions.CanonicalJson.encodeNode state)
-            ask "ApplyOps"
+            ask "ApplyOps" |> Result.map (fun () -> Fuaran.Core.JObj [])
       Handed = handed }
 
 /// The functions a case registers, and the registry built around a
@@ -2337,4 +2335,81 @@ let effectGateTests =
               | None ->
                   failtest
                       "the comparison harness did not report a model that consulted the lookup before the gate - a harness that cannot lose is not evidence"
+          }
+
+          test
+              "the op contract wrapper agrees with the extracted check_op over every receipt, verdict and refusal (Phase 1981)" {
+              // `OpContract.check` is `check_op` clause for clause, and
+              // `check_op_is_check_return` says check_op is `check_return` at
+              // the state and the op. Both are run here beside production over
+              // a corpus of performer behaviours and contract verdicts, with
+              // the state and the op the contract was handed recorded on each
+              // side and compared — so the three arguments reach the contract
+              // in the same order on both.
+              let states = [ "planned-a"; "planned-b" ]
+              let ops = [ "write"; "delete" ]
+
+              let behaviours: (string * (string -> string -> Result<Fuaran.Core.JVal, string>)) list =
+                  [ "answers-the-op", (fun s o -> Ok(jstr (s + "/" + o)))
+                    "answers-elsewhere", (fun _ _ -> Ok(jstr "elsewhere"))
+                    "answers-an-object", (fun _ _ -> Ok(Fuaran.Core.JObj [ "n", jstr "7" ]))
+                    "refuses", (fun _ _ -> Error "host refused") ]
+
+              let verdicts: (string * (string -> string -> Fuaran.Core.JVal -> bool)) list =
+                  [ "names-the-op", (fun s o r -> r = jstr (s + "/" + o))
+                    "any-text",
+                    (fun _ _ r ->
+                        match r with
+                        | Fuaran.Core.JStr _ -> true
+                        | _ -> false)
+                    "nothing", (fun _ _ _ -> false) ]
+
+              let mutable cases = 0
+
+              for state in states do
+                  for op in ops do
+                      for (bLabel, behaviour) in behaviours do
+                          for (vLabel, verdict) in verdicts do
+                              let productionSeen = ResizeArray<string * string>()
+                              let modelSeen = ResizeArray<string * string>()
+
+                              let production: OpContract<string, string> =
+                                  { Name = vLabel
+                                    Holds =
+                                      fun s o r ->
+                                          productionSeen.Add(s, o)
+                                          verdict s o r }
+
+                              let model: EffectGate.op_contract<string, string, Fuaran.Core.JVal> =
+                                  { EffectGate.oc_name = vLabel
+                                    EffectGate.oc_holds =
+                                      fun s o r ->
+                                          modelSeen.Add(s, o)
+                                          verdict s o r }
+
+                              let modelPerform (s: string) (o: string) = behaviour s o |> modelRes
+
+                              let expected = OpContract.check production behaviour state op |> modelRes
+                              let actual = EffectGate.check_op model modelPerform state op
+                              let label = sprintf "%s / %s / %s / %s" state op bLabel vLabel
+
+                              Expect.equal actual expected (sprintf "check_op and OpContract.check differ on %s" label)
+
+                              Expect.equal
+                                  (List.ofSeq modelSeen)
+                                  (List.ofSeq productionSeen)
+                                  (sprintf "the contract was handed different (state, op) on the two sides for %s" label)
+
+                              Expect.equal
+                                  (EffectGate.check_return
+                                      (EffectGate.op_at model state op)
+                                      (fun (_: unit) (_: Fuaran.Core.JVal) -> modelPerform state op)
+                                      ()
+                                      (Fuaran.Core.JObj []))
+                                  actual
+                                  (sprintf "check_op is not check_return at the state and the op for %s" label)
+
+                              cases <- cases + 1
+
+              Expect.equal cases 48 "the corpus is two states, two ops, four behaviours and three verdicts"
           } ]

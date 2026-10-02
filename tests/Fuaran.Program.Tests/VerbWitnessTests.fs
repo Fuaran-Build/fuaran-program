@@ -73,6 +73,19 @@ let private runIn
 let private run (world: World) (failAt: int option) (handler: VerbHandler) =
     runIn registry world failAt handler { empty with Files = world.Files }
 
+/// Phase 1981: the verb under an op performance the test chooses — a checked
+/// performer, or the adversary — over the same registry and witness.
+let private runPerforming (world: World) (performance: OpPerformance<FileMap, FileOp>) (handler: VerbHandler) =
+    Handler.runWith
+        witness
+        registry
+        performance
+        DataFrame.noResolve
+        "verb"
+        handler
+        { Tree = { empty with Files = world.Files }
+          Bindings = () }
+
 // ─── Phase 1976: the two flow shapes on the op axis ─────────────────────────
 
 /// The archive policy, widened for the flow tests: the marker the false arm
@@ -389,6 +402,118 @@ let tests =
               Expect.isEmpty world.Published "the publish after the failure never ran"
               Expect.equal outcome.Store.Tree.Files (Map.ofList [ "notes/x.md", "live" ]) "the plan is discarded"
               Expect.equal (List.length world.Invocations) 3 "the performer was asked three times and stopped"
+          }
+
+          // ── Phase 1981: the performer's claim is checked against the op's reach ──
+
+          test "a checked performer whose receipts stay within each op's reach commits exactly as the unchecked one" {
+              let world = seeded ()
+
+              let outcome =
+                  runPerforming
+                      world
+                      (OpPerformance.performedChecked Receipt.withinReach (world.Performer None))
+                      archive
+
+              Expect.isTrue outcome.Committed "every receipt named only what its op's reach declared"
+
+              Expect.equal
+                  outcome.Performed
+                  [ "ApplyOps"; "ApplyOps"; "ApplyOps"; "ApplyOps" ]
+                  "the four edits performed, each its own staged call, as without the contract"
+
+              Expect.equal
+                  (world.Files |> Map.toList)
+                  [ "notes/archive/x.md", "archived" ]
+                  "and the world is what the unchecked performer leaves"
+
+              Expect.equal world.Published [ "origin" ] "published"
+          }
+
+          test
+              "ADVERSARY 1981 — a performer that touches a path outside the op's reach is refused by the contract, and the op is not reported as performed" {
+              let world = seeded ()
+              let escape = "etc/passwd"
+
+              let outcome =
+                  runPerforming
+                      world
+                      (OpPerformance.performedChecked Receipt.withinReach (world.Escaping escape None))
+                      archive
+
+              Expect.isFalse outcome.Committed "rolled back"
+
+              Expect.equal
+                  outcome.Performed
+                  [ "ApplyOps" ]
+                  "the read before the write ran and is reported; the write whose receipt overreached is NOT"
+
+              Expect.equal
+                  (outcome.Diagnostics |> List.last)
+                  (ServerDiagnostic.PerformFailed("ApplyOps", "return-contract:within-reach"))
+                  "a `PerformFailed` under the op's capability naming the CONTRACT — never the receipt, never the path"
+
+              Expect.isFalse
+                  (outcome.Diagnostics |> List.exists (fun d -> (sprintf "%A" d).Contains escape))
+                  "the escaped path appears in no diagnostic: a refusal names the contract, not the claim"
+
+              Expect.equal
+                  (world.Files |> Map.toList)
+                  [ escape, "archived"; "notes/archive/x.md", "archived"; "notes/x.md", "live" ]
+                  "the world holds what the adversary did — the write within reach AND the escape — because a \
+                   contract checks the claim, it does not undo the act: the residue is reported, not hidden"
+
+              Expect.isEmpty world.Published "nothing after the refused op ran"
+              Expect.equal outcome.Store.Tree.Files (Map.ofList [ "notes/x.md", "live" ]) "the plan is discarded"
+              Expect.equal (List.length world.Invocations) 2 "the performer was asked twice and stopped"
+          }
+
+          test "the contract is handed the planned state and the op, and reads the receipt beside them" {
+              // The contract's three arguments, pinned: a contract that could
+              // not see the op could not know its reach, and one that could not
+              // see the state could not check a receipt against what the plan
+              // produced.
+              let world = seeded ()
+              let seen = System.Collections.Generic.List<string * string>()
+
+              let recording: OpContract<FileMap, FileOp> =
+                  { Name = "recording"
+                    Holds =
+                      fun state op receipt ->
+                          seen.Add(encodeOp op, canonical state)
+                          Receipt.withinReach.Holds state op receipt }
+
+              let outcome =
+                  runPerforming world (OpPerformance.performedChecked recording (world.Performer None)) archive
+
+              Expect.isTrue outcome.Committed "committed"
+
+              Expect.equal
+                  (seen |> Seq.map fst |> List.ofSeq)
+                  world.Invocations
+                  "the contract saw each op the performer was handed, in order"
+
+              Expect.equal
+                  (seen |> Seq.map snd |> List.ofSeq)
+                  (world.Handed |> List.map canonical)
+                  "and the planned state the performer was handed with it"
+          }
+
+          test "a raw refusal passes through a contract unchanged, with the performer's own reason" {
+              let world = seeded ()
+
+              let outcome =
+                  runPerforming
+                      world
+                      (OpPerformance.performedChecked Receipt.withinReach (world.Performer(Some 2)))
+                      archive
+
+              Expect.isFalse outcome.Committed "rolled back"
+
+              Expect.equal
+                  (outcome.Diagnostics |> List.last)
+                  (ServerDiagnostic.PerformFailed("ApplyOps", "the world refused op 2"))
+                  "the refusal is the performer's, not the contract's"
           }
 
           test "F-PERFORM — the performer is handed the planned state as of each op, and the last is the plan" {

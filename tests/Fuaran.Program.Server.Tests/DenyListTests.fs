@@ -77,7 +77,7 @@ let private runRecording (registry: ServerEffectRegistry) (handler: Handler) =
         Fuaran.Program.Server.Handler.runWith
             UiWitness.witness
             registry
-            (OpPerformance.performedBy (fun _ op ->
+            (OpPerformance.performedWithoutReceipt (fun _ op ->
                 performed.Value <- performed.Value @ [ op ]
                 Ok()))
             sources

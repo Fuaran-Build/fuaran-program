@@ -361,8 +361,15 @@ module Durable =
         // The op performer, through the same wrapper. The plan phase stages
         // `fun _ -> perform state op` per edit (`Handler.stagedOp`), so this
         // closure runs in the perform phase, at its ordinal, exactly as a host
-        // call's does; the inert argument and the inert answer are the honest
-        // spelling of "an op lands nothing", as the staged call's are.
+        // call's does; the inert argument is the honest spelling of "an op
+        // takes no payload", as the staged call's is, and the answer is the
+        // performer's RECEIPT (Phase 1981), which is what the journal records
+        // as the step's completed value. `perform` here is the performer AS
+        // REGISTERED — the contract `performedChecked` composed is inside it —
+        // so a receipt the contract rejects reaches this wrapper as the
+        // refusal `return-contract:<name>` and is journaled as `Refused`, never
+        // as a completed performance; a replay serves that refusal as it
+        // serves any other.
         let performing =
             match performance with
             | OpPerformance.InMemory -> OpPerformance.InMemory
@@ -374,9 +381,8 @@ module Durable =
                         OpStageCapability
                         (Some(opSubject witness.State op))
                         declared
-                        (fun _ -> perform state op |> Result.map (fun () -> Fuaran.Core.JObj []))
-                        (Fuaran.Core.JObj [])
-                    |> Result.map ignore)
+                        (fun _ -> perform state op)
+                        (Fuaran.Core.JObj []))
 
         let outcome =
             Handler.runWith witness journalling performing resolve nodeId handler store

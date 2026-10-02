@@ -577,16 +577,88 @@ type OpPerformance<'Node, 'Op> =
     /// so `Performed` carries `ApplyOps` once per op PERFORMED, in execution
     /// order, and a part-way failure reports exactly the ops that ran before it
     /// (D8's residual, unchanged in shape) under a `PerformFailed` naming the
-    /// capability and the performer's own reason. Trusted code, on the terms a
-    /// host function is: what it does when invoked is the host's. Handed the
-    /// state as of the op, then the op.
-    | Performed of ('Node -> 'Op -> Result<unit, string>)
+    /// capability and the performer's own reason. Handed the state as of the
+    /// op, then the op, and answers a RECEIPT (Phase 1981): what it says it
+    /// did, as a `JVal` — the paths it wrote, the sha it committed, or the
+    /// inert empty object for a performer with nothing to say. The receipt
+    /// lands in no slot and reaches no wire; the durable journal records it
+    /// as the step's completed value (D23), and a contract declared at
+    /// registration (`performedChecked`) checks it against the planned state
+    /// and the op before the op is reported as performed. Constrained on the
+    /// terms a host function is (D24): the gate and the policy decide what
+    /// reaches it, and the contract decides what it may claim to have done.
+    | Performed of ('Node -> 'Op -> Result<Fuaran.Core.JVal, string>)
+
+/// A host-declared post-condition on an op performer's RECEIPT (Phase 1981) —
+/// `ReturnContract` keyed by the state and the op: a name, which is the host's
+/// own vocabulary and so safe to surface, and a predicate over the planned
+/// state the performer was handed, the op, and what it answered. The op's
+/// REACH (`StateWitness.Reach`, D19) is a declaration the policy enforces
+/// against; a receipt is the domain's route to checking that the declaration
+/// held — a contract that reads the paths a receipt names and the paths the
+/// op's reach names is what turns "the reach covers what the performer
+/// touches" from an obligation stated into one checked.
+///
+/// `proofs/EffectGate.fst` (`op_contract`, `check_op`) models this record and
+/// the wrapper: `check_op_is_check_return` says it is the return contract at
+/// the state and the op, and `op_return_contract` says every landed receipt
+/// honours it there and a rejected one is a typed `PerformFailed` naming the
+/// contract, never the receipt, with the op never reported as performed.
+type OpContract<'Node, 'Op> =
+    {
+        /// What the host calls this contract — the one thing a refusal says.
+        Name: string
+        /// Whether a receipt satisfies it, at the planned state and the op.
+        Holds: 'Node -> 'Op -> Fuaran.Core.JVal -> bool
+    }
+
+module OpContract =
+
+    /// The refusal's text, in the ONE vocabulary a return contract's refusal
+    /// has (`ReturnContract.describe`): the NAME and never the receipt.
+    let describe (contract: OpContract<'Node, 'Op>) : string = "return-contract:" + contract.Name
+
+    /// The wrapper `OpPerformance.performedChecked` composes: a receipt the
+    /// contract rejects becomes the host's own refusal, carrying the
+    /// contract's name; a raw refusal passes through unchanged.
+    /// `EffectGate.check_op` is this, clause for clause.
+    let check
+        (contract: OpContract<'Node, 'Op>)
+        (perform: 'Node -> 'Op -> Result<Fuaran.Core.JVal, string>)
+        : 'Node -> 'Op -> Result<Fuaran.Core.JVal, string> =
+        fun state op ->
+            match perform state op with
+            | Error reason -> Error reason
+            | Ok receipt ->
+                if contract.Holds state op receipt then
+                    Ok receipt
+                else
+                    Error(describe contract)
 
 module OpPerformance =
 
     /// The default: ops are performed by being applied.
     let inMemory<'Node, 'Op> : OpPerformance<'Node, 'Op> = OpPerformance.InMemory
 
-    /// Register an op performer: handed the state as of each op, and the op.
-    let performedBy (perform: 'Node -> 'Op -> Result<unit, string>) : OpPerformance<'Node, 'Op> =
+    /// Register an op performer: handed the state as of each op and the op,
+    /// answering a receipt. No contract: the receipt is recorded and nothing
+    /// checks it (`uncontracted_is_direct` in `proofs/EffectGate.fst`).
+    let performedBy (perform: 'Node -> 'Op -> Result<Fuaran.Core.JVal, string>) : OpPerformance<'Node, 'Op> =
         OpPerformance.Performed perform
+
+    /// Register an op performer WITH a contract over its receipt: the
+    /// performer the placement holds is `OpContract.check contract perform`,
+    /// so a receipt the contract rejects reaches the handler as a refusal
+    /// naming the contract and never as a performed op — the `registerChecked`
+    /// shape, on the op axis.
+    let performedChecked
+        (contract: OpContract<'Node, 'Op>)
+        (perform: 'Node -> 'Op -> Result<Fuaran.Core.JVal, string>)
+        : OpPerformance<'Node, 'Op> =
+        OpPerformance.Performed(OpContract.check contract perform)
+
+    /// Register an op performer with nothing to say: its receipt is the inert
+    /// empty object — the honest spelling of "an op lands nothing", since the
+    /// wire value has no null — which no contract can be declared over.
+    let performedWithoutReceipt (perform: 'Node -> 'Op -> Result<unit, string>) : OpPerformance<'Node, 'Op> =
+        OpPerformance.Performed(fun state op -> perform state op |> Result.map (fun () -> Fuaran.Core.JObj []))

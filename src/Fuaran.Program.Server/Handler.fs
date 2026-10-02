@@ -362,17 +362,20 @@ module Handler =
     /// A staged op's performer: the registered op performer closed over the
     /// state AS OF THE OP and the op (Phase 1974), in the shape a staged host
     /// call carries, so the perform phase runs ops and host calls through ONE
-    /// loop. The argument is inert (an op lands nothing and takes no
-    /// declarative payload) and the empty object is the honest spelling of
-    /// that, since the wire value has no null. The model's `staged_from`.
+    /// loop. The argument is inert (an op takes no declarative payload) and
+    /// the empty object is the honest spelling of that, since the wire value
+    /// has no null; the answer is the performer's RECEIPT (Phase 1981), already
+    /// checked by the contract `OpPerformance.performedChecked` composed into
+    /// `perform`, landing in no slot. The model's `staged_from`, with the token
+    /// carrying the contract at this state and op (`op_contract_keyed`).
     let private stagedOp
-        (perform: 'Node -> 'Op -> Result<unit, string>)
+        (perform: 'Node -> 'Op -> Result<Fuaran.Core.JVal, string>)
         (capability: string)
         (state: 'Node)
         (op: 'Op)
         : StagedCall =
         { Capability = capability
-          Performer = fun _ -> perform state op |> Result.map (fun () -> Fuaran.Core.JObj [])
+          Performer = fun _ -> perform state op
           Args = Fuaran.Core.JObj []
           Into = None }
 
