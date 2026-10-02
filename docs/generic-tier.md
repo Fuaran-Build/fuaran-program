@@ -932,3 +932,13 @@ program wire specification moved: the member is a reading of the domain's own op
 witness, the plan a run leaves is an argument to host code, and the undo is an `ApplyOps` effect the
 specification already names. The codec families, the driver scenarios, the parity suite and the
 Fable leg pass byte for byte.
+
+**The demanded document's own conformance vectors live in this repository, not in the
+specification** (Phase 1978). `conformance/demanded-effect-projection.json` pairs each document with
+what this tier's pinned reader makes of it, so a reader in another repository can certify without a
+package dependency. The specification does not spell the demanded document, so its forward coupling
+does not reach these vectors, and regenerating them changes this repository alone. They were stale for
+two versions because the script that wrote them ran in no gate. The corpus is now
+`DemandedCorpus.emit` in the server suite, and `tools/emit-demanded-conformance.fsx` wraps it.
+`DemandedCorpusTests` fails, naming the stale vector's line, whenever the committed file differs from
+what the codec emits.
