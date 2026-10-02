@@ -42,7 +42,16 @@
 /// clause now has three sources (`fold_no_halting_shape_no_halt`); a
 /// repeat is its own unrolling (`repeat_is_unrolling`); and the fragment
 /// of the view that can run BACKWARDS is named, decided from the tree,
-/// and proved to undo itself (`reverse_run`, section 6 below).
+/// and proved to undo itself (`reverse_run`, section 6 below). EIGHT
+/// since Phase 1990 added `Each`, per-element iteration over a LITERAL
+/// collection, seen here LOWERED: the view carries the body once per
+/// element with that element substituted for the placeholder — the
+/// substitution is the witness's (`ActionWitness.Substitute`), as `View`
+/// and `Lower` are, because the fold cannot see inside an action — and
+/// the fold runs the sequence of those elements. Every theorem below
+/// extends over it as over a sequence, and `each_is_lowering` (section 9)
+/// is the equation: an `Each` folds, traces, reverses and prices exactly
+/// as the sequence of its elements.
 /// Every definition is captioned with the D18 contract member it models
 /// (§3.2 the action view, §3.3 expressions, §3.4 the store).
 ///
@@ -226,12 +235,13 @@ type bound (e: Type0) =
 /// have. `act` is the action the F# fold holds in hand when it views it,
 /// carried here so `w_describe` and `w_lower` can be given it.
 ///
-/// SEVEN shapes since Phase 1976: the five of Phase 1967, and the
-/// selection and the bounded iteration D1 and D2 charter, which the
-/// second witness's re-run found missing (it had to carry a two-arm
-/// branch beside the core). Three are COMPOSITION shapes — `VSequence`,
-/// `VChoose`, `VRepeat` — whose step is their members' steps; the other
-/// four are one step each, and `fold_total` characterises them.
+/// EIGHT shapes since Phase 1990: the five of Phase 1967; the selection
+/// and the bounded iteration D1 and D2 charter, which the second
+/// witness's re-run found missing (Phase 1976: it had to carry a two-arm
+/// branch beside the core); and per-element iteration over a literal
+/// collection (Phase 1990). Four are COMPOSITION shapes — `VSequence`,
+/// `VChoose`, `VRepeat`, `VEach` — whose step is their members' steps;
+/// the other four are one step each, and `fold_total` characterises them.
 type action_view (a: Type0) (e: Type0) (v: Type0) =
   /// `Sequence of 'Action list` — the composition arm (today: `Chain`).
   | VSequence : act: a -> ops: list (action_view a e v) -> action_view a e v
@@ -270,6 +280,23 @@ type action_view (a: Type0) (e: Type0) (v: Type0) =
   /// running the inverse the same number of times rests on. A repeat IS
   /// its unrolling (`repeat_is_unrolling`), so every sequence law covers it.
   | VRepeat : act: a -> count: bound e -> body: action_view a e v -> action_view a e v
+  /// `Each of collection: JVal list * placeholder: string * body:
+  /// 'Action` — PER-ELEMENT ITERATION over a LITERAL collection (Phase
+  /// 1990, D29), seen LOWERED. `elements` is the body with each element
+  /// of the collection substituted for the placeholder — one view per
+  /// element, in collection order — as the witness's `Substitute` lowers
+  /// it when the F# fold meets the shape. The fold never substitutes: it
+  /// cannot see inside an action, so substitution is the witness's exactly
+  /// as `View` and `Lower` are, and the obligation that `Substitute`
+  /// preserves the body's shape (a placeholder replaced in every operand,
+  /// nothing else moved) sits on the witness beside the obligation that
+  /// `View` unfolds finitely. What the fold runs is the SEQUENCE of the
+  /// elements (`each_is_lowering`): the bound is the list's length, fixed
+  /// by the tree (D2); the element is a value in the tree and not a cell
+  /// in the store, so the case D21 refused an index for does not arise;
+  /// and the trace, the inverse and the cost are a sequence's. An empty
+  /// collection is the empty sequence.
+  | VEach : act: a -> elements: list (action_view a e v) -> action_view a e v
   /// `Leaf of LeafDeclaration` — every other domain act. The declaration
   /// is the DEMANDED projection's business and the fold never reads it,
   /// so it is not carried; what the fold does with a leaf is `w_lower`.
@@ -558,6 +585,11 @@ let rec fold (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
   // at the first member that halts.
   | VSequence _ ops -> fold_many w ar node_id ops s pl
 
+  // PER-ELEMENT ITERATION (Phase 1990). The elements are the body, lowered
+  // once per element by the witness; what runs is their sequence, exactly
+  // as `VSequence` runs its members — `each_is_lowering` is the equation.
+  | VEach _ elements -> fold_many w ar node_id elements s pl
+
 and fold_many (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
               (w: witness a e v eff) (ar: handler_arm v eff p)
               (node_id: string) (ops: list (action_view a e v)) (s: store v) (pl: p)
@@ -629,14 +661,16 @@ let handled_view (#a: Type0) (#e: Type0) (#v: Type0) (x: action_view a e v) : bo
   | VRequire _ _ -> true
   | VChoose _ _ _ _ _ -> true
   | VRepeat _ _ _ -> true
+  | VEach _ _ -> true
   | VLeaf _ -> true
 
-/// The COMPOSITION shapes (Phase 1976): the three whose step is their
-/// members' steps, and which the structural characterisation below
-/// therefore does not speak for — a sequence, a selection, a repeat.
+/// The COMPOSITION shapes (Phase 1976; Phase 1990): the four whose step
+/// is their members' steps, and which the structural characterisation
+/// below therefore does not speak for — a sequence, a selection, a
+/// repeat, a per-element iteration.
 [@@ noextract_to "FSharp"]
 let composition (#a: Type0) (#e: Type0) (#v: Type0) (x: action_view a e v) : bool =
-  VSequence? x || VChoose? x || VRepeat? x
+  VSequence? x || VChoose? x || VRepeat? x || VEach? x
 
 [@@ noextract_to "FSharp"]
 let at_most_one (#a: Type0) (l: list a) : bool =
@@ -720,6 +754,7 @@ let fold_total (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
   | VSequence _ _ -> ()
   | VChoose _ _ _ _ _ -> ()
   | VRepeat _ _ _ -> ()
+  | VEach _ _ -> ()
 
 // ─── 2. The fold is blind to everything but the view ─────────────────
 
@@ -746,6 +781,8 @@ let rec same_shape (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0)
     same_shape w t1 t2 /\ same_shape w f1 f2
   | VRepeat ax c1 b1, VRepeat ay c2 b2 ->
     w.w_describe ax == w.w_describe ay /\ c1 == c2 /\ same_shape w b1 b2
+  | VEach ax e1, VEach ay e2 ->
+    w.w_describe ax == w.w_describe ay /\ same_shape_list w e1 e2
   | VLeaf ax, VLeaf ay ->
     w.w_describe ax == w.w_describe ay /\
     (forall (n: string) (st: store v). w.w_lower n ax st == w.w_lower n ay st)
@@ -800,6 +837,9 @@ let rec fold_blind (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
            | OSome n -> if lo <= n && n <= hi then fold_blind_repeat w ar node_id b1 b2 n s pl else ()
            | ONone -> ())
         | _ -> ()))
+  // Per-element iteration: same-shaped elements fold alike, as a
+  // sequence's members do.
+  | VEach _ e1, VEach _ e2 -> fold_blind_list w ar node_id e1 e2 s pl
   | _, _ -> ()
 
 and fold_blind_list (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
@@ -1023,6 +1063,8 @@ let rec fold_reserved_untouched (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0
              if lo <= n && n <= hi then fold_reserved_untouched_repeat w ar node_id body n s pl kk else ()
            | ONone -> ())
         | _ -> ()))
+  // A per-element iteration writes only through its elements, in sequence.
+  | VEach _ elements -> fold_reserved_untouched_list w ar node_id elements s pl kk
   | VLeaf act ->
     (match w.w_lower node_id act s with
      | Emit _ -> ()
@@ -1077,6 +1119,7 @@ let rec has_require (#a: Type0) (#e: Type0) (#v: Type0) (x: action_view a e v)
   | VRequire _ _ -> true
   | VChoose _ _ when_true when_false _ -> has_require when_true || has_require when_false
   | VRepeat _ _ body -> has_require body
+  | VEach _ elements -> has_require_list elements
   | VAssign _ _ _ _ -> false
   | VCall _ _ _ -> false
   | VLeaf _ -> false
@@ -1090,7 +1133,12 @@ and has_require_list (#a: Type0) (#e: Type0) (#v: Type0) (ops: list (action_view
 /// A view holds one of Phase 1976's shapes somewhere — a selection or a
 /// repeat, at any depth. The syntactic fact "a view without the new
 /// shapes folds exactly as before" keys on: `ui_view_no_flow` discharges
-/// it for the UI witness, which views nothing as either.
+/// it for the UI witness, which views nothing as either. A per-element
+/// iteration (Phase 1990) is NOT itself a flow shape here: its collection
+/// is literal and it has no condition, so it cannot halt of itself and
+/// holds a flow shape only through its elements — which is what lets
+/// `fold_no_halting_shape_no_halt` say an `Each` over a guard-free,
+/// flow-free body never halts.
 [@@ noextract_to "FSharp"]
 let rec has_flow (#a: Type0) (#e: Type0) (#v: Type0) (x: action_view a e v)
   : Tot bool (decreases %[x; 0]) =
@@ -1098,6 +1146,7 @@ let rec has_flow (#a: Type0) (#e: Type0) (#v: Type0) (x: action_view a e v)
   | VSequence _ ops -> has_flow_list ops
   | VChoose _ _ _ _ _ -> true
   | VRepeat _ _ _ -> true
+  | VEach _ elements -> has_flow_list elements
   | VRequire _ _ -> false
   | VAssign _ _ _ _ -> false
   | VCall _ _ _ -> false
@@ -1159,6 +1208,7 @@ let rec fold_no_halting_shape_no_halt (#a: Type0) (#e: Type0) (#v: Type0) (#eff:
      | Refuse _ -> ()
      | Decline -> ())
   | VSequence _ ops -> fold_no_halting_shape_no_halt_list w ar node_id ops s pl
+  | VEach _ elements -> fold_no_halting_shape_no_halt_list w ar node_id elements s pl
   | VRequire _ _ -> ()
   | VChoose _ _ _ _ _ -> ()
   | VRepeat _ _ _ -> ()
@@ -1225,14 +1275,18 @@ let fold_no_require_no_halt (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#
 /// non-composition step, `TWrote old` for an assignment that wrote (with
 /// the value it overwrote, `ONone` if the key was absent), `TNothing` for
 /// every other step and for an assignment that was refused; the members
-/// that RAN of a sequence or a repeat (a halted prefix is shorter); and
-/// which arm a branch took. F#: `Trace`.
+/// that RAN of a sequence, a repeat or a per-element iteration (a halted
+/// prefix is shorter); and which arm a branch took. F#: `Trace`.
 type trace (v: Type0) =
   | TNothing : trace v
   | TWrote : old: opt v -> trace v
   | TSeq : steps: list (trace v) -> trace v
   | TChoose : took_true: bool -> arm: trace v -> trace v
   | TRepeat : iterations: list (trace v) -> trace v
+  /// The elements that RAN of an `Each` (Phase 1990): the lowered form's
+  /// steps, kept under their own constructor so a reader of the trace
+  /// sees how many elements ran, and inverted as a sequence is.
+  | TEach : elements: list (trace v) -> trace v
 
 /// The fold, recording its trace. Arm for arm the same as `fold`
 /// (`traced_agrees` proves the outcome and the placement equal), plus the
@@ -1351,6 +1405,9 @@ let rec fold_traced (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0
   | VSequence _ ops ->
     let (o, p', steps) = fold_traced_many w ar node_id ops s pl in (o, p', TSeq steps)
 
+  | VEach _ elements ->
+    let (o, p', steps) = fold_traced_many w ar node_id elements s pl in (o, p', TEach steps)
+
 and fold_traced_many (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
                      (w: witness a e v eff) (ar: handler_arm v eff p)
                      (node_id: string) (ops: list (action_view a e v)) (s: store v) (pl: p)
@@ -1404,6 +1461,7 @@ let rec traced_agrees (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Typ
           (decreases %[x; 0; 0]) =
   match x with
   | VSequence _ ops -> traced_agrees_many w ar node_id ops s pl
+  | VEach _ elements -> traced_agrees_many w ar node_id elements s pl
   | VChoose _ entry when_true when_false _ ->
     (match w.w_resolve s entry with
      | Resolved jv ->
@@ -1464,6 +1522,7 @@ let rec reversible (#a: Type0) (#e: Type0) (#v: Type0) (x: action_view a e v)
   | VRequire _ _ -> true
   | VChoose _ _ when_true when_false exit -> OSome? exit && reversible when_true && reversible when_false
   | VRepeat _ count body -> BLiteral? count && reversible body
+  | VEach _ elements -> reversible_list elements
   | VCall _ _ _ -> false
   | VLeaf _ -> false
 
@@ -1484,6 +1543,7 @@ let rec restorable (#v: Type0) (tr: trace v) : Tot bool (decreases %[tr; 0]) =
   | TSeq steps -> restorable_list steps
   | TChoose _ arm -> restorable arm
   | TRepeat iterations -> restorable_list iterations
+  | TEach elements -> restorable_list elements
 
 and restorable_list (#v: Type0) (steps: list (trace v)) : Tot bool (decreases %[steps; 1]) =
   match steps with
@@ -1503,6 +1563,7 @@ let act_of (#a: Type0) (#e: Type0) (#v: Type0) (x: action_view a e v) : a =
   | VRequire act _ -> act
   | VChoose act _ _ _ _ -> act
   | VRepeat act _ _ -> act
+  | VEach act _ -> act
   | VLeaf act -> act
 
 /// **The inverse of a RUN** — a program in the fragment, built from the
@@ -1522,7 +1583,10 @@ let act_of (#a: Type0) (#e: Type0) (#v: Type0) (x: action_view a e v) : a =
 ///     standing in for the untaken arm's self-inverse);
 ///   * a literal repeat inverts to the SEQUENCE of its iterations'
 ///     inverses in reverse order — not a repeat, because each iteration
-///     overwrote different values and so has its own inverse body.
+///     overwrote different values and so has its own inverse body;
+///   * a per-element iteration (Phase 1990) inverts to the SEQUENCE of
+///     its elements' inverses in reverse order, for the same reason — it
+///     IS the sequence of its elements (`each_is_lowering`).
 ///
 /// Total: a program and a trace that do not match (a call, a leaf, a
 /// trace from a different run) invert to the empty sequence, and
@@ -1540,6 +1604,7 @@ let rec reverse (#a: Type0) (#e: Type0) (#v: Type0) (x: action_view a e v) (tr: 
   | VChoose act entry _ when_false (OSome exit), TChoose false arm ->
     VChoose act exit (VSequence act []) (reverse when_false arm) (OSome entry)
   | VRepeat act (BLiteral n) body, TRepeat iterations -> VSequence act (reverse_many (replicate n body) iterations)
+  | VEach act elements, TEach steps -> VSequence act (reverse_many elements steps)
   | _, _ -> VSequence (act_of x) []
 
 and reverse_many (#a: Type0) (#e: Type0) (#v: Type0)
@@ -1667,6 +1732,10 @@ let rec reverse_run (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0
      | _ -> ())
   | VRepeat _ (BLiteral n) body -> reverse_run_repeat w ar node_id body n s pl pl'
   | VRepeat _ (BParameter _ _ _) _ -> ()
+  // A per-element iteration is undone as the sequence of its elements
+  // is: the forward trace is the elements' steps and the inverse is their
+  // inverses in reverse order.
+  | VEach _ elements -> reverse_run_many w ar node_id elements s pl pl'
   | VCall _ _ _ -> ()
   | VLeaf _ -> ()
 
@@ -1781,6 +1850,10 @@ let rec view_cost (#a: Type0) (#e: Type0) (#v: Type0) (x: action_view a e v)
   | VChoose _ _ when_true when_false _ -> 1 + max (view_cost when_true) (view_cost when_false)
   | VRepeat _ (BLiteral n) body -> 1 + times n (view_cost body)
   | VRepeat _ (BParameter _ _ hi) body -> 1 + times hi (view_cost body)
+  // An `Each` is priced as the lowered form it is: its elements' costs
+  // summed — the body's cost once per element of a literal collection,
+  // with no step for a bound, because a literal collection is not read.
+  | VEach _ elements -> view_cost_list elements
   | VAssign _ _ _ _ -> 1
   | VCall _ _ _ -> 1
   | VRequire _ _ -> 1
@@ -1801,6 +1874,7 @@ let rec trace_steps (#v: Type0) (tr: trace v) : Tot nat (decreases %[tr; 0]) =
   | TSeq steps -> steps_sum steps
   | TChoose _ arm -> trace_steps arm
   | TRepeat iterations -> steps_sum iterations
+  | TEach elements -> steps_sum elements
 
 and steps_sum (#v: Type0) (steps: list (trace v)) : Tot nat (decreases %[steps; 1]) =
   match steps with
@@ -1825,6 +1899,7 @@ let rec fold_steps_within_cost (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0)
           (decreases %[x; 0; 0]) =
   match x with
   | VSequence _ ops -> fold_steps_within_cost_list w ar node_id ops s pl
+  | VEach _ elements -> fold_steps_within_cost_list w ar node_id elements s pl
   | VChoose _ entry when_true when_false _ ->
     (match w.w_resolve s entry with
      | Resolved jv ->
@@ -1878,6 +1953,54 @@ and fold_steps_within_cost_repeat (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Typ
     let (o1, p1, _) = fold_traced w ar node_id body s pl in
     if o1.o_halted then () else fold_steps_within_cost_repeat w ar node_id body (n - 1) o1.o_store p1
   end
+
+// ─── 9. An `Each` is the sequence of its elements (Phase 1990) ────────
+
+(* ───────────────────────────────────────────────────────────────────
+   Per-element iteration over a literal collection is VOCABULARY that
+   lowers to the core by substitution (D1): the witness substitutes each
+   element of the collection for the placeholder in the body, and what
+   the core runs is the sequence of the results. The view carries the
+   lowered form (`VEach act elements`), so the theorem below is an
+   EQUATION between two views over the same elements, and every sequence
+   law — the homomorphism, the reserved-key invariant, the halting
+   clause, the reversal, the cost bound — is a law about an `Each` with
+   no further proof. What the model does NOT own is the substitution
+   itself: `ActionWitness.Substitute` is a witness arrow, like `View`
+   and `Lower`, and the obligation that it preserves the body's shape is
+   stated in the ladder and tested at the toy witness, where the
+   differential host runs production (which substitutes as it folds)
+   beside this model (handed the elements already substituted).
+   ─────────────────────────────────────────────────────────────────── *)
+
+/// **`each_is_lowering`.** An `Each` over its lowered elements folds to
+/// the same outcome and placement as the sequence of those elements;
+/// traced, it answers the same outcome and placement with the elements'
+/// steps under its own constructor; it is in the reversible fragment
+/// exactly when the sequence is; and it is priced exactly as the
+/// sequence is — the body's cost once per element. Unconditional: the
+/// fold's `VEach` arm IS `fold_many` over the elements.
+let each_is_lowering (#a: Type0) (#e: Type0) (#v: Type0) (#eff: Type0) (#p: Type0)
+                     (w: witness a e v eff) (ar: handler_arm v eff p)
+                     (node_id: string) (act: a) (elements: list (action_view a e v)) (s: store v) (pl: p)
+  : Lemma
+      (ensures
+        fold w ar node_id (VEach act elements) s pl == fold w ar node_id (VSequence act elements) s pl /\
+        (let (o, p', tr) = fold_traced w ar node_id (VEach act elements) s pl in
+         let (o', p'', tr') = fold_traced w ar node_id (VSequence act elements) s pl in
+         o == o' /\ p' == p'' /\ TEach? tr /\ TSeq? tr' /\ TEach?.elements tr == TSeq?.steps tr') /\
+        reversible (VEach act elements) == reversible (VSequence act elements) /\
+        view_cost (VEach act elements) == view_cost (VSequence act elements)) = ()
+
+/// **`each_reverse_is_sequence_reverse`.** The inverse of an `Each` run is
+/// the inverse of the run of the sequence of its elements: the elements'
+/// inverses in reverse order. With `each_is_lowering` and `reverse_run`
+/// this is the reversal statement carried through the lowering — an
+/// `Each` in the fragment, run forwards with a restorable trace, is
+/// undone to its starting store by the inverse of its lowered sequence.
+let each_reverse_is_sequence_reverse (#a: Type0) (#e: Type0) (#v: Type0)
+                                     (act: a) (elements: list (action_view a e v)) (steps: list (trace v))
+  : Lemma (reverse (VEach act elements) (TEach steps) == reverse (VSequence act elements) (TSeq steps)) = ()
 
 (* ═══════════════════════════════════════════════════════════════════
    THE UI WITNESS — today's fourteen arms seen through the view.

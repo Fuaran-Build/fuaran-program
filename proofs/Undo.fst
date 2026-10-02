@@ -160,6 +160,16 @@ and view_defect (#t: Type0) (#o: Type0) (cls: o -> undo_class t o) (x: op_view o
   | ORequire _ -> []
   | OChoose _ when_true when_false _ -> app (view_defects cls when_true) (view_defects cls when_false)
   | ORepeat _ body -> view_defects cls body
+  // A per-element iteration (Phase 1990): the defects of its lowered
+  // form — every element's body, since an op's class may differ once the
+  // element is substituted into it.
+  | OEach elements -> view_defects_each cls elements
+
+and view_defects_each (#t: Type0) (#o: Type0) (cls: o -> undo_class t o) (elements: list (list (op_view o)))
+  : Tot (list defect) (decreases %[elements; 1]) =
+  match elements with
+  | [] -> []
+  | el :: rest -> app (view_defects cls el) (view_defects_each cls rest)
 
 /// F#: `List.contains`.
 let rec mem (d: defect) (ds: list defect) : Tot bool (decreases ds) =
@@ -445,6 +455,25 @@ let trail_repeat_step (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0
             | RErr code -> RErr code
             | ROk r2 -> ROk (fst r2, app (snd r1) (snd r2))))) = ()
 
+let trail_view_each (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
+                    (w: witness t b v o q a eff d) (elements: list (list (op_view o))) (tree: t)
+  : Lemma (trail_view w (OEach elements) tree == trail_each w elements tree) = ()
+
+let trail_each_nil (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
+                   (w: witness t b v o q a eff d) (tree: t)
+  : Lemma (trail_each w [] tree == ROk (tree, [])) = ()
+
+let trail_each_cons (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
+                    (w: witness t b v o q a eff d) (el: list (op_view o)) (rest: list (list (op_view o))) (tree: t)
+  : Lemma
+      (trail_each w (el :: rest) tree ==
+       (match trail_views w el tree with
+        | RErr code -> RErr code
+        | ROk r1 ->
+          (match trail_each w rest (fst r1) with
+           | RErr code -> RErr code
+           | ROk r2 -> ROk (fst r2, app (snd r1) (snd r2))))) = ()
+
 /// The plan's refusal, and its planned tree, are the trail's: the two
 /// walks take the same arms, apply the same ops to the same states, and
 /// refuse on the same reason. Over the views, every shape.
@@ -483,6 +512,27 @@ and trail_agrees_view (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0
     plan_view_repeat w cap stage n body tree staged;
     trail_view_repeat w n body tree;
     trail_agrees_repeat w cap stage body n tree staged
+  | OEach elements ->
+    plan_view_each w cap stage elements tree staged;
+    trail_view_each w elements tree;
+    trail_agrees_each w cap stage elements tree staged
+
+and trail_agrees_each (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                      (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
+                      (elements: list (list (op_view o))) (tree: t) (staged: list (staged_call v p))
+  : Lemma (ensures tree_of (plan_each w cap stage elements tree staged) == tree_of (trail_each w elements tree))
+          (decreases %[elements; 1; 0]) =
+  match elements with
+  | [] -> plan_each_nil w cap stage tree staged; trail_each_nil w tree
+  | el :: rest ->
+    plan_each_cons w cap stage el rest tree staged;
+    trail_each_cons w el rest tree;
+    trail_agrees_views w cap stage el tree staged;
+    let s : res (t & list (staged_call v p)) = plan_views w cap stage el tree staged in
+    let u : res (t & list (t & o)) = trail_views w el tree in
+    (match s, u with
+     | ROk r, ROk r' -> trail_agrees_each w cap stage rest (fst r) (snd r)
+     | _ -> ())
 
 and trail_agrees_repeat (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
                         (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
@@ -583,6 +633,31 @@ and trail_chain_view (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0)
   | ORepeat n body ->
     trail_view_repeat w n body tree;
     trail_chain_repeat w body n tree
+  | OEach elements ->
+    trail_view_each w elements tree;
+    trail_chain_each w elements tree
+
+and trail_chain_each (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
+                     (w: witness t b v o q a eff d) (elements: list (list (op_view o))) (tree: t)
+  : Lemma
+      (ensures
+        (let r = trail_each w elements tree in
+         ROk? r ==> chain w tree (snd (ROk?.value r)) (fst (ROk?.value r))))
+      (decreases %[elements; 1; 0]) =
+  match elements with
+  | [] -> trail_each_nil w tree
+  | el :: rest ->
+    trail_each_cons w el rest tree;
+    trail_chain_views w el tree;
+    let u : res (t & list (t & o)) = trail_views w el tree in
+    (match u with
+     | RErr _ -> ()
+     | ROk r1 ->
+       trail_chain_each w rest (fst r1);
+       let u2 : res (t & list (t & o)) = trail_each w rest (fst r1) in
+       (match u2 with
+        | RErr _ -> ()
+        | ROk r2 -> chain_app w tree (snd r1) (fst r1) (snd r2) (fst r2)))
 
 and trail_chain_repeat (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
                        (w: witness t b v o q a eff d) (body: list (op_view o)) (n: nat) (tree: t)
@@ -925,6 +1000,34 @@ and defects_clear_view (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type
   | ORepeat n body ->
     trail_view_repeat w n body tree;
     defects_clear_repeat w cls body n tree
+  | OEach elements ->
+    trail_view_each w elements tree;
+    defects_clear_each w cls elements tree
+
+and defects_clear_each (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
+                       (w: witness t b v o q a eff d) (cls: o -> undo_class t o)
+                       (elements: list (list (op_view o))) (tree: t)
+  : Lemma
+      (requires view_defects_each cls elements == [])
+      (ensures
+        (let r = trail_each w elements tree in
+         ROk? r ==> all_inverse_recorded cls (snd (ROk?.value r))))
+      (decreases %[elements; 1; 0]) =
+  match elements with
+  | [] -> trail_each_nil w tree
+  | el :: rest ->
+    app_nil_both (view_defects cls el) (view_defects_each cls rest);
+    trail_each_cons w el rest tree;
+    defects_clear_views w cls el tree;
+    let u : res (t & list (t & o)) = trail_views w el tree in
+    (match u with
+     | RErr _ -> ()
+     | ROk r1 ->
+       defects_clear_each w cls rest (fst r1);
+       let u2 : res (t & list (t & o)) = trail_each w rest (fst r1) in
+       (match u2 with
+        | RErr _ -> ()
+        | ROk r2 -> all_inverse_recorded_app cls (snd r1) (snd r2)))
 
 and defects_clear_repeat (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
                          (w: witness t b v o q a eff d) (cls: o -> undo_class t o)

@@ -76,6 +76,15 @@
 /// unrolling (`repeat_plans_as_unrolling`), and the earlier theorems
 /// keep their statements over the widened arm.
 ///
+/// Since Phase 1990 the op view has FIVE shapes: an op the state witness
+/// views as a PER-ELEMENT ITERATION over a literal collection (`OEach`)
+/// is seen LOWERED — one body of ops per element, the element substituted
+/// for the placeholder by the witness's `Substitute`, in collection order
+/// — and plans as the concatenation of those bodies
+/// (`each_plans_as_lowered`). The model does not substitute: it cannot see
+/// inside an op, so substitution is the witness's exactly as `View` is,
+/// and every theorem below extends over the shape as over a sequence.
+///
 /// Since Phase 1980 the DURABLE DISCIPLINE (DECISIONS.md D12, restated
 /// by D23) is modelled beside the handler, at the foot of this module:
 /// `Durable.runWith` wraps every performer the perform phase reaches —
@@ -338,6 +347,12 @@ type op_view (o: Type0) =
   | ORequire : op: o -> op_view o
   | OChoose : entry: o -> when_true: list (op_view o) -> when_false: list (op_view o) -> exit: opt o -> op_view o
   | ORepeat : count: nat -> body: list (op_view o) -> op_view o
+  /// F#: `OpView.Each of collection * placeholder * body` (Phase 1990),
+  /// seen LOWERED: one body of views per element of the collection, the
+  /// element substituted for the placeholder by `StateWitness.Substitute`
+  /// as the handler meets the shape. The bound is the collection's
+  /// length; an empty collection is the empty sequence.
+  | OEach : elements: list (list (op_view o)) -> op_view o
 
 /// F#: the members of `ProgramWitness` the handler reads, plus the
 /// query evaluator it calls. Since Phase 1974 they sit on two axes:
@@ -554,6 +569,7 @@ and trail_view (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: 
              if took_true then RErr (strcat "the exit assertion did not hold after the true arm: " reason)
              else ROk (tree', recorded))))
   | ORepeat count body -> trail_repeat w body count tree
+  | OEach elements -> trail_each w elements tree
 
 and trail_repeat (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
                  (w: witness t b v o q a eff d) (body: list (op_view o)) (n: nat) (tree: t)
@@ -564,6 +580,23 @@ and trail_repeat (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a
      | RErr code -> RErr code
      | ROk (tree', first) ->
        (match trail_repeat w body (n - 1) tree' with
+        | RErr code -> RErr code
+        | ROk (tree'', more) -> ROk (tree'', app first more)))
+
+/// The trail of a per-element iteration (Phase 1990): each element's
+/// body walked in turn from the state the one before it left, the
+/// records appended in plan order — a sequence's walk over the lowered
+/// form, written over the elements so that termination is structural.
+and trail_each (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
+               (w: witness t b v o q a eff d) (elements: list (list (op_view o))) (tree: t)
+  : Tot (res (t & list (t & o))) (decreases %[elements; 1; 0]) =
+  match elements with
+  | [] -> ROk (tree, [])
+  | el :: rest ->
+    (match trail_views w el tree with
+     | RErr code -> RErr code
+     | ROk (tree', first) ->
+       (match trail_each w rest tree' with
         | RErr code -> RErr code
         | ROk (tree'', more) -> ROk (tree'', app first more)))
 
@@ -652,6 +685,9 @@ and plan_view (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: T
              else ROk (tree', staged'))))
   // The repeat: the body, `count` times, threaded like a sequence.
   | ORepeat count body -> plan_repeat w cap stage body count tree staged
+  // The per-element iteration (Phase 1990): each element's lowered body
+  // in turn, threaded like a sequence — `each_plans_as_lowered`.
+  | OEach elements -> plan_each w cap stage elements tree staged
 
 and plan_repeat (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
                 (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
@@ -662,6 +698,17 @@ and plan_repeat (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a:
     (match plan_views w cap stage body tree staged with
      | RErr code -> RErr code
      | ROk (tree', staged') -> plan_repeat w cap stage body (n - 1) tree' staged')
+
+and plan_each (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+              (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
+              (elements: list (list (op_view o))) (tree: t) (staged: list (staged_call v p))
+  : Tot (res (t & list (staged_call v p))) (decreases %[elements; 1; 0]) =
+  match elements with
+  | [] -> ROk (tree, staged)
+  | el :: rest ->
+    (match plan_views w cap stage el tree staged with
+     | RErr code -> RErr code
+     | ROk (tree', staged') -> plan_each w cap stage rest tree' staged')
 
 /// F#: `Handler.planOps` — the `ApplyOps` arm's fold over its ops: view
 /// them, then plan the views. The signature Phase 1974 gave it, so every
@@ -1363,6 +1410,25 @@ let plan_repeat_step (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0)
          | RErr code -> RErr code
          | ROk r -> plan_repeat w cap stage body (n - 1) (fst r) (snd r))) = ()
 
+let plan_view_each (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                   (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
+                   (elements: list (list (op_view o))) (tree: t) (staged: list (staged_call v p))
+  : Lemma (plan_view w cap stage (OEach elements) tree staged == plan_each w cap stage elements tree staged) = ()
+
+let plan_each_nil (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                  (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
+                  (tree: t) (staged: list (staged_call v p))
+  : Lemma (plan_each w cap stage [] tree staged == ROk (tree, staged)) = ()
+
+let plan_each_cons (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                   (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
+                   (el: list (op_view o)) (rest: list (list (op_view o))) (tree: t) (staged: list (staged_call v p))
+  : Lemma
+      (plan_each w cap stage (el :: rest) tree staged ==
+       (match plan_views w cap stage el tree staged with
+        | RErr code -> RErr code
+        | ROk r -> plan_each w cap stage rest (fst r) (snd r))) = ()
+
 /// The Phase-1974 equations over an op sequence, now read through the
 /// view: one op is one view, planned, and the rest from where it left.
 let plan_ops_nil (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
@@ -1466,6 +1532,9 @@ and plan_view_unstaged (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type
   | ORepeat n body ->
     plan_view_repeat w cap stage n body tree staged;
     plan_repeat_unstaged w cap stage body n tree staged
+  | OEach elements ->
+    plan_view_each w cap stage elements tree staged;
+    plan_each_unstaged w cap stage elements tree staged
 
 and plan_repeat_unstaged (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
                          (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
@@ -1485,6 +1554,25 @@ and plan_repeat_unstaged (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Ty
      | RErr _ -> ()
      | ROk r -> plan_repeat_unstaged w cap stage body (n - 1) (fst r) (snd r))
   end
+
+and plan_each_unstaged (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                       (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
+                       (elements: list (list (op_view o))) (tree: t) (staged: list (staged_call v p))
+  : Lemma
+      (requires ONone? stage)
+      (ensures
+        (let r = plan_each w cap stage elements tree staged in
+         ROk? r ==> snd (ROk?.value r) == staged))
+      (decreases %[elements; 1; 0]) =
+  match elements with
+  | [] -> plan_each_nil w cap stage tree staged
+  | el :: rest ->
+    plan_each_cons w cap stage el rest tree staged;
+    plan_views_unstaged w cap stage el tree staged;
+    let s : res (t & list (staged_call v p)) = plan_views w cap stage el tree staged in
+    (match s with
+     | RErr _ -> ()
+     | ROk r -> plan_each_unstaged w cap stage rest (fst r) (snd r))
 
 let plan_ops_unstaged (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
                       (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
@@ -1771,6 +1859,36 @@ let rec repeat_plans_as_unrolling (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0
      | ROk r -> repeat_plans_as_unrolling w cap stage body (n - 1) (fst r) (snd r))
   end
 
+/// The elements of a per-element iteration, concatenated: its LOWERED
+/// form as one sequence of views. Ghost.
+[@@ noextract_to "FSharp"]
+let rec lowered (#o: Type0) (elements: list (list (op_view o))) : Tot (list (op_view o)) (decreases elements) =
+  match elements with
+  | [] -> []
+  | el :: rest -> app el (lowered rest)
+
+/// **`each_plans_as_lowered`** (Phase 1990). A per-element iteration plans
+/// exactly as its elements written out one after another — state and
+/// staged list — so every law about a sequence of ops (`plan_views_app`,
+/// `plan_views_unstaged`, `staged_from_the_final_state`) is a law about
+/// an `Each`, and the op channel's `Each` lowers to the core by
+/// substitution with no second evaluator: the witness substitutes, the
+/// plan sequences.
+let rec each_plans_as_lowered (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                              (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
+                              (elements: list (list (op_view o))) (tree: t) (staged: list (staged_call v p))
+  : Lemma (ensures plan_each w cap stage elements tree staged == plan_views w cap stage (lowered elements) tree staged)
+          (decreases elements) =
+  match elements with
+  | [] -> plan_each_nil w cap stage tree staged; plan_views_nil w cap stage tree staged
+  | el :: rest ->
+    plan_each_cons w cap stage el rest tree staged;
+    plan_views_app w cap stage el (lowered rest) tree staged;
+    let s : res (t & list (staged_call v p)) = plan_views w cap stage el tree staged in
+    (match s with
+     | RErr _ -> ()
+     | ROk r -> each_plans_as_lowered w cap stage rest (fst r) (snd r))
+
 /// What `staged_from_the_final_state` says of one planned step: either it
 /// moved nothing and staged nothing, or the head of the staged list it
 /// answers was staged from the state it answers. Ghost.
@@ -1834,6 +1952,9 @@ and handed_view (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a:
   | ORepeat n body ->
     plan_view_repeat w cap (OSome f) n body tree staged;
     handed_repeat w cap f body n tree staged
+  | OEach elements ->
+    plan_view_each w cap (OSome f) elements tree staged;
+    handed_each w cap f elements tree staged
 
 and handed_repeat (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
                   (w: witness t b v o q a eff d) (cap: string) (f: t -> o -> (p & v))
@@ -1849,6 +1970,21 @@ and handed_repeat (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#
      | RErr _ -> ()
      | ROk r -> handed_repeat w cap f body (n - 1) (fst r) (snd r))
   end
+
+and handed_each (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                (w: witness t b v o q a eff d) (cap: string) (f: t -> o -> (p & v))
+                (elements: list (list (op_view o))) (tree: t) (staged: list (staged_call v p))
+  : Lemma (ensures handed cap f tree staged (plan_each w cap (OSome f) elements tree staged))
+          (decreases %[elements; 1; 0]) =
+  match elements with
+  | [] -> plan_each_nil w cap (OSome f) tree staged
+  | el :: rest ->
+    plan_each_cons w cap (OSome f) el rest tree staged;
+    handed_views w cap f el tree staged;
+    let s : res (t & list (staged_call v p)) = plan_views w cap (OSome f) el tree staged in
+    (match s with
+     | RErr _ -> ()
+     | ROk r -> handed_each w cap f rest (fst r) (snd r))
 
 /// **`staged_from_the_final_state`.** Under a registered op performer, an
 /// op sequence of ANY shape that plans and stages anything new stages

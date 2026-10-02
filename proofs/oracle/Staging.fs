@@ -388,6 +388,7 @@ type op_view<'o> =
 | ORequire of 'o
 | OChoose of 'o * Prims.list<op_view<'o>> * Prims.list<op_view<'o>> * opt<'o>
 | ORepeat of Prims.nat * Prims.list<op_view<'o>>
+| OEach of Prims.list<Prims.list<op_view<'o>>>
 
 
 let uu___is_OEdit = (fun ( projectee  :  op_view<'o> ) -> (match (projectee) with
@@ -471,6 +472,21 @@ let __proj__ORepeat__item__count = (fun ( projectee  :  op_view<'o> ) -> (match 
 let __proj__ORepeat__item__body = (fun ( projectee  :  op_view<'o> ) -> (match (projectee) with
 | ORepeat (count, body) -> begin
      body
+     end))
+
+
+let uu___is_OEach = (fun ( projectee  :  op_view<'o> ) -> (match (projectee) with
+| OEach (elements) -> begin
+     true
+     end
+| uu___ -> begin
+     false
+     end))
+
+
+let __proj__OEach__item__elements = (fun ( projectee  :  op_view<'o> ) -> (match (projectee) with
+| OEach (elements) -> begin
+     elements
      end))
 
 type witness<'t, 'b, 'v, 'o, 'q, 'a, 'eff, 'd> = {w_compute : Prims.string  ->  'a  ->  'b  ->  bounded_outcome<'b, 'eff, 'd>; w_query : Prims.string  ->  'q  ->  'b  ->  res<'b>; w_apply : 'o  ->  't  ->  res<'t>; w_op_view : 'o  ->  op_view<'o>; w_assign : Prims.string  ->  'v  ->  'b  ->  'b; w_slot_refused : Prims.string  ->  opt<Prims.string>; w_undo_compute : Prims.string  ->  'a  ->  'b  ->  opt<('b  ->  'b)>}
@@ -866,6 +882,9 @@ if took_true then begin
      end
 | ORepeat (count, body) -> begin
      (trail_repeat w body count tree)
+     end
+| OEach (elements) -> begin
+     (trail_each w elements tree)
      end))
 and trail_repeat = (fun ( w  :  witness<'t, 'b, 'v, 'o, 'q, 'a, 'eff, 'd> ) ( body  :  Prims.list<op_view<'o>> ) ( n  :  Prims.nat ) ( tree  :  't ) ->  
 if (Prims.op_Equals n (Prims.parse_int "0")) then begin
@@ -885,6 +904,25 @@ if (Prims.op_Equals n (Prims.parse_int "0")) then begin
      end)
      end)
      end)
+and trail_each = (fun ( w  :  witness<'t, 'b, 'v, 'o, 'q, 'a, 'eff, 'd> ) ( elements  :  Prims.list<Prims.list<op_view<'o>>> ) ( tree  :  't ) -> (match (elements) with
+| [] -> begin
+     ROk (((tree), ([])))
+     end
+| (el)::rest -> begin
+     (match ((trail_views w el tree)) with
+| RErr (code) -> begin
+     RErr (code)
+     end
+| ROk (tree', first) -> begin
+     (match ((trail_each w rest tree')) with
+| RErr (code) -> begin
+     RErr (code)
+     end
+| ROk (tree'', more) -> begin
+     ROk (((tree''), ((app first more))))
+     end)
+     end)
+     end))
 
 
 let trail_ops = (fun ( w  :  witness<'t, 'b, 'v, 'o, 'q, 'a, 'eff, 'd> ) ( ops  :  Prims.list<'o> ) ( tree  :  't ) -> (match ((trail_views w (views w ops) tree)) with
@@ -993,6 +1031,9 @@ if took_true then begin
      end
 | ORepeat (count, body) -> begin
      (plan_repeat w cap stage1 body count tree staged)
+     end
+| OEach (elements) -> begin
+     (plan_each w cap stage1 elements tree staged)
      end))
 and plan_repeat = (fun ( w  :  witness<'t, 'b, 'v, 'o, 'q, 'a, 'eff, 'd> ) ( cap  :  Prims.string ) ( stage1  :  opt<('t  ->  'o  ->  ('p * 'v))> ) ( body  :  Prims.list<op_view<'o>> ) ( n  :  Prims.nat ) ( tree  :  't ) ( staged  :  Prims.list<staged_call<'v, 'p>> ) ->  
 if (Prims.op_Equals n (Prims.parse_int "0")) then begin
@@ -1006,6 +1047,19 @@ if (Prims.op_Equals n (Prims.parse_int "0")) then begin
      (plan_repeat w cap stage1 body (n - (Prims.parse_int "1")) tree' staged')
      end)
      end)
+and plan_each = (fun ( w  :  witness<'t, 'b, 'v, 'o, 'q, 'a, 'eff, 'd> ) ( cap  :  Prims.string ) ( stage1  :  opt<('t  ->  'o  ->  ('p * 'v))> ) ( elements  :  Prims.list<Prims.list<op_view<'o>>> ) ( tree  :  't ) ( staged  :  Prims.list<staged_call<'v, 'p>> ) -> (match (elements) with
+| [] -> begin
+     ROk (((tree), (staged)))
+     end
+| (el)::rest -> begin
+     (match ((plan_views w cap stage1 el tree staged)) with
+| RErr (code) -> begin
+     RErr (code)
+     end
+| ROk (tree', staged') -> begin
+     (plan_each w cap stage1 rest tree' staged')
+     end)
+     end))
 
 
 let plan_ops = (fun ( w  :  witness<'t, 'b, 'v, 'o, 'q, 'a, 'eff, 'd> ) ( cap  :  Prims.string ) ( stage1  :  opt<('t  ->  'o  ->  ('p * 'v))> ) ( ops  :  Prims.list<'o> ) ( tree  :  't ) ( staged  :  Prims.list<staged_call<'v, 'p>> ) -> (plan_views w cap stage1 (views w ops) tree staged))

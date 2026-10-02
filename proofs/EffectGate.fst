@@ -445,6 +445,9 @@ and plan_view_admitted (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type
   | ORepeat n body ->
     plan_view_repeat w cap stage n body tree staged;
     plan_repeat_admitted w gate cap stage body n tree staged
+  | OEach elements ->
+    plan_view_each w cap stage elements tree staged;
+    plan_each_admitted w gate cap stage elements tree staged
 
 and plan_repeat_admitted (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
                          (w: witness t b v o q a eff d) (gate: string -> bool) (cap: string)
@@ -464,6 +467,25 @@ and plan_repeat_admitted (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Ty
      | RErr _ -> ()
      | ROk r -> plan_repeat_admitted w gate cap stage body (n - 1) (fst r) (snd r))
   end
+
+and plan_each_admitted (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                       (w: witness t b v o q a eff d) (gate: string -> bool) (cap: string)
+                       (stage: opt (t -> o -> (p & v)))
+                       (elements: list (list (op_view o))) (tree: t) (staged: list (staged_call v p))
+  : Lemma (requires gate cap /\ admitted gate (caps staged))
+          (ensures
+            (let r = plan_each w cap stage elements tree staged in
+             ROk? r ==> admitted gate (caps (snd (ROk?.value r)))))
+          (decreases %[elements; 1; 0]) =
+  match elements with
+  | [] -> plan_each_nil w cap stage tree staged
+  | el :: rest ->
+    plan_each_cons w cap stage el rest tree staged;
+    plan_views_admitted w gate cap stage el tree staged;
+    let s : res (t & list (staged_call v p)) = plan_views w cap stage el tree staged in
+    (match s with
+     | RErr _ -> ()
+     | ROk r -> plan_each_admitted w gate cap stage rest (fst r) (snd r))
 
 /// Planning an op sequence under an admitted capability keeps the staged
 /// capabilities admitted — `plan_views_admitted` through the view.

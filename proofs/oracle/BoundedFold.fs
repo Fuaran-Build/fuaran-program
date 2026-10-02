@@ -167,6 +167,7 @@ type action_view<'a, 'e, 'v> =
 | VRequire of 'a * 'e
 | VChoose of 'a * 'e * action_view<'a, 'e, 'v> * action_view<'a, 'e, 'v> * opt<'e>
 | VRepeat of 'a * bound<'e> * action_view<'a, 'e, 'v>
+| VEach of 'a * Prims.list<action_view<'a, 'e, 'v>>
 | VLeaf of 'a
 
 
@@ -335,6 +336,27 @@ let __proj__VRepeat__item__count = (fun ( projectee  :  action_view<'a, 'e, 'v> 
 let __proj__VRepeat__item__body = (fun ( projectee  :  action_view<'a, 'e, 'v> ) -> (match (projectee) with
 | VRepeat (act, count, body) -> begin
      body
+     end))
+
+
+let uu___is_VEach = (fun ( projectee  :  action_view<'a, 'e, 'v> ) -> (match (projectee) with
+| VEach (act, elements) -> begin
+     true
+     end
+| uu___ -> begin
+     false
+     end))
+
+
+let __proj__VEach__item__act = (fun ( projectee  :  action_view<'a, 'e, 'v> ) -> (match (projectee) with
+| VEach (act, elements) -> begin
+     act
+     end))
+
+
+let __proj__VEach__item__elements = (fun ( projectee  :  action_view<'a, 'e, 'v> ) -> (match (projectee) with
+| VEach (act, elements) -> begin
+     elements
      end))
 
 
@@ -777,6 +799,9 @@ if ((lo <= n) && (n <= hi)) then begin
      end
 | VSequence (uu___, ops) -> begin
      (fold_many w ar node_id ops s pl)
+     end
+| VEach (uu___, elements) -> begin
+     (fold_many w ar node_id elements s pl)
      end))
 and fold_many = (fun ( w  :  witness<'a, 'e, 'v, 'eff> ) ( ar  :  handler_arm<'v, 'eff, 'p> ) ( node_id  :  Prims.string ) ( ops  :  Prims.list<action_view<'a, 'e, 'v>> ) ( s  :  store<'v> ) ( pl  :  'p ) -> (match (ops) with
 | [] -> begin
@@ -835,6 +860,7 @@ type trace<'v> =
 | TSeq of Prims.list<trace<'v>>
 | TChoose of Prims.bool * trace<'v>
 | TRepeat of Prims.list<trace<'v>>
+| TEach of Prims.list<trace<'v>>
 
 
 let uu___is_TNothing = (fun ( projectee  :  trace<'v> ) -> (match (projectee) with
@@ -909,6 +935,21 @@ let uu___is_TRepeat = (fun ( projectee  :  trace<'v> ) -> (match (projectee) wit
 let __proj__TRepeat__item__iterations = (fun ( projectee  :  trace<'v> ) -> (match (projectee) with
 | TRepeat (iterations) -> begin
      iterations
+     end))
+
+
+let uu___is_TEach = (fun ( projectee  :  trace<'v> ) -> (match (projectee) with
+| TEach (elements) -> begin
+     true
+     end
+| uu___ -> begin
+     false
+     end))
+
+
+let __proj__TEach__item__elements = (fun ( projectee  :  trace<'v> ) -> (match (projectee) with
+| TEach (elements) -> begin
+     elements
      end))
 
 
@@ -1099,6 +1140,15 @@ in (match (uu___1) with
 | (o, p', steps) -> begin
      ((o), (p'), (TSeq (steps)))
      end))
+     end
+| VEach (uu___, elements) -> begin
+     (
+
+let uu___1 = (fold_traced_many w ar node_id elements s pl)
+in (match (uu___1) with
+| (o, p', steps) -> begin
+     ((o), (p'), (TEach (steps)))
+     end))
      end))
 and fold_traced_many = (fun ( w  :  witness<'a, 'e, 'v, 'eff> ) ( ar  :  handler_arm<'v, 'eff, 'p> ) ( node_id  :  Prims.string ) ( ops  :  Prims.list<action_view<'a, 'e, 'v>> ) ( s  :  store<'v> ) ( pl  :  'p ) -> (match (ops) with
 | [] -> begin
@@ -1180,6 +1230,9 @@ let rec reversible = (fun ( x  :  action_view<'a, 'e, 'v> ) -> (match (x) with
      false
      end) && (reversible body))
      end
+| VEach (uu___, elements) -> begin
+     (reversible_list elements)
+     end
 | VCall (uu___, uu___1, uu___2) -> begin
      false
      end
@@ -1213,6 +1266,9 @@ let rec restorable = (fun ( tr  :  trace<'v> ) -> (match (tr) with
      end
 | TRepeat (iterations) -> begin
      (restorable_list iterations)
+     end
+| TEach (elements) -> begin
+     (restorable_list elements)
      end))
 and restorable_list = (fun ( steps  :  Prims.list<trace<'v>> ) -> (match (steps) with
 | [] -> begin
@@ -1250,6 +1306,9 @@ let act_of = (fun ( x  :  action_view<'a, 'e, 'v> ) -> (match (x) with
 | VRepeat (act, uu___, uu___1) -> begin
      act
      end
+| VEach (act, uu___) -> begin
+     act
+     end
 | VLeaf (act) -> begin
      act
      end))
@@ -1273,6 +1332,9 @@ let rec reverse = (fun ( x  :  action_view<'a, 'e, 'v> ) ( tr  :  trace<'v> ) ->
      end
 | (VRepeat (act, BLiteral (n), body), TRepeat (iterations)) -> begin
      VSequence (act, (reverse_many (replicate n body) iterations))
+     end
+| (VEach (act, elements), TEach (steps)) -> begin
+     VSequence (act, (reverse_many elements steps))
      end
 | (uu___, uu___1) -> begin
      VSequence ((act_of x), [])
