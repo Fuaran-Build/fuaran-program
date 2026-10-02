@@ -7,9 +7,10 @@
     the `local` source in nuget.config, which a consumer restores from ahead of
     the released source. Released distribution is a tag push, not this script.
 
-    Packs the Fuaran.Program.* tier — the domain package and the bounded
-    interpreter (Fuaran.Program.Bounded: the bounded-Action fold, the binding
-    re-resolution pass, and the server placement of the program loop).
+    Packs every packable project under src: the Fuaran.Program.* core (the
+    domain package, the bounded fold, the runtime and the server placement)
+    and the two UI adapter packages, Fuaran.Program.UI and
+    Fuaran.Program.Server.UI, which release at the core's one version.
 
     ORDERING: the UI tier packs BEFORE this one. The bounded tier consumes the
     UI tier's published packages by PackageReference (DECISIONS.md D4), and the
@@ -36,17 +37,20 @@ Set-Location $PSScriptRoot
 $feed = Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'local-nuget-feed'
 New-Item -ItemType Directory -Force -Path $feed | Out-Null
 
-# Named rather than packing the solution, which would also walk tests.
-$producers = @(
-    'src\Fuaran.Program\Fuaran.Program.fsproj'
-    'src\Fuaran.Program.Bounded\Fuaran.Program.Bounded.fsproj'
-    'src\Fuaran.Program.Runtime\Fuaran.Program.Runtime.fsproj'
-    'src\Fuaran.Program.Server\Fuaran.Program.Server.fsproj'
-)
+# Every project under src that declares itself packable: the SAME discovery
+# `run.ps1 -Pack` uses, so the two cannot pack different sets. Not the solution,
+# which would also walk tests. A hand-kept list here packed the four core
+# packages and silently omitted the two UI adapter packages once Phase 1897
+# made them packable, so a consumer restoring `Fuaran.Program.Server.UI` off
+# the local feed found no such package.
+$producers =
+    Get-ChildItem -Path (Join-Path $PSScriptRoot 'src') -Recurse -Filter *.fsproj |
+        Where-Object { (Get-Content $_.FullName -Raw) -match '<IsPackable>true</IsPackable>' } |
+        Sort-Object Name
 
 foreach ($proj in $producers) {
-    Write-Host "== pack: $proj" -ForegroundColor Cyan
-    dotnet pack (Join-Path $PSScriptRoot $proj) -c $Configuration -o $feed --nologo
+    Write-Host "== pack: $($proj.BaseName)" -ForegroundColor Cyan
+    dotnet pack $proj.FullName -c $Configuration -o $feed --nologo
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
