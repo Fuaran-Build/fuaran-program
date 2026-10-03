@@ -39,6 +39,9 @@
     <!-- fuaran#2017: the proved staging, undo and effect gate as oracles at
          the toy witness, beside production. -->
     <Compile Include="ToyStagingOracleTests.fs" />
+    <!-- fuaran#2017: the Phase 1980 durable replay differential, re-hosted at
+         the toy witness. -->
+    <Compile Include="ToyDurableReplayTests.fs" />
     <Compile Include="CoreBoundaryTests.fs" />
     <Compile Include="SchemaClockTests.fs" />
     <Compile Include="Program.fs" />
