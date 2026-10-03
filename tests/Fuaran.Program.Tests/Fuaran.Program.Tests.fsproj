@@ -45,6 +45,11 @@
     <ProjectReference Include="..\..\src\Fuaran.Program.Bounded\Fuaran.Program.Bounded.fsproj" />
     <ProjectReference Include="..\..\src\Fuaran.Program.Runtime\Fuaran.Program.Runtime.fsproj" />
     <ProjectReference Include="..\..\src\Fuaran.Program.Server\Fuaran.Program.Server.fsproj" />
+    <!-- fuaran#2017: the extracted models (proofs/oracle), so the proof
+         differential hosts run here, over the non-UI witnesses, rather than
+         only through the UI tier. The oracle is FSharp.Core-only and is not
+         packed; nothing UI-typed enters this graph through it. -->
+    <ProjectReference Include="..\..\proofs\oracle\Fuaran.Program.Proofs.Oracle.fsproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="FSharp.Core" />
