@@ -78,7 +78,10 @@ let certifies: (string * string list) list =
 /// the server suite, whose two UI-family legs (the server-logic parity leg and
 /// the durable interpreter's corpus pass) read through the parity loader
 /// unconditionally; they are UI-typed and leave this repository with the UI
-/// adapters in Phase 2012, and this entry with them. Recorded rather than
+/// adapters in Phase 2012, and this entry with them. Since fuaran#2017 they
+/// carry no evidence this repository keeps: the core's differentials and its
+/// codec certification run at the toy witness in this project, so the move
+/// takes only the UI adapter's own legs. Recorded rather than
 /// hidden: a "toy alone" run that still exercised a UI leg would otherwise read
 /// as one that did not.
 let ignoresSelection: string list = [ "Fuaran.Program.Server.Tests" ]

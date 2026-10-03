@@ -326,7 +326,7 @@
           "GO RED: a fold that invokes a carried closure loses the comparison"
         ],
         "runner": "proofs/check.ps1 step 6, which asserts a CASE COUNT because a filter matching nothing reports success",
-        "note": "production at the UI witness is the UI adapter package, src/Fuaran.Program.UI (the UI witness and the aliases over the generic core), promoted there from a non-packable project by Phase 1897; since Phase 1896 the same list also compares the extraction's generic run_action with the core's BoundedActions.run at a non-UI test witness; since Phase 1967 the toy witness's corpus names every way a guard halts and the comparison includes the halt flag"
+        "note": "production at the UI witness is the UI adapter package, src/Fuaran.Program.UI (the UI witness and the aliases over the generic core), promoted there from a non-packable project by Phase 1897; since Phase 1896 the same list also compares the extraction's generic run_action with the core's BoundedActions.run at a non-UI test witness; since Phase 1967 the toy witness's corpus names every way a guard halts and the comparison includes the halt flag; fuaran#2017: the generic half (the extraction's run_action against BoundedActions.run at the toy witness, the answering placement, and a new closure-invoking go-red) moved to tests/Fuaran.Program.Tests/ToyBoundedFoldOracleTests.fs (list \"Phase 1715 - the proved bounded fold as oracle at the toy witness\"); what stays here is the UI witness's fourteen arms, which Phase 2012 moves with the UI adapters"
       }
     },
     {
@@ -534,7 +534,27 @@
           "GO RED: an accumulator that wraps loses the ceiling comparison"
         ],
         "runner": "proofs/check.ps1 step 6, which asserts a CASE COUNT because a filter matching nothing reports success",
-        "note": "the G2 stage compared is BoundedDriver.step in the UI adapter package, src/Fuaran.Program.UI (the UI transport loop, promoted there by Phase 1897); the pricing functions are the core's Budget. The comparison is of the INTEGER and not the verdict, which is what says the model kept production's explicit stack in production's push order — above the ceiling the answer depends on which nodes were visited first. The go-red case commits a walk that accumulates with .NET's wrapping add and asserts BOTH that the harness reports it and that its ceiling comparison comes out the wrong way, the tree being admitted rather than refused; a divergence that was merely a different number would not demonstrate the defect the law excludes"
+        "note": "the G2 stage compared is BoundedDriver.step in the UI adapter package, src/Fuaran.Program.UI (the UI transport loop, promoted there by Phase 1897); the pricing functions are the core's Budget. The comparison is of the INTEGER and not the verdict, which is what says the model kept production's explicit stack in production's push order — above the ceiling the answer depends on which nodes were visited first. The go-red case commits a walk that accumulates with .NET's wrapping add and asserts BOTH that the harness reports it and that its ceiling comparison comes out the wrong way, the tree being admitted rather than refused; a divergence that was merely a different number would not demonstrate the defect the law excludes; fuaran#2017: the generic pricing (Budget.treeCost and Budget.actionCascadeCost over a witness) is also compared at the toy witness, budget-generic-model-agrees-at-the-toy-witness; what stays here is the UI witness's data-bearing weighing and the BoundedDriver's G2 gate, which Phase 2012 moves with the UI adapters"
+      }
+    },
+    {
+      "id": "budget-generic-model-agrees-at-the-toy-witness",
+      "level": "tested",
+      "phase": "fuaran#2017",
+      "claim": "The extracted tree_cost and the core's Budget.treeCost return the same integer at the toy witness for fans, chains, unequal siblings and nodes past the counting cap, at every ceiling around each tree's exact cost and at the saturation bound; the extracted action_cascade_cost equals Budget.actionCascadeCost on every action shape the model can express (sequences of assignments, calls, guards and leaves, nested); and a wrapping accumulator loses the ceiling comparison. The G2 gate is not compared here: the toy has no driver.",
+      "evidence": {
+        "family": "Phase 1716 - the proved budget as oracle at the toy witness",
+        "host": "tests/Fuaran.Program.Tests/ToyBudgetOracleTests.fs",
+        "cases": [
+          "the toy corpus straddles the ceiling in both directions",
+          "the oracle agrees with production over toy trees at every ceiling around their exact cost",
+          "the oracle agrees with production at the saturation bound, under a heavier toy weighing",
+          "the oracle agrees with production on the action cascade cost of every shape it can express",
+          "FINDING: the budget model has no Choose, Repeat or Each, which production prices - recorded, not mapped",
+          "GO RED: an accumulator that wraps loses the ceiling comparison at the toy witness"
+        ],
+        "runner": "run.ps1 (the Fuaran.Program.Tests project, which reaches no UI type) and proofs/check.ps1 step 6, which asserts a CASE COUNT because a filter matching nothing reports success",
+        "note": "a toy node with h handlers maps to SPlain when h = 0 and otherwise to SWeighted(PRows [()], h), which is 1 + satMul 1 h, production's satAdd 1 h at every h; SRows would be wrong, because it caps at max_counted_rows and the toy's Cost does not (a probe mapping through SRows lost on a node past the cap: 150003 against 100003). FINDING, held by the case that names it: Budget.fst's act is ALeaf | AChain, so the model prices a Choose, a Repeat or an Each as a leaf, while the core prices a Choose at one plus its dearer arm, a Repeat at one plus bound times body and an Each at its lowered elements (BoundedFold.fst's view_cost states the full pricing but is noextract). At the UI witness no action views as a flow shape (ui_view_no_flow), so the gap is invisible there; at the generic core the budget model and its G2 theorems describe a cascade cost that is not production's for flow shapes. Closing it is a model change, outside fuaran#2017, and the case goes red if the model gains the shapes"
       }
     },
     {
@@ -762,18 +782,18 @@
       "phase": "Phase 1717",
       "claim": "The extracted staging model and Handler.run produce the SAME outcome — canonical tree, state, query slots, verdict, audit trail, patches, notifications, client effects and diagnostics — over the HandlerLoopTests and DurableInterpreterTests staging cases and every plan-phase halt, each run with a scripted performer that refuses at every position of the staged list and once not at all; the two performers are asked the same calls in the same order; and production's Performed is the performer's own log of what ran.",
       "evidence": {
-        "family": "Phase 1717 - the proved staging as oracle",
-        "host": "tests/Fuaran.Program.Server.Tests/ProofOracleTests.fs",
+        "family": "Phase 1717 - the proved staging as oracle at the toy witness",
+        "host": "tests/Fuaran.Program.Tests/ToyStagingOracleTests.fs",
         "cases": [
           "the corpus stages something, and fails at every position of a staged list",
-          "the oracle agrees with production on the HandlerLoopTests staging cases at every failure position",
-          "the oracle agrees with production on the DurableInterpreterTests staging cases at every failure position",
+          "the oracle agrees with production on the handler loop's staging cases at every failure position",
+          "the oracle agrees with production on the durable interpreter's staging cases at every failure position",
           "the oracle agrees with production on every plan-phase halt — gate, policy, lookup, slot, apply, query",
           "the residual is the prefix that ran, in order, and the store is the entry store",
           "GO RED: a performer that reports success for a call it did not run loses the comparison"
         ],
-        "runner": "proofs/check.ps1 step 6, which asserts a CASE COUNT because a filter matching nothing reports success",
-        "note": "the host is in Fuaran.Program.Server.Tests, beside the two suites whose private cases it re-declares, and check.ps1 names the host project per module. The go-red case commits a performer that answers Ok for a call it did not run, on both sides: production and the model still agree — both believed it — and the check asserted to catch it is the claim against the performer's log, which is the ground truth every green case rests on; since Phase 1967 the corpus includes the op-performer cases — one handler in memory and under a registered performer, two ops in one stage beside a landing host call, a plan that halts after ops were staged, an op sequence the policy refuses — at every failure position counted across ops and host calls together, with the scripted performer logging capabilities for both"
+        "runner": "run.ps1 (the Fuaran.Program.Tests project, which reaches no UI type) and proofs/check.ps1 step 6, which asserts a CASE COUNT because a filter matching nothing reports success",
+        "note": "fuaran#2017: re-hosted at the toy witness (tests/Fuaran.Program.Tests/ToyDomain.fs), so the core is compared with the extracted model in a project that reaches no UI type. The corpus keeps the UI host's shapes, rebuilt over toy types: Relabel ops for the tree edits, a composed strict apply refusing a relabel of an absent node (the toy's own apply is total) for the apply-refusal halt, and a composed witness viewing check relabels as OpView.Require for the op-channel guard; trees are compared by their full wire rendering (ToyWire.renderNode), because the witness's Canonical renders ids and children only. Made to lose once during authoring (the model given the toy's total apply: four of eight cases red) and restored. The same claim's UI-witness reading stays in tests/Fuaran.Program.Server.Tests/ProofOracleTests.fs (list \"Phase 1717 - the proved staging as oracle\") until Phase 2012 moves it with the UI adapters; it is no longer this claim's host. Earlier note, about that reading: the host is in Fuaran.Program.Server.Tests, beside the two suites whose private cases it re-declares, and check.ps1 names the host project per module. The go-red case commits a performer that answers Ok for a call it did not run, on both sides: production and the model still agree — both believed it — and the check asserted to catch it is the claim against the performer's log, which is the ground truth every green case rests on; since Phase 1967 the corpus includes the op-performer cases — one handler in memory and under a registered performer, two ops in one stage beside a landing host call, a plan that halts after ops were staged, an op sequence the policy refuses — at every failure position counted across ops and host calls together, with the scripted performer logging capabilities for both"
       }
     },
     {
@@ -977,13 +997,13 @@
       "phase": "Phase 1981",
       "claim": "The extracted check_op and OpContract.check answer the same result over 48 (state, op, performer behaviour, contract verdict) cases — the receipt admitted, the receipt rejected with return-contract:<name>, the raw refusal passed through — with the (state, op) handed to the contract recorded on both sides and compared, and check_op_is_check_return holding as an instance on each.",
       "evidence": {
-        "family": "Phase 1759 - the proved effect gate as oracle",
-        "host": "tests/Fuaran.Program.Server.Tests/ProofOracleTests.fs",
+        "family": "Phase 1759 - the proved effect gate as oracle at the toy witness",
+        "host": "tests/Fuaran.Program.Tests/ToyStagingOracleTests.fs",
         "cases": [
           "the op contract wrapper agrees with the extracted check_op over every receipt, verdict and refusal (Phase 1981)"
         ],
-        "runner": "proofs/check.ps1 step 6, in the effect-gate host's list",
-        "note": "a wrapper-level differential: the staging and effect-gate hosts' token type is production's own closure, which the model's checked_by cannot key a contract on; the handler-level reading is the op-contract handler host since Phase 1984 (op-contract-keyed-agrees-at-the-handler), and the end-to-end run of a checked op performer and its adversary is the verb witness, tests/Fuaran.Program.Tests/VerbWitnessTests.fs ('ADVERSARY 1981')"
+        "runner": "proofs/check.ps1 step 6, in the effect-gate toy host's list, and run.ps1 (the Fuaran.Program.Tests project)",
+        "note": "fuaran#2017: re-hosted at the toy witness, the 48 cases instantiated at the toy's own ToyNode and ToyOp (two trees, two ops, four behaviours, three verdicts) where the UI host instantiates them at strings. The same claim's UI-witness reading stays in tests/Fuaran.Program.Server.Tests/ProofOracleTests.fs (list \"Phase 1759 - the proved effect gate as oracle\") until Phase 2012 moves it with the UI adapters; it is no longer this claim's host. Earlier note, about that reading: a wrapper-level differential: the staging and effect-gate hosts' token type is production's own closure, which the model's checked_by cannot key a contract on; the handler-level reading is the op-contract handler host since Phase 1984 (op-contract-keyed-agrees-at-the-handler), and the end-to-end run of a checked op performer and its adversary is the verb witness, tests/Fuaran.Program.Tests/VerbWitnessTests.fs ('ADVERSARY 1981')"
       }
     },
     {
@@ -992,16 +1012,16 @@
       "phase": "Phase 1984",
       "claim": "op_return_contract's reading runs differentially at the handler, the level it is stated at, and its bridge hypothesis op_contract_keyed is exercised against production rather than assumed: with an op token that CARRIES the planned state and the op (test typing; production's types are unchanged, DECISIONS.md D27) and the model's contract keyed on it as op_contract_keyed states, the extracted Staging.run with the extracted checked_by and Handler.runWith under OpPerformance.performedChecked produce the same outcome and ask the performers the same things — the host calls and every op's handed (state, op) on one log — over 40 cases (five plans: an op alone, two ops in one stage, an op then a checked host call, a host call then an op, host call / op / host call / op; four op-performer behaviours: honest, foreign, honest then foreign, a raw refusal; contracted and uncontracted); the theorem's clauses hold as instances against production (landed receipts honour the contract at their state and op; a rejected one is PerformFailed naming ApplyOps and the contract, the entry store, Performed exactly the stages before it, the receipt never echoed); and under Durable.runWith beside the extracted durable_run the decided steps agree — a contract-rejected receipt journals as Refused at its ordinal on both sides — and a resume over the journal production left serves every decided step and the refusal without invoking.",
       "evidence": {
-        "family": "Phase 1759 - the proved effect gate as oracle",
-        "host": "tests/Fuaran.Program.Server.Tests/ProofOracleTests.fs",
+        "family": "Phase 1759 - the proved effect gate as oracle at the toy witness",
+        "host": "tests/Fuaran.Program.Tests/ToyStagingOracleTests.fs",
         "cases": [
           "the op-contract host reaches every verdict at the handler - a receipt landed, refused by its contract first, refused after a host call ran, and a raw refusal (Phase 1984)",
           "the extracted handler under an op contract keyed on the op token agrees with production's handler under performedChecked - outcome, performer log, the refusal and the rollback (Phase 1984)",
           "under Durable.runWith a contract-rejected receipt journals as Refused at its ordinal in the model's durable_run and in production alike, and a resume serves that refusal (Phase 1984)",
           "GO RED: a model whose op contract is keyed on the entry state rather than the op token's own loses the handler-level differential (Phase 1984)"
         ],
-        "runner": "proofs/check.ps1 step 6, in the effect-gate host's list",
-        "note": "op_contract_keyed was on the assumed rung through Phase 1981: true by construction in production (the contract is composed into the staged closure) and never run against the model, because the hosts' op token was that closure. It stays a hypothesis of the theorems — the token is opaque in the model — and is now tested: the go-red keying, the right contract on the right op at the ENTRY state, loses ten of the forty cases (run first against the main differential during authoring, before the honest keying went green; the committed case pins the loss). A second authoring probe, not committed: the model's journal subject for an op token replaced by a constant lost all forty durable cases."
+        "runner": "proofs/check.ps1 step 6, in the effect-gate toy host's list, and run.ps1 (the Fuaran.Program.Tests project)",
+        "note": "fuaran#2017: re-hosted at the toy witness: the 40 keyed cases over Relabel op stages, under Handler.runWith and Durable.runWith with a resume; the receipt hashes the planned state's full rendering, so the entry-state go-red keying genuinely diverges. The same claim's UI-witness reading stays in tests/Fuaran.Program.Server.Tests/ProofOracleTests.fs (list \"Phase 1759 - the proved effect gate as oracle\") until Phase 2012 moves it with the UI adapters; it is no longer this claim's host. Earlier note, about that reading: op_contract_keyed was on the assumed rung through Phase 1981: true by construction in production (the contract is composed into the staged closure) and never run against the model, because the hosts' op token was that closure. It stays a hypothesis of the theorems — the token is opaque in the model — and is now tested: the go-red keying, the right contract on the right op at the ENTRY state, loses ten of the forty cases (run first against the main differential during authoring, before the honest keying went green; the committed case pins the loss). A second authoring probe, not committed: the model's journal subject for an op token replaced by a constant lost all forty durable cases."
       }
     },
     {
@@ -1020,11 +1040,11 @@
       "phase": "Phase 1759",
       "claim": "The extracted effect-gate model and Handler.run produce the SAME outcome, are asked the same performer invocations in the same order, and record the same denial stream — production's OnDenied sink, production's Denied diagnostics and the model's Denied diagnostics as one list — over the ServerEffectTests registry shapes and 441 generated (capability, gate, performer) triples, with the model wrapping the raw performer through the EXTRACTED checked_by and production through registerChecked; and the theorems hold as instances against production: every performer invocation in the event log follows the gate's decision on its capability, Performed passes the extracted `admitted` under the triple's own gate, a refused capability lands exactly one GateRefused with nothing performed, and a rejected result is PerformFailed naming the capability and the contract's name with the store the entry store.",
       "evidence": {
-        "family": "Phase 1759 - the proved effect gate as oracle",
-        "host": "tests/Fuaran.Program.Server.Tests/ProofOracleTests.fs",
+        "family": "Phase 1759 - the proved effect gate as oracle at the toy witness",
+        "host": "tests/Fuaran.Program.Tests/ToyStagingOracleTests.fs",
         "cases": [
           "the corpus reaches every verdict - a gate refusal, a missing performer, a policy halt, a contract refusal, a raw refusal and a commit",
-          "the oracle agrees with production on the ServerEffectTests registry shapes",
+          "the oracle agrees with production on the effect registry's own shapes",
           "the oracle agrees with production on every generated (capability, gate, performer) triple - outcome, denial stream, performed set",
           "the gate is consulted before any performer, and every performed capability is one the gate admitted",
           "a refused capability lands exactly one denial carrying the capability, and nothing after it is planned or performed",
@@ -1036,8 +1056,8 @@
           "under Durable.runWith a contract-rejected receipt journals as Refused at its ordinal in the model's durable_run and in production alike, and a resume serves that refusal (Phase 1984)",
           "GO RED: a model whose op contract is keyed on the entry state rather than the op token's own loses the handler-level differential (Phase 1984)"
         ],
-        "runner": "proofs/check.ps1 step 6, which asserts a CASE COUNT because a filter matching nothing reports success",
-        "note": "the host is in Fuaran.Program.Server.Tests beside the staging host, because it runs Handler.run; the shard named Fuaran.Program.Parity.Tests. The go-red case is a model whose HostCall arm consults the lookup BEFORE the gate with every other clause the extraction's: it agrees with production whenever the gate admits and loses on an unregistered function the gate refuses — Unregistered where GateRefused should be. A second probe during authoring, not committed: production's wrapper edited to accept every result lost three of the seven cases"
+        "runner": "run.ps1 (the Fuaran.Program.Tests project, which reaches no UI type) and proofs/check.ps1 step 6, which asserts a CASE COUNT because a filter matching nothing reports success",
+        "note": "fuaran#2017: re-hosted at the toy witness: the 441 generated triples and the registry shapes over Relabel op stages, with the same go-red mutant. Made to lose once during authoring (the model's host performer without checked_by: two of twelve cases red, 33 divergences) and restored. The same claim's UI-witness reading stays in tests/Fuaran.Program.Server.Tests/ProofOracleTests.fs (list \"Phase 1759 - the proved effect gate as oracle\") until Phase 2012 moves it with the UI adapters; it is no longer this claim's host. Earlier note, about that reading: the host is in Fuaran.Program.Server.Tests beside the staging host, because it runs Handler.run; the shard named Fuaran.Program.Parity.Tests. The go-red case is a model whose HostCall arm consults the lookup BEFORE the gate with every other clause the extraction's: it agrees with production whenever the gate admits and loses on an unregistered function the gate refuses — Unregistered where GateRefused should be. A second probe during authoring, not committed: production's wrapper edited to accept every result lost three of the seven cases"
       }
     },
     {
@@ -1248,11 +1268,11 @@
       "phase": "Phase 1976",
       "claim": "The shipped fold and the extracted model agree, step for step, on every arm and every halt of the two flow shapes — the true and false arms with and without an exit assertion, each exit violation, an undecided condition, a literal and a parameter bound, an over-bound and an unreadable count, a halt inside a body, and the shapes nested — over the toy witness's corpus.",
       "evidence": {
-        "family": "the toy corpus's Phase-1976 cases",
-        "host": "tests/Fuaran.Program.Parity.Tests/ProofOracleTests.fs",
-        "cases": "19 flow cases in toyCorpus, run in sequence against BoundedFold.run_action",
-        "runner": "proofs/check.ps1, step 6",
-        "note": "the differential compares store, effects, diagnostics, halt and placement after every case; the verb witness's tests (tests/Fuaran.Program.Tests/VerbWitnessTests.fs) cover the op axis end to end under Handler.runWith"
+        "family": "Phase 1715 - the proved bounded fold as oracle at the toy witness",
+        "host": "tests/Fuaran.Program.Tests/ToyBoundedFoldOracleTests.fs",
+        "cases": "18 flow cases in toyCorpus, run in sequence against BoundedFold.run_action, each named by the case 'the toy corpus carries the flow-shape cases (Phase 1976) and the each cases (Phase 1990) by name'",
+        "runner": "run.ps1 (the Fuaran.Program.Tests project, which reaches no UI type) and proofs/check.ps1 step 6 (the BoundedFold module's toy host)",
+        "note": "fuaran#2017: moved, unchanged in substance, from tests/Fuaran.Program.Parity.Tests/ProofOracleTests.fs (which reaches the UI tier through the parity project) to a project that reaches no UI type; the corpus root is read as the toy conformance leg reads it. This row said '19 flow cases' until fuaran#2017: the corpus carries eighteen, which the new corpus-shape case now asserts by label. Earlier note: the differential compares store, effects, diagnostics, halt and placement after every case; the verb witness's tests (tests/Fuaran.Program.Tests/VerbWitnessTests.fs) cover the op axis end to end under Handler.runWith"
       }
     },
     {
@@ -1362,11 +1382,11 @@
       "phase": "Phase 1977",
       "claim": "Undo.posture, Handler.runPlanned's plan and Undo.run agree with the extracted model — the posture and its reasons, the recorded plan step by step, the undo's answer (a refusal naming the same code, step and reason, or an outcome projecting equal) and the undo performer's log — over the staging corpus undone and ten undo cases, with the undo's performer refusing at every position of its own staged list.",
       "evidence": {
-        "family": "the staging corpus and the undo cases",
-        "host": "tests/Fuaran.Program.Server.Tests/ProofOracleTests.fs",
-        "cases": "the HandlerLoopTests, DurableInterpreterTests, op-performer and op-guard cases undone, plus ten undo cases at the UI witness and a composition classing one removal compensable and a style update one-way",
-        "runner": "proofs/check.ps1, step 6",
-        "note": "the host is where the model's second walk over the views (trail_views) and production's one fold are seen to coincide, and where the model's two compute arrows (w_compute, w_undo_compute) are seen to coincide with production's one traced run"
+        "family": "Phase 1977 - the proved undo as oracle at the toy witness",
+        "host": "tests/Fuaran.Program.Tests/ToyStagingOracleTests.fs",
+        "cases": "the handler loop's, the durable interpreter's, the op-performer and the op-guard staging cases undone, plus ten undo cases at the toy witness and a composition classing one relabel compensable and the check relabels one-way",
+        "runner": "run.ps1 (the Fuaran.Program.Tests project, which reaches no UI type) and proofs/check.ps1 step 6, which asserts a CASE COUNT because a filter matching nothing reports success",
+        "note": "fuaran#2017: re-hosted at the toy witness, with a composed Undo classing check relabels one-way and a relabel of readout a declared compensation; one case more than the UI host, a GO RED in which the model is handed the toy's shipped class while production runs the classed composition and the posture comparison loses. Both sides are handed the production Canonical for the drift check, so at the toy the drift check cannot see label drift - a property of the toy witness, not of the model. The same claim's UI-witness reading stays in tests/Fuaran.Program.Server.Tests/ProofOracleTests.fs (list \"the staging corpus and the undo cases\") until Phase 2012 moves it with the UI adapters; it is no longer this claim's host. Earlier note, about that reading: the host is where the model's second walk over the views (trail_views) and production's one fold are seen to coincide, and where the model's two compute arrows (w_compute, w_undo_compute) are seen to coincide with production's one traced run"
       }
     },
     {
@@ -1558,18 +1578,20 @@
       "phase": "Phase 1980",
       "claim": "The extracted replay and Durable.runWith agree — the four ordinal lists (replayed, invoked, indeterminate, overrides), the verdict, the audit trail and the diagnostics — over every journal shape the crash fixtures leave behind: nothing recorded, interrupted between two op stages, a crash inside the second op stage under each of the three policies, a host call refusing on the resume, a recorded refusal served, and a recorded ordinal holding another op.",
       "evidence": {
-        "family": "Phase 1980 - the proved durable replay as oracle",
-        "host": "tests/Fuaran.Program.Server.Tests/DurableInterpreterTests.fs",
+        "family": "Phase 1980 - the proved durable replay as oracle at the toy witness",
+        "host": "tests/Fuaran.Program.Tests/ToyDurableReplayTests.fs",
         "cases": [
           "a first run: nothing recorded, everything invoked",
           "interrupted between two op stages: the prefix served, the rest performed",
           "interrupted, and the host call refuses on the resume",
           "a recorded refusal is served, and halts where it halted",
-          "a crash inside the second op stage, under each policy (strict, accepting, declared idempotent)",
+          "a crash inside the second op stage, under each policy: strict",
+          "a crash inside the second op stage, under each policy: accepting",
+          "a crash inside the second op stage, under each policy: declared idempotent",
           "a recorded ordinal holding another op: refused as divergence"
         ],
-        "runner": "run.ps1 (the Server test project), and proofs/check.ps1 step 6 through the Staging module's host project",
-        "note": "the staged list is built by hand in the shape the plan phase stages for the fixture handler — two op stages carrying their subjects, one host call — and the snapshot from the production journal's own entries through stepOf, capabilityOf and subjectOf. It went red before it went green: a list comprehension had shortened the model's staged list to two calls, and every case that reached the host call lost on invoked"
+        "runner": "run.ps1 (the Fuaran.Program.Tests project) and proofs/check.ps1 step 6, as its own toy host list",
+        "note": "fuaran#2017: re-hosted at the toy witness: a root with title and footer, the handler ApplyOps [Relabel title; Relabel footer] then HostCall audit, and the swapped handler for the divergence case. The UI host has no go-red case; this one has three (the wrong subject, a withheld completion, a mis-stated policy) and a faithful control, and the differential was also made to lose by inverting the model's re-invoke flag during authoring. The same claim's UI-witness reading stays in tests/Fuaran.Program.Server.Tests/DurableInterpreterTests.fs (list \"Phase 1980 - the proved durable replay as oracle\") until Phase 2012 moves it with the UI adapters; it is no longer this claim's host. Earlier note, about that reading: the staged list is built by hand in the shape the plan phase stages for the fixture handler — two op stages carrying their subjects, one host call — and the snapshot from the production journal's own entries through stepOf, capabilityOf and subjectOf. It went red before it went green: a list comprehension had shortened the model's staged list to two calls, and every case that reached the host call lost on invoked"
       }
     },
     {
@@ -1650,8 +1672,8 @@
       "phase": "Phase 1990",
       "claim": "The extracted generic fold, handed an Each's elements substituted through the production Substitute, agrees with BoundedActions.run, which substitutes as it folds, over a toy corpus of per-element iterations — empty, one element, several, a halt inside an element, nested with distinct placeholders, inside a branch inside a repeat — in store, effects, diagnostics, halt and placement; and the extracted staging model maps an op-channel Each the same way.",
       "evidence": {
-        "family": "Phase 1715 - the proved bounded fold as oracle",
-        "host": "tests/Fuaran.Program.Parity.Tests/ProofOracleTests.fs",
+        "family": "Phase 1715 - the proved bounded fold as oracle at the toy witness",
+        "host": "tests/Fuaran.Program.Tests/ToyBoundedFoldOracleTests.fs",
         "cases": [
           "each writes the element, element by element",
           "each over nothing runs nothing",
@@ -1660,8 +1682,8 @@
           "each nested in each, distinct placeholders",
           "each inside a branch inside a repeat"
         ],
-        "runner": "proofs/check.ps1 step 6 (the BoundedFold module's host), and run.ps1 (the Parity test project)",
-        "note": "the model receives the lowered form; production lowers as it goes; a Substitute that did not preserve the body's shape would show here as a divergence"
+        "runner": "run.ps1 (the Fuaran.Program.Tests project, which reaches no UI type) and proofs/check.ps1 step 6 (the BoundedFold module's toy host)",
+        "note": "fuaran#2017: moved, unchanged in substance, from tests/Fuaran.Program.Parity.Tests/ProofOracleTests.fs (which reaches the UI tier through the parity project) to a project that reaches no UI type; the corpus root is read as the toy conformance leg reads it. Earlier note: the model receives the lowered form; production lowers as it goes; a Substitute that did not preserve the body's shape would show here as a divergence"
       }
     },
     {
@@ -1708,14 +1730,14 @@
       "phase": "fuaran#2011",
       "claim": "The extracted generic fold and the ported core produce the same store, effects, diagnostics and halt flag for every scripted action of every scenario in the specification's driver-semantics-toy family — the action the toy transport resolves each event to, admitted within the budget, each side threading its own store from the empty one through the scenario's script — at a placement that answers no call. The family is the specification's, not this host's: the comparison reads it off the same corpus clone the conformance legs certify against, so a scenario added there is compared here without an edit.",
       "evidence": {
-        "family": "Phase 1715 - the proved bounded fold as oracle",
-        "host": "tests/Fuaran.Program.Parity.Tests/ProofOracleTests.fs",
+        "family": "Phase 1715 - the proved bounded fold as oracle at the toy witness",
+        "host": "tests/Fuaran.Program.Tests/ToyBoundedFoldOracleTests.fs",
         "cases": [
           "the toy driver-semantics family yields actions to compare (fuaran#2011)",
           "the extracted generic fold agrees with the ported core over the toy driver-semantics family (fuaran#2011)"
         ],
-        "runner": "run.ps1 (the Parity.Tests project) and proofs/check.ps1 step 6, whose case-count floor these two raise past rather than meet",
-        "note": "a handler-loop scenario's call is compared UNANSWERED here: answering it is a handler run under the staging discipline, which is the staging oracle's subject in the server suite. The conformance leg (tests/Fuaran.Program.Tests/ToyFamilyTests.fs) and the Fable parity leg certify the same family against the recorded traces; this entry ties the family to the model, which neither of them does"
+        "runner": "run.ps1 (the Fuaran.Program.Tests project, which reaches no UI type) and proofs/check.ps1 step 6 (the BoundedFold module's toy host)",
+        "note": "fuaran#2017: moved, unchanged in substance, from tests/Fuaran.Program.Parity.Tests/ProofOracleTests.fs (which reaches the UI tier through the parity project) to a project that reaches no UI type; the corpus root is read as the toy conformance leg reads it. Earlier note: a handler-loop scenario's call is compared UNANSWERED here: answering it is a handler run under the staging discipline, which is the staging oracle's subject in the server suite. The conformance leg (tests/Fuaran.Program.Tests/ToyFamilyTests.fs) and the Fable parity leg certify the same family against the recorded traces; this entry ties the family to the model, which neither of them does"
       }
     }
   ]

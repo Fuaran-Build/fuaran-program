@@ -30,13 +30,16 @@
       5. BUILD the oracle project, so a committed extraction that no
          longer compiles is caught here rather than in someone else's
          gate.
-      6. RUN each module's differential host — an Expecto list inside
-         the test project the module names (`Fuaran.Program.Parity.Tests`
-         for the fold and the budget, `Fuaran.Program.Server.Tests` for
-         staging and the effect gate) that runs the extracted model beside production and
-         requires them to agree. Production at the UI witness is the UI
-         adapter package (`src/Fuaran.Program.UI`), so the host names
-         below follow that code, not the core's. Skippable with
+      6. RUN each module's differential hosts — Expecto lists inside
+         the test projects the module names, each running the extracted
+         model beside production and requiring them to agree. Since
+         fuaran#2017 every module's FIRST host is in
+         `Fuaran.Program.Tests`, at the toy witness, in a project that
+         reaches no UI type: that is the host its claims name. A module
+         whose model also describes the UI adapter's code
+         (`src/Fuaran.Program.UI`, `src/Fuaran.Program.Server.UI`) keeps
+         a second host at the UI witness, in the UI-typed project beside
+         those suites, until the UI adapters leave the repository. Skippable with
          `-SkipHost`, because it needs the solution built and the proof
          half does not — and the server host needs the conformance
          corpus the server suite loads at start-up (`FUARAN_PROGRAM_SPEC`
@@ -64,8 +67,9 @@
     the only thing that does.
 
     **Adding a module** is one entry in `$modules`: its source, its
-    committed extraction, the test project and Expecto list that are its
-    differential host, and the case-count floor that list declares.
+    committed extraction, and its differential hosts — for each, the
+    test project and Expecto list, and the case-count floor that list
+    declares.
     Nothing else in this file names a module.
 
 .PARAMETER Runs
@@ -97,63 +101,78 @@ $pin = Get-Content (Join-Path $PSScriptRoot "fstar-pin.json") -Raw | ConvertFrom
 
 # --- The modules -----------------------------------------------------
 #
-# One entry per proved model, in the order they landed. `HostList` is
-# the name of the model's own TOP-LEVEL Expecto list, which every case
-# under it carries as a prefix whatever separator Expecto joins names
-# with — a filter that guesses the separator wrong matches nothing and
-# reports success, so the shape that cannot guess wrong is the one used
-# here. `HostMinCases` is the number of cases that list declares,
-# asserted after the run for the reason step 6 gives. `HostProject` is
-# the test project (under tests/) that holds the list — a model's host
-# lives beside the suites whose cases it re-declares, so it is per
-# module rather than one project for all. A later proof phase APPENDS
-# its entry here.
+# One entry per proved model, in the order they landed. `Hosts` are
+# its differential hosts. In each, `List` is the name of a TOP-LEVEL
+# Expecto list, which every case under it carries as a prefix whatever
+# separator Expecto joins names with — a filter that guesses the
+# separator wrong matches nothing and reports success, so the shape
+# that cannot guess wrong is the one used here. `MinCases` is the
+# number of cases that list declares, asserted after the run for the
+# reason step 6 gives. `Project` is the test project (under tests/)
+# that holds the list. A later proof phase APPENDS its entry here.
+#
+# fuaran#2017: the first host of every module is at the toy witness, in
+# `Fuaran.Program.Tests`, which reaches no UI type — the host the
+# claims in proofs.json name. A UI-witness host follows where the
+# model also describes the UI adapters' code; it leaves with them.
 
 $modules = @(
     @{
         Name         = "BoundedFold"
         Source       = "BoundedFold.fst"
         Oracle       = "oracle/BoundedFold.fs"
-        HostProject  = "Fuaran.Program.Parity.Tests"
-        HostList     = "Phase 1715 - the proved bounded fold as oracle"
-        HostMinCases = 5
-        HostSubject  = "the driver-semantics family and an arm-complete action corpus, through the UI adapter (src/Fuaran.Program.UI) and a non-UI test witness"
+        Hosts        = @(
+            @{ Project = "Fuaran.Program.Tests"; List = "Phase 1715 - the proved bounded fold as oracle at the toy witness"; MinCases = 7
+               Subject = "the generic fold at the toy witness: a corpus naming every view shape, refusal, flow shape and iteration, an answering placement, and the specification's driver-semantics-toy family" }
+            @{ Project = "Fuaran.Program.Parity.Tests"; List = "Phase 1715 - the proved bounded fold as oracle"; MinCases = 5
+               Subject = "the driver-semantics family and an arm-complete action corpus, through the UI adapter (src/Fuaran.Program.UI)" }
+        )
     }
     @{
         Name         = "Budget"
         Source       = "Budget.fst"
         Oracle       = "oracle/Budget.fs"
-        HostProject  = "Fuaran.Program.Parity.Tests"
-        HostList     = "Phase 1716 - the proved budget as oracle"
-        HostMinCases = 6
-        HostSubject  = "the bounded driver's own trees, generated trees straddling the ceiling, and the G2 gate of the UI adapter's BoundedDriver (src/Fuaran.Program.UI)"
+        Hosts        = @(
+            @{ Project = "Fuaran.Program.Tests"; List = "Phase 1716 - the proved budget as oracle at the toy witness"; MinCases = 6
+               Subject = "the generic pricing at the toy witness: fans, chains and nodes past the counting cap at every ceiling around their cost, and the cascade cost of every shape the model can express" }
+            @{ Project = "Fuaran.Program.Parity.Tests"; List = "Phase 1716 - the proved budget as oracle"; MinCases = 6
+               Subject = "the bounded driver's own trees, generated trees straddling the ceiling, and the G2 gate of the UI adapter's BoundedDriver (src/Fuaran.Program.UI)" }
+        )
     }
     @{
         Name         = "Staging"
         Source       = "Staging.fst"
         Oracle       = "oracle/Staging.fs"
-        HostProject  = "Fuaran.Program.Server.Tests"
-        HostList     = "Phase 1717 - the proved staging as oracle"
-        HostMinCases = 6
-        HostSubject  = "the HandlerLoopTests and DurableInterpreterTests staging cases and every plan-phase halt, each with a scripted performer failing at every position of the staged list, against Handler.run through the UI witness (src/Fuaran.Program.Server.UI)"
+        Hosts        = @(
+            @{ Project = "Fuaran.Program.Tests"; List = "Phase 1717 - the proved staging as oracle at the toy witness"; MinCases = 8
+               Subject = "the handler loop's and the durable interpreter's staging shapes, every plan-phase halt, the op performer and the op-channel guard, at every failure position of a scripted performer, against Handler.runWith at the toy witness" }
+            @{ Project = "Fuaran.Program.Tests"; List = "Phase 1980 - the proved durable replay as oracle at the toy witness"; MinCases = 13
+               Subject = "every journal shape the crash fixtures leave, against Durable.runWith at the toy witness, with three go-red bends" }
+            @{ Project = "Fuaran.Program.Server.Tests"; List = "Phase 1717 - the proved staging as oracle"; MinCases = 6
+               Subject = "the HandlerLoopTests and DurableInterpreterTests staging cases and every plan-phase halt, each with a scripted performer failing at every position of the staged list, against Handler.run through the UI witness (src/Fuaran.Program.Server.UI)" }
+        )
     }
     @{
         Name         = "EffectGate"
         Source       = "EffectGate.fst"
         Oracle       = "oracle/EffectGate.fs"
-        HostProject  = "Fuaran.Program.Server.Tests"
-        HostList     = "Phase 1759 - the proved effect gate as oracle"
-        HostMinCases = 12
-        HostSubject  = "the ServerEffectTests registry shapes and the generated (capability, gate, performer) triples, comparing the denial stream, the performed set and the post-state against Handler.run with ReturnContract-wrapped performers; the go-red lookup-before-gate mutant; and the op-contract handler host (Phase 1984) — an op token carrying the planned state and the op, the model's contract keyed on it beside Handler.runWith under OpPerformance.performedChecked and the extracted durable_run beside Durable.runWith, over op stages that pass, fail their contract first, and fail after a host call, with the go-red entry-state mis-keying"
+        Hosts        = @(
+            @{ Project = "Fuaran.Program.Tests"; List = "Phase 1759 - the proved effect gate as oracle at the toy witness"; MinCases = 12
+               Subject = "the registry shapes and the 441 generated triples, the go-red lookup-before-gate mutant, the op-contract wrapper and the keyed op-contract handler host with its durable reading, at the toy witness" }
+            @{ Project = "Fuaran.Program.Server.Tests"; List = "Phase 1759 - the proved effect gate as oracle"; MinCases = 12
+               Subject = "the ServerEffectTests registry shapes and the generated (capability, gate, performer) triples, comparing the denial stream, the performed set and the post-state against Handler.run with ReturnContract-wrapped performers; the go-red lookup-before-gate mutant; and the op-contract handler host (Phase 1984) — an op token carrying the planned state and the op, the model's contract keyed on it beside Handler.runWith under OpPerformance.performedChecked and the extracted durable_run beside Durable.runWith, over op stages that pass, fail their contract first, and fail after a host call, with the go-red entry-state mis-keying" }
+        )
     }
     @{
         Name         = "Undo"
         Source       = "Undo.fst"
         Oracle       = "oracle/Undo.fs"
-        HostProject  = "Fuaran.Program.Server.Tests"
-        HostList     = "Phase 1977 - the proved undo as oracle"
-        HostMinCases = 5
-        HostSubject  = "the staging corpus and the undo cases, undone through Undo.run over the plan Handler.runPlanned records, at the UI witness and at a composition classing two ops compensable and one-way, comparing the posture, the recorded plan, the undo's answer and the undo performer's log, with the undo's performer refusing at every position of its staged list"
+        Hosts        = @(
+            @{ Project = "Fuaran.Program.Tests"; List = "Phase 1977 - the proved undo as oracle at the toy witness"; MinCases = 6
+               Subject = "the staging corpus and the undo cases undone, at the toy witness and at a composition classing relabels compensable and one-way, with a go-red wrong class" }
+            @{ Project = "Fuaran.Program.Server.Tests"; List = "Phase 1977 - the proved undo as oracle"; MinCases = 5
+               Subject = "the staging corpus and the undo cases, undone through Undo.run over the plan Handler.runPlanned records, at the UI witness and at a composition classing two ops compensable and one-way, comparing the posture, the recorded plan, the undo's answer and the undo performer's log, with the undo's performer refusing at every position of its staged list" }
+        )
     }
 )
 
@@ -350,42 +369,44 @@ else {
     # host project that does not build fails the leg before a module's
     # cases are read as a count, and so a project two modules share is
     # built once.
-    foreach ($hostProject in ($modules | ForEach-Object { $_.HostProject } | Select-Object -Unique)) {
+    foreach ($hostProject in ($modules | ForEach-Object { $_.Hosts } | ForEach-Object { $_.Project } | Select-Object -Unique)) {
         $testProject = Join-Path $repoRoot "tests/$hostProject/$hostProject.fsproj"
         & dotnet build $testProject --nologo -v q
         if ($LASTEXITCODE -ne 0) { Fail "$hostProject did not build (exit $LASTEXITCODE)." }
     }
 
     foreach ($module in $modules) {
-        Write-Host "    --- $($module.Name) over $($module.HostSubject)"
+        foreach ($hostEntry in $module.Hosts) {
+            Write-Host "    --- $($module.Name) over $($hostEntry.Subject)"
 
-        $dll = Join-Path $repoRoot "tests/$($module.HostProject)/bin/Debug/net10.0/$($module.HostProject).dll"
-        if (-not (Test-Path $dll)) { Fail "no test assembly at $dll." }
+            $dll = Join-Path $repoRoot "tests/$($hostEntry.Project)/bin/Debug/net10.0/$($hostEntry.Project).dll"
+            if (-not (Test-Path $dll)) { Fail "no test assembly at $dll." }
 
-        $output = & dotnet $dll --filter $module.HostList 2>&1
-        $exit = $LASTEXITCODE
-        $output | ForEach-Object { Write-Host "    $_" }
+            $output = & dotnet $dll --filter $hostEntry.List 2>&1
+            $exit = $LASTEXITCODE
+            $output | ForEach-Object { Write-Host "    $_" }
 
-        # A filter that matches nothing prints `0 tests run ... Success!`
-        # and exits 0. So the COUNT is asserted, never the exit code alone
-        # — the one shape in which this whole leg could report a green
-        # over a suite that did not run.
-        #
-        # Strip ANSI first, and the reason is the same trap one level
-        # down: Expecto colourises the count, so the bytes carry escape
-        # sequences around the digits and a `(\d+)\s+tests run` regex over
-        # the raw text matches NOTHING — reading as zero cases, from a run
-        # that was green.
-        $plain = [regex]::Replace((($output | ForEach-Object { "$_" }) -join "`n"), "\x1b\[[0-9;]*[A-Za-z]", "")
+            # A filter that matches nothing prints `0 tests run ... Success!`
+            # and exits 0. So the COUNT is asserted, never the exit code alone
+            # — the one shape in which this whole leg could report a green
+            # over a suite that did not run.
+            #
+            # Strip ANSI first, and the reason is the same trap one level
+            # down: Expecto colourises the count, so the bytes carry escape
+            # sequences around the digits and a `(\d+)\s+tests run` regex over
+            # the raw text matches NOTHING — reading as zero cases, from a run
+            # that was green.
+            $plain = [regex]::Replace((($output | ForEach-Object { "$_" }) -join "`n"), "\x1b\[[0-9;]*[A-Za-z]", "")
 
-        $ran = if ($plain -match '(\d+)\s+tests run') { [int]$Matches[1] } else { -1 }
+            $ran = if ($plain -match '(\d+)\s+tests run') { [int]$Matches[1] } else { -1 }
 
-        if ($ran -lt 0) { Fail "could not read a case count out of the $($module.Name) host's output." }
+            if ($ran -lt 0) { Fail "could not read a case count out of the $($module.Name) host's output." }
 
-        if ($exit -ne 0) { Fail "the $($module.Name) differential host reported failures (exit $exit)." }
-        if ($ran -lt $module.HostMinCases) { Fail "the $($module.Name) differential host ran $ran case(s); its list declares at least $($module.HostMinCases). A filter that matches nothing reports success, so this is checked rather than trusted." }
+            if ($exit -ne 0) { Fail "the $($module.Name) differential host reported failures (exit $exit)." }
+            if ($ran -lt $hostEntry.MinCases) { Fail "the $($module.Name) differential host ran $ran case(s); its list declares at least $($hostEntry.MinCases). A filter that matches nothing reports success, so this is checked rather than trusted." }
 
-        Write-Host "    $ran case(s) ran, all green" -ForegroundColor Green
+            Write-Host "    $ran case(s) ran, all green" -ForegroundColor Green
+        }
     }
 }
 

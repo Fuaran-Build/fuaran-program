@@ -1954,7 +1954,10 @@ checks both against the suites' own sources, so a suite that starts or stops rea
 consulting the selection, without the table saying so goes red. On a toy-alone run the gate is green,
 the parity suite, the proof host's UI corpus and the Fable leg's UI half skip by name, and the server
 suite still exercises the UI family — which is the one sense in which "the toy family alone" is not
-yet the whole gate, and the one fuaran#2012 closes.
+yet the whole gate, and the one fuaran#2012 closes. (Amended by D31, fuaran#2017: those legs, and the
+proof hosts and codec certification beside them, are no longer the only certification of anything this
+repository keeps — the core's evidence is re-hosted at the toy witness, so what fuaran#2012 moves is the
+UI adapter's own evidence and nothing Program must keep.)
 
 **6. The UI family's loader reads its own family only.** `FixtureIo.scenarios` and the Fable leg's
 `loadScenarios` took every manifest scenario; with a second family in the manifest they would have
@@ -1966,3 +1969,71 @@ implementation of the loop (§11.3's deferral stands: one host still records bot
 not specify the toy's `exit` assertion, which no scenario exercises, nor a host policy for the toy,
 whose one effect names no destination. The UI family is untouched, byte for byte, and moves to the UI
 tier's repository with the adapters.
+
+## D31 — The core's proof differentials and its codec certification are re-hosted at the toy witness, in the project that reaches no UI type; what stays behind the UI tier is evidence ABOUT the UI tier (2026-10-03)
+
+**2026-10-03. fuaran#2017, between fuaran#2011 and fuaran#2012. Specification side: `PROGRAM_WIRE.md`
+§10.7, four `toy-*` vector families with a `subject` member, `vocabularyFreeDocuments` in the manifest,
+and toy models in all three emitters. No package moves and no `src/` file changes: everything on this
+side is in `tests/`, `proofs.json` and `proofs/check.ps1`, so `STABILITY.md` is untouched and no
+version advances. No `.fst` model and no proved statement changed.**
+
+**Why.** fuaran#2012 was dispatched to move the UI adapters and their suites out, and stopped before
+moving anything: eleven of the ladder's twelve tested claims, and the only certification of
+`ProgramWire`/`HandlerWire` against the specification's vectors, were hosted in suites that reach the UI
+tier. Their hosts compile `proofs/oracle`, which is not a package; moved, they would have left the core
+uncompared with its models on any gate of its own, with both gates green (re-homing D7). The guard it
+landed (`CoreBoundaryTests`, `uiHostedEvidence`) is what this decision shrinks.
+
+**1. Every differential about the CORE runs at the toy witness, in `Fuaran.Program.Tests`.** That
+project now references the oracle project (FSharp.Core-only, unpacked). New hosts, each a port of its
+UI original with at least its case count and every go-red case kept:
+`ToyStagingOracleTests.fs` (staging 8, effect gate 12 — including the op-contract wrapper and the keyed
+handler host with its durable reading — and undo 6), `ToyDurableReplayTests.fs` (durable replay 13),
+`ToyBoundedFoldOracleTests.fs` (the generic fold with the flow-shape, each and toy-family claims, 7).
+The toy's apply is total and its witness has no guard, so the hosts COMPOSE what the UI corpus reached:
+a strict apply refusing a relabel of an absent node, a view making check relabels `Require`, an `Undo`
+classing them one-way and one relabel a declared compensation. The toy witness itself is unchanged —
+its `Encode` shapes are digests other tests pin. Each claim in `proofs.json` names its toy host; the
+UI copies still run where they were until fuaran#2012 moves them, and are no longer any claim's host.
+
+**2. The proof leg runs several hosts per module.** `proofs/check.ps1` gives each module a list of
+hosts, the toy host first; a module whose model also describes UI-adapter code keeps its UI host
+second, and that entry leaves with the adapters.
+
+**3. The codec is certified at a second subject the specification owns.** The vectors in the UI
+vocabulary stay exactly as they were. The specification adds toy-subject vectors for every codec path
+the UI vectors cover that the toy can reach — handler, server effect, the toy's one client effect, and
+outcome — with their derived replay classification, reproduced by all three emitters; invocation and
+logic-tree-ref documents carry no vocabulary and are certified by a host of either subject as they
+stand. `ToyWireConformanceTests.fs` certifies the GENERIC codecs at a toy witness composed with the
+toy's wire codec (`ToyWire`), with the same five properties as the UI host; the UI host now certifies
+the vectors with no `subject`, and checks that the two subjects partition the manifest.
+
+**4. What stays behind the UI tier, and why it may.** `uiHostedEvidence` is now the bounded fold over
+the UI witness's fourteen arms, the budget's UI weighing and the UI BoundedDriver's G2 gate, and the
+UI-typed codec certification — evidence about the UI adapter's code, which leaves with it. The core's
+half of the budget claim is a new tested claim, `budget-generic-model-agrees-at-the-toy-witness`. A new
+boundary test moves a re-hosted claim back onto a UI-reaching suite, directly and through a project
+reference, and requires the guard to see it.
+
+**Findings recorded, not fixed here.**
+- **The budget model has no flow shapes.** `Budget.fst`'s `act` is `ALeaf | AChain`, so the model prices
+  `Choose`, `Repeat` and `Each` as leaves, while `Budget.actionCascadeCost` prices them by their arms,
+  bounds and elements. Invisible at the UI witness (no UI action views as a flow shape); real at the
+  core. A named case in the toy budget host holds it and goes red when the model gains the shapes.
+  Closing it is a model change.
+- **§9.5's refusal is keyed on the referenced vocabulary.** `ProgramWire.refuseResultTarget` refuses a
+  `Call` carrying `into`; a toy handler whose `Ring` is `targeted` decodes and is refused only by the
+  fold (§10.6). The specification records that no toy vector pins the codec's reading; deciding it needs
+  either a witness-level rule in the codec or a ruling in the text.
+- **The text names no refusal class for a `Sound` with an extra member.** `ToyWire.decodeEffect`
+  answers `missing-member`; §5.2's arms answer `undeclared-member`. §10.7 records it as open; no vector
+  pins it.
+- **A count in the ladder was wrong.** `flow-shapes-model-agrees-with-shipped-code` said nineteen flow
+  cases; the corpus carries eighteen, now asserted by label.
+
+**What this forecloses, and what it leaves.** It does not move anything out of the repository; that is
+fuaran#2012's, and its precondition is now met for the core's evidence. The UI-witness claims above
+still compile `proofs/oracle`, so moving their hosts is a decision fuaran#2012 has to take about the
+UI half of the models; this decision does not take it.

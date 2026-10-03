@@ -284,44 +284,32 @@ let private suiteOf (host: string) : string option =
 
 /// What this repository's gate certifies ONLY through the UI tier, by suite —
 /// the record fuaran#2012 made when it was dispatched to move the UI adapters
-/// and their suites to the UI tier's own repository, and the reason that move
-/// is sequenced after this list is empty rather than before it.
+/// and their suites to the UI tier's own repository, shrunk by fuaran#2017 to
+/// the evidence that is ABOUT the UI tier and so leaves with it.
 ///
-/// Two kinds of evidence sit here, and neither can follow the suites out:
+/// fuaran#2017 re-hosted, at the toy witness and in this project (which reaches
+/// no UI type), everything here that is about the CORE: the staging, effect
+/// gate, both op-contract, undo and durable-replay differentials, the generic
+/// bounded fold with its flow-shape, each and toy-family claims, and the
+/// program wire codec's certification against the specification's toy-subject
+/// vectors. Their UI-typed copies still run where they were until Phase 2012
+/// moves them, but they are no longer any claim's host. What remains is:
 ///
-///   * `tested` claims of the proof ladder. Their differential hosts compile
-///     the extracted models (`proofs/oracle`), which is not a package and stays
-///     something this repository alone builds — so a host that moved would
-///     leave its claim naming a file this repository does not hold, and the
-///     core the models describe would no longer be compared with them on any
-///     gate of its own. The flow-shapes, each and toy-family claims run over
-///     non-UI witnesses already and need only a project that does not reach
-///     the tier; the rest are written against the UI witness and need
-///     re-hosting over a non-UI one (re-homing D7's proof-host leg).
-///   * the program wire format's own conformance: the corpus manifest's
-///     `vectors` are documents in the UI vocabulary, so the one host that
-///     certifies this repository's codec against them is UI-typed. Moved, the
-///     codec would be certified against a released version only, never against
-///     the tree a change is made in.
+///   * `model-agrees-with-shipped-code` — the bounded fold over the UI
+///     witness's fourteen arms, and `budget-model-agrees-with-shipped-code` —
+///     the UI witness's data-bearing weighing and the UI BoundedDriver's G2
+///     gate. Both are claims about the UI adapter's code, compared with the UI
+///     half of the extracted models; the core's half of each is compared at the
+///     toy witness (the toy-witness bounded-fold list, and
+///     `budget-generic-model-agrees-at-the-toy-witness`).
+///   * `wire-vectors` — the UI-typed certification of the codec against the
+///     referenced-subject vectors, whose documents are in the UI vocabulary.
 ///
-/// Shrink this list as the evidence is re-hosted over a non-UI witness. The
-/// tests below go red when a host moves, or a claim is added or re-hosted,
+/// The tests below go red when a host moves, or a claim is added or re-hosted,
 /// without the list saying so.
 let uiHostedEvidence: (string * string list) list =
-    [ "Fuaran.Program.Parity.Tests",
-      [ "budget-model-agrees-with-shipped-code"
-        "each-model-agrees-with-shipped-code"
-        "flow-shapes-model-agrees-with-shipped-code"
-        "model-agrees-with-shipped-code"
-        "toy-family-model-agrees-with-shipped-code" ]
-      "Fuaran.Program.Server.Tests",
-      [ "durable-replay-model-agrees-with-shipped-code"
-        "effect-gate-model-agrees-with-shipped-code"
-        "op-contract-keyed-agrees-at-the-handler"
-        "op-contract-wrapper-agrees-with-shipped-code"
-        "staging-model-agrees-with-shipped-code"
-        "undo-model-agrees-with-shipped-code"
-        "wire-vectors" ] ]
+    [ "Fuaran.Program.Parity.Tests", [ "budget-model-agrees-with-shipped-code"; "model-agrees-with-shipped-code" ]
+      "Fuaran.Program.Server.Tests", [ "wire-vectors" ] ]
 
 /// The suites whose sources read the corpus manifest's wire `vectors`.
 let private wireVectorSuites () : string list =
@@ -340,6 +328,33 @@ let private wireVectorSuites () : string list =
     |> Array.map Path.GetFileName
     |> Array.sort
     |> List.ofArray
+
+/// The evidence reachable only through the UI tier, by suite, for a given set
+/// of tested claims — a pure function of its inputs, so the guard's ability to
+/// see a claim moved BACK onto a UI-reaching suite can be demonstrated rather
+/// than trusted.
+let private uiHostedOf (claims: (string * string) list) (vectorSuites: string list) : (string * string list) list =
+    let hosted =
+        claims
+        |> List.choose (fun (id, host) ->
+            suiteOf host
+            |> Option.filter (suiteProject >> reachesUiTier)
+            |> Option.map (fun suite -> suite, id))
+
+    let vectors =
+        vectorSuites
+        |> List.filter (suiteProject >> reachesUiTier)
+        |> List.map (fun suite -> suite, "wire-vectors")
+
+    hosted @ vectors
+    |> List.groupBy fst
+    |> List.map (fun (suite, entries) -> suite, entries |> List.map snd |> List.sort)
+    |> List.sortBy fst
+
+/// A claim of the ladder, its host pointed somewhere else.
+let private rehostedTo (claim: string) (host: string) (claims: (string * string) list) =
+    claims
+    |> List.map (fun (id, current) -> if id = claim then id, host else id, current)
 
 [<Tests>]
 let evidenceTests =
@@ -364,29 +379,76 @@ let evidenceTests =
           }
 
           test "the evidence certified only through the UI tier is exactly the recorded list" {
-              let claims =
-                  testedClaims ()
-                  |> List.choose (fun (id, host) ->
-                      suiteOf host
-                      |> Option.filter (suiteProject >> reachesUiTier)
-                      |> Option.map (fun suite -> suite, id))
-
-              let vectors =
-                  wireVectorSuites ()
-                  |> List.filter (suiteProject >> reachesUiTier)
-                  |> List.map (fun suite -> suite, "wire-vectors")
-
-              let found =
-                  claims @ vectors
-                  |> List.groupBy fst
-                  |> List.map (fun (suite, entries) -> suite, entries |> List.map snd |> List.sort)
-                  |> List.sortBy fst
-
-              Expect.equal found uiHostedEvidence "the UI-hosted evidence, by suite"
+              Expect.equal
+                  (uiHostedOf (testedClaims ()) (wireVectorSuites ()))
+                  uiHostedEvidence
+                  "the UI-hosted evidence, by suite"
           }
 
           test "the wire vectors are certified by some suite of this repository" {
               Expect.isNonEmpty (wireVectorSuites ()) "a suite reads the corpus manifest's vectors"
+          }
+
+          // fuaran#2017: the codec is certified by a suite that reaches no UI
+          // tier, so moving the UI-typed certification out leaves one behind.
+          test "the wire vectors are certified by a suite that reaches no UI tier (fuaran#2017)" {
+              let uiFree =
+                  wireVectorSuites () |> List.filter (suiteProject >> reachesUiTier >> not)
+
+              Expect.contains uiFree "Fuaran.Program.Tests" "the toy-witness conformance leg reads the vectors"
+          }
+
+          // fuaran#2017: the guard, shown able to fail in the direction that
+          // matters. A re-hosted claim pointed back at a UI-reaching suite must
+          // change what the guard computes — directly (the server suite) and
+          // through a project reference (the parity suite); a guard that did
+          // not would let a later edit move the evidence back behind the tier
+          // with every test green.
+          test "the guard goes red when a re-hosted claim's host points back at a UI-reaching suite (fuaran#2017)" {
+              let claims = testedClaims ()
+              let staging = "staging-model-agrees-with-shipped-code"
+              let toyFamily = "toy-family-model-agrees-with-shipped-code"
+
+              for claim in [ staging; toyFamily ] do
+                  Expect.isTrue
+                      (claims |> List.exists (fst >> (=) claim))
+                      (sprintf "the probe moves %s, a claim the ladder declares" claim)
+
+              let pairs (found: (string * string list) list) =
+                  found
+                  |> List.collect (fun (suite, ids) -> ids |> List.map (fun id -> suite, id))
+
+              let serverBack =
+                  uiHostedOf
+                      (claims
+                       |> rehostedTo staging "tests/Fuaran.Program.Server.Tests/ProofOracleTests.fs")
+                      (wireVectorSuites ())
+
+              Expect.notEqual serverBack uiHostedEvidence "a claim moved back to the server suite is caught"
+
+              Expect.contains
+                  (pairs serverBack)
+                  ("Fuaran.Program.Server.Tests", staging)
+                  "and is named, at the suite it moved to"
+
+              let parityBack =
+                  uiHostedOf
+                      (claims
+                       |> rehostedTo toyFamily "tests/Fuaran.Program.Parity.Tests/ProofOracleTests.fs")
+                      (wireVectorSuites ())
+
+              Expect.contains
+                  (pairs parityBack)
+                  ("Fuaran.Program.Parity.Tests", toyFamily)
+                  "so is one moved to a suite that reaches the tier only through a project reference"
+
+              Expect.equal
+                  (uiHostedOf
+                      (claims
+                       |> rehostedTo staging "tests/Fuaran.Program.Tests/ToyStagingOracleTests.fs")
+                      (wireVectorSuites ()))
+                  uiHostedEvidence
+                  "while the same claim at its UI-free host changes nothing"
           }
 
           // The reachability probe, proven able to answer both ways: a suite that
