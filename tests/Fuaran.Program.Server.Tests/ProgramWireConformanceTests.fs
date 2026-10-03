@@ -83,6 +83,10 @@ type private Vector =
         Document: string
         File: string
         Reject: string option
+        /// The subject the vector is at (§10.7). `None` is the REFERENCED
+        /// subject — the tree wire specification's vocabulary — which is the
+        /// only one this suite's witness reads.
+        Subject: string option
         ReplaySafety: string option
         /// §7.5, in the manifest's own spelling: a stage ORDINAL and a defect
         /// token. `None` where the vector declares none — which is every vector
@@ -149,7 +153,7 @@ let private hostConstructedCases: (string * Handler) list =
                 ServerEffect.ApplyOps [ TreeOp.UpdateProp(NodeId "orders-total", "Label", PropValue.Native(box None)) ]
             ) ] } ]
 
-let private vectors () : Vector list =
+let private everyVector () : Vector list =
     let manifestPath = Path.Combine(corpusRoot, "manifest.json")
 
     if not (File.Exists manifestPath) then
@@ -172,9 +176,17 @@ let private vectors () : Vector list =
                   Document = str "document" entry
                   File = str "file" entry
                   Reject = ProgramWire.tryString "reject" entry
+                  Subject = ProgramWire.tryString "subject" entry
                   ReplaySafety = ProgramWire.tryString "replaySafety" entry
                   ReplayReasons = reasonsOf entry })
         | _ -> failwith "the corpus manifest declares no vector array"
+
+/// The vectors this suite certifies: the REFERENCED subject's, which are the
+/// ones naming no subject (§10.7). A vector at another subject carries another
+/// vocabulary in its referenced positions, which this suite's witness does not
+/// read; it is certified by a suite at that subject's witness instead.
+let private vectors () : Vector list =
+    everyVector () |> List.filter (fun v -> v.Subject.IsNone)
 
 /// Decode a document of the named kind and re-encode it. `Ok` carries the bytes
 /// a conformant host emits; `Error` carries the refusal class.
@@ -421,4 +433,22 @@ let tests =
                   |> List.length
 
               Expect.equal handled all.Length "every enumerated vector is of a kind this suite runs"
+          }
+
+          test "every vector this suite does not run is at a subject the specification names" {
+              // §10.1 point 6 counts per role AND subject, so the count above is
+              // the referenced subject's. What that filter leaves out must be
+              // accounted for rather than silently dropped: every excluded vector
+              // names the toy subject, and the two together are the whole
+              // manifest — a vector naming a subject nobody recognises would
+              // otherwise be one no host ran while every host reported green.
+              let every = everyVector ()
+              let excluded = every |> List.filter (fun v -> v.Subject.IsSome)
+
+              Expect.equal
+                  (excluded |> List.choose _.Subject |> List.distinct)
+                  [ "toy" ]
+                  "the only other subject is the toy (§10.7)"
+
+              Expect.equal (all.Length + excluded.Length) every.Length "the two subjects partition the manifest"
           } ]
