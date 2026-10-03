@@ -1883,3 +1883,86 @@ carries) is not expressible, by design — on that axis an address-dependent wri
 and the op axis carries it. Shadowing is refused rather than defined; a later need for it is a change
 to item 5, with the substitution order then load-bearing. The UI adapter adopts neither shape; a UI
 handler that would genuinely benefit lands as a finding against `ui_view_no_flow`'s test.
+
+## D30 — Program certifies its wire format over a non-UI witness: the toy is a specification subject with a scenario family of its own, a second obligation lets a trace record a handler run, and a family selection says which families a run certifies (2026-10-03)
+
+**2026-10-03. fuaran#2011, the first of the phases that move the UI adapters out of this repository
+(fuaran#2012 moves them). Specification side: `PROGRAM_WIRE.md` §10.6, the four `toy-*` schemas, the
+`driver-semantics-toy` scenarios and the checker's toy branch. No package moves: everything on this
+side is in `tests/`, so `STABILITY.md` is untouched and no version advances.**
+
+Until this phase Program could certify its own wire format only through the UI witness. The
+specification's `driver-semantics` family records UI trees; the parity suite, the Fable leg, the
+server suite and the proof host's corpus all ran them through UI-tier types. Moving the adapters
+would have taken half of this repository's conformance evidence with them, and left a gate that
+could not go green on its own format.
+
+**1. The toy witness is a specification subject, and its vocabulary is OWNED there.** The toy of
+D18 (`tests/Fuaran.Program.Tests/ToyDomain.fs`) fills all three axes and names every shape the fold
+distinguishes, so it is the witness the specification now states in full: a tree (node, label
+expression, handlers by event, children), the nine actions and five expressions, the `Relabel` op,
+the state and the `Sound` effect (§10.6). Unlike the UI tree it is not a referenced vocabulary, so
+the specification's §2 governs it without exception, a scenario's `tree.json` is its canonical
+bytes, and a recorded tree is compared as an owned document — decoded, re-encoded, compared. The
+effect alone adopts §5.2's envelope (a `kind` discriminator, the emitter's member order), because a
+trace compares effects as emitted.
+
+**2. The wire codec is written BESIDE the witness, not into it.** `ToyWire.fs` encodes and decodes
+every toy document; the witness's own `Encode` members are left exactly as they were. Those members
+are what the core hashes and the replay classification reads — an action's canonical form names only
+what that classification needs — and widening them would have moved digests the genericity suite and
+the proof hosts pin, for a reason that has nothing to do with either. Two encoders of one action is
+the cost, and it is bounded: the op's two spellings are pinned equal by a test, and the action's are
+two different documents for two different readers. A decoded `Ring` carries a closure that FAILS if
+invoked, so a fold that recovered behaviour from the slot would be caught rather than read as inert.
+
+**3. A trace can now record a handler run, through a second OBLIGATION rather than a new shape.**
+The shard listed the argument-policy gate, staged perform and the op channel among the vocabulary the
+family covers. Checked against the corpus, the premise did not hold for the UI family it named as the
+model: no UI scenario records a handler run — the server suite registers a handler against
+`server-handler-call` and asserts the outcome in F#, so that reading was never in the corpus. Nor
+does the UI family reach `Choose`, `Repeat`, `Each` or `Require`: the UI witness views no action as
+any of them. So the toy family covers the listed vocabulary by adding what was missing rather than
+by mirroring the UI family. §10.2 already records the obligation a scenario presumes "so that a
+scenario presuming something else enumerates rather than renumbers"; this phase is the first to use
+that, with `handler-loop`. A handler-loop scenario names its handlers as `hostHandlers` — named,
+never carried, on §10.3's reasoning about policies — and §10.6 registers one set, `toy-relabel`,
+whose three handlers pin the op channel committing an edit, the argument policy refusing a plan, and
+a staged host call declining after a complete plan. A placement with no handler registry is out of
+scope for those scenarios, and the client legs say so by name.
+
+**4. The legs.** The conformance leg is `ToyFamilyTests.fs` in `Fuaran.Program.Tests`, which
+references no UI-tier package (`CoreBoundaryTests` names the harness files and reads the project's
+declared, resolved and built references): every scenario at the client placement and at the generic
+`ServerSession` under the handler set it names, the no-handler server reading against the client,
+the count, and a mutated trace going red at the first step it touches. The Fable leg compiles the
+same shared runner (`ToyScenarios.fs`) to JavaScript. The proof host folds every scripted action of
+every toy scenario through the extraction and the ported core (`proofs.json`,
+`toy-family-model-agrees-with-shipped-code`); a handler-loop scenario's call is compared unanswered
+there, since answering it is the staging oracle's subject. Each leg prints the family's scenario
+count. The seeds that generate the corpus are `ToySeeds.fs`, emitted by
+`Fuaran.Program.Tests --emit-toy-scenarios`, which records a trace only when every placement in
+scope agrees, and a test holds the corpus and the seeds equal.
+
+**5. A family selection, and a record of who certifies what.** `FUARAN_PROGRAM_FAMILIES` (or
+`run.ps1 -Families`) selects the families a run certifies; an undeclared name fails the run. Every
+suite that reads a family consults it and skips a deselected family by name — except the server
+suite, whose two UI-family legs read the parity loader unconditionally and are UI-typed, so they
+leave with the adapters in fuaran#2012. That exception is RECORDED, not hidden: `ToyFamilyTests`
+holds the table of which families each suite certifies and which suite ignores the selection, and
+checks both against the suites' own sources, so a suite that starts or stops reading a family, or
+consulting the selection, without the table saying so goes red. On a toy-alone run the gate is green,
+the parity suite, the proof host's UI corpus and the Fable leg's UI half skip by name, and the server
+suite still exercises the UI family — which is the one sense in which "the toy family alone" is not
+yet the whole gate, and the one fuaran#2012 closes.
+
+**6. The UI family's loader reads its own family only.** `FixtureIo.scenarios` and the Fable leg's
+`loadScenarios` took every manifest scenario; with a second family in the manifest they would have
+handed a toy tree to the UI decoder. Both now filter by family, which is also what lets the server
+suite stay unedited here.
+
+**What this forecloses, and what it leaves.** It does not make the toy a product or a second
+implementation of the loop (§11.3's deferral stands: one host still records both families). It does
+not specify the toy's `exit` assertion, which no scenario exercises, nor a host policy for the toy,
+whose one effect names no destination. The UI family is untouched, byte for byte, and moves to the UI
+tier's repository with the adapters.

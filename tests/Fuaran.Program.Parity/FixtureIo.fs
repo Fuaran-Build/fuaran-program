@@ -148,7 +148,55 @@ type ScenarioEntry =
         HostPolicy: string option
     }
 
-/// The manifest's driver-semantics enumeration, in declared order.
+/// The scenario families the manifest declares.
+let declaredFamilies (fixturesRoot: string) : string list =
+    let manifestPath = Path.Combine(fixturesRoot, "manifest.json")
+
+    if not (File.Exists manifestPath) then
+        missing fixturesRoot
+
+    use doc = JsonDocument.Parse(File.ReadAllText manifestPath)
+
+    match doc.RootElement.TryGetProperty "scenarioFamilies" with
+    | true, families -> [ for f in families.EnumerateArray() -> f.GetString() ]
+    | _ -> []
+
+/// The environment variable a gate run SELECTS scenario families with
+/// (fuaran#2011): unset or empty selects every declared family, otherwise a
+/// comma list of declared family names. The same variable, read the same way,
+/// as the toy family's harness reads it.
+[<Literal>]
+let SelectionVariable = "FUARAN_PROGRAM_FAMILIES"
+
+/// Whether this run selects the UI family. A selection naming a family the
+/// manifest does not declare FAILS rather than matching nothing — a selection
+/// that quietly emptied a family would run nothing and report green.
+let selected (fixturesRoot: string) : bool =
+    let declared = declaredFamilies fixturesRoot
+
+    match Environment.GetEnvironmentVariable SelectionVariable with
+    | null -> true
+    | raw when raw.Trim() = "" -> true
+    | raw ->
+        let names =
+            raw.Split ','
+            |> Array.map (fun s -> s.Trim())
+            |> Array.filter ((<>) "")
+            |> List.ofArray
+
+        match names |> List.filter (fun n -> not (List.contains n declared)) with
+        | [] -> List.contains scenarioFamily names
+        | unknown ->
+            failwithf
+                "%s names scenario famil%s the manifest does not declare: %s"
+                SelectionVariable
+                (if List.length unknown = 1 then "y" else "ies")
+                (String.Join(", ", unknown))
+
+/// The manifest's driver-semantics enumeration, in declared order — the UI
+/// family's entries only. The manifest carries a second scenario family since
+/// fuaran#2011, over a toy witness whose trees this loader's UI decoder cannot
+/// read, and a loader that took every entry would hand it one.
 let scenarios (fixturesRoot: string) : ScenarioEntry list =
     let manifestPath = Path.Combine(fixturesRoot, "manifest.json")
 
@@ -160,19 +208,21 @@ let scenarios (fixturesRoot: string) : ScenarioEntry list =
     match doc.RootElement.TryGetProperty "scenarios" with
     | false, _ -> failwith "the corpus manifest declares no scenario array"
     | true, entries ->
-        [ for el in entries.EnumerateArray() ->
-              let files = el.GetProperty "files"
+        [ for el in entries.EnumerateArray() do
+              if el.GetProperty("family").GetString() = scenarioFamily then
+                  let files = el.GetProperty "files"
 
-              { Name = el.GetProperty("name").GetString()
-                Dir = el.GetProperty("dir").GetString()
-                Tree = files.GetProperty("tree").GetString()
-                Events = files.GetProperty("events").GetString()
-                Expectation = files.GetProperty("expectation").GetString()
-                Steps = el.GetProperty("steps").GetInt32()
-                HostPolicy =
-                  match el.TryGetProperty "hostPolicy" with
-                  | true, p -> Some(p.GetString())
-                  | _ -> None } ]
+                  yield
+                      { Name = el.GetProperty("name").GetString()
+                        Dir = el.GetProperty("dir").GetString()
+                        Tree = files.GetProperty("tree").GetString()
+                        Events = files.GetProperty("events").GetString()
+                        Expectation = files.GetProperty("expectation").GetString()
+                        Steps = el.GetProperty("steps").GetInt32()
+                        HostPolicy =
+                          match el.TryGetProperty "hostPolicy" with
+                          | true, p -> Some(p.GetString())
+                          | _ -> None } ]
 
 /// Load every scenario the manifest enumerates. A file the manifest names but
 /// the tree does not carry is a failure, not an omission.

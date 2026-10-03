@@ -774,10 +774,153 @@ let private toyDivergences
         (seed, Map.toList seed, 0, 0, [])
     |> fun (_, _, _, _, found) -> found
 
+// ─── fuaran#2011 — the toy driver-semantics FAMILY through the generic fold ──
+//
+// The hand-written corpus above is this host's own; the scenario family is the
+// SPECIFICATION's (`PROGRAM_WIRE.md` §10.6), read off the same corpus clone the
+// conformance legs read. Every scripted event of every toy scenario, resolved
+// by the toy transport to the action its node carries, is folded by the
+// extraction and by the ported core — each side threading its own store from
+// event to event, exactly as the scenario drives it — at a placement that
+// answers no call. A handler-loop scenario's call is answered by a handler at
+// its own placement, which is the staging oracle's subject in the server
+// suite, not this fold's: here its call is compared unanswered, as every other.
+
+module ToyFamily = Fuaran.Program.Tests.ToyScenarios
+
+/// The toy family as the corpus enumerates it — or `None` when the run's
+/// family selection leaves it out. Read through the SAME shared loader every
+/// other leg uses; only the file read is this host's.
+let private toyFamily () : ToyFamily.ToyScenario list option =
+    let root = FixtureIo.fixturesRoot
+
+    let read (relative: string) =
+        System.IO.File.ReadAllText(System.IO.Path.Combine(root, relative))
+
+    let manifest = read "manifest.json"
+
+    let declared =
+        match ToyFamily.declaredFamilies manifest with
+        | Ok families -> families
+        | Error e -> failwith e
+
+    let selection =
+        ToyFamily.selection
+            (Option.ofObj (System.Environment.GetEnvironmentVariable ToyFamily.SelectionVariable))
+            declared
+
+    match selection with
+    | Error e -> failwith e
+    | Ok families when not (List.contains ToyFamily.Family families) -> None
+    | Ok _ ->
+        match ToyFamily.entries manifest with
+        | Error e -> failwith e
+        | Ok entries ->
+            entries
+            |> List.map (fun entry ->
+                match
+                    ToyFamily.load entry (read entry.TreeFile) (read entry.EventsFile) (read entry.ExpectationFile)
+                with
+                | Ok scenario -> scenario
+                | Error e -> failwith e)
+            |> Some
+
+/// Every scripted action of a scenario, in drive order, with its node: the
+/// actions the transport admits AND the budget prices within the ceiling — an
+/// event the loop refuses never reaches the fold, on either side.
+let private toyFamilyActions (scenario: ToyFamily.ToyScenario) : (string * ToyAction) list =
+    scenario.Events
+    |> List.choose (fun ev ->
+        match ToyFamily.dispatch scenario.Tree ev with
+        | ToyFamily.Run action when
+            Fuaran.Program.Bounded.Budget.actionCascadeCost toyWitness action
+            <= ToyFamily.budget.MaxActions
+            ->
+            Some(ev.NodeId, action)
+        | _ -> None)
+
+/// Fold one scenario's script through both, threading each side's store from
+/// the empty one, and report the first event where they disagree.
+let private toyFamilyDivergence (scenario: ToyFamily.ToyScenario) : string option =
+    toyFamilyActions scenario
+    |> List.indexed
+    |> List.fold
+        (fun (prodStore: ToyStore, modelStore, found) (i, (nodeId, action)) ->
+            match found with
+            | Some _ -> prodStore, modelStore, found
+            | None ->
+                let prod, _ =
+                    BoundedActions.run toyWitness HandlerArm.inert nodeId action prodStore ()
+
+                let model, _ =
+                    BoundedFold.run_action toyModelWitness (BoundedFold.inert_arm ()) nodeId action modelStore ()
+
+                let agree =
+                    (prod.Store |> Map.toList) = (model.o_store |> List.sortBy fst)
+                    && prod.Effects = model.o_effects
+                    && (prod.Diagnostics |> List.map modelDiagnostic) = model.o_diagnostics
+                    && prod.Halted = model.o_halted
+
+                prod.Store,
+                model.o_store,
+                (if agree then
+                     None
+                 else
+                     Some(
+                         sprintf
+                             "%s, scripted action %d at %s: store %A / %A, effects %A / %A, halted %b / %b"
+                             scenario.Name
+                             i
+                             nodeId
+                             (prod.Store |> Map.toList)
+                             (model.o_store |> List.sortBy fst)
+                             prod.Effects
+                             model.o_effects
+                             prod.Halted
+                             model.o_halted
+                     )))
+        (Map.empty, [], None)
+    |> fun (_, _, found) -> found
+
 let private genericTests =
     testList
         "the GENERIC fold through a non-UI test witness (Phase 1896)"
-        [ test "the UI witness views no action as a branch or a repeat, at any depth (Phase 1976)" {
+        [ test "the toy driver-semantics family yields actions to compare (fuaran#2011)" {
+              match toyFamily () with
+              | None -> skiptestf "%s is not selected by %s" ToyFamily.Family ToyFamily.SelectionVariable
+              | Some scenarios ->
+                  Expect.isNonEmpty scenarios "the corpus enumerates no toy scenario"
+
+                  let actions = scenarios |> List.map (fun s -> s.Name, toyFamilyActions s)
+
+                  for name, scripted in actions do
+                      Expect.isNonEmpty scripted (name + " contributes at least one action to compare over")
+
+                  let handlerLoop =
+                      scenarios
+                      |> List.filter (fun s -> s.Requires = ToyFamily.HandlerLoop)
+                      |> List.length
+
+                  printfn
+                      "proof host: %s - %d scenario(s), %d scripted action(s) folded by the extraction and the core (%d handler-loop scenario(s) compared at an unanswering placement)"
+                      ToyFamily.Family
+                      (List.length scenarios)
+                      (actions |> List.sumBy (snd >> List.length))
+                      handlerLoop
+          }
+
+          test
+              "the extracted generic fold agrees with the ported core over the toy driver-semantics family (fuaran#2011)" {
+              match toyFamily () with
+              | None -> skiptestf "%s is not selected by %s" ToyFamily.Family ToyFamily.SelectionVariable
+              | Some scenarios ->
+                  match scenarios |> List.tryPick toyFamilyDivergence with
+                  | None -> ()
+                  | Some first ->
+                      failtestf "the generic model and the ported core disagree over the toy family:\n%s" first
+          }
+
+          test "the UI witness views no action as a branch or a repeat, at any depth (Phase 1976)" {
               // The UI tier branches in the TREE and repeats through data
               // binding, so its handlers are straight-line: `ui_view_no_flow`
               // in the model, checked here over the arm-complete corpus. If a
@@ -848,11 +991,17 @@ let private genericTests =
 
 [<Tests>]
 let tests =
-    let corpus = corpusCases ()
+    // fuaran#2011 — a run that selects the toy family alone leaves the UI
+    // family's corpus unread, and its two cases say so by name.
+    let uiSelected = FixtureIo.selected FixtureIo.fixturesRoot
+    let corpus = if uiSelected then corpusCases () else []
 
     testList
         "Phase 1715 - the proved bounded fold as oracle"
         [ test "the driver-semantics family yields actions to compare" {
+              if not uiSelected then
+                  skiptestf "%s is not selected by %s" FixtureIo.scenarioFamily FixtureIo.SelectionVariable
+
               // A corpus that silently resolved to nothing would report the
               // same green as one that ran every scenario. The floor is the
               // number of scenarios the family declares, since every scenario
@@ -870,6 +1019,9 @@ let tests =
           }
 
           test "the oracle agrees with production over the driver-semantics family" {
+              if not uiSelected then
+                  skiptestf "%s is not selected by %s" FixtureIo.scenarioFamily FixtureIo.SelectionVariable
+
               let divergences = runScript production HandlerArm.inert corpus empty
 
               match divergences with

@@ -92,6 +92,24 @@ let private namedIn (dir: string) : string list =
                 None))
     |> List.ofArray
 
+/// `namedIn` over named files of one directory rather than all of it.
+let private namedInFiles (dir: string) (files: string list) : string list =
+    files
+    |> List.collect (fun file ->
+        File.ReadAllLines(Path.Combine(dir, file))
+        |> Array.indexed
+        |> Array.choose (fun (i, line) ->
+            let code =
+                match line.IndexOf "//" with
+                | -1 -> line
+                | at -> line.Substring(0, at)
+
+            if uiName.IsMatch code then
+                Some(sprintf "%s:%d %s" file (i + 1) (line.Trim()))
+            else
+                None)
+        |> List.ofArray)
+
 /// Libraries the restore RESOLVED into the project's graph, read from its
 /// `obj/project.assets.json` — every target's library keys, so a transitive
 /// arrival is caught as surely as a declared one.
@@ -158,6 +176,36 @@ let tests =
 
                   expectNone $"{package} (built assembly)" (expectRead package (referencedBy (coreDir package) package))
               }
+
+          // fuaran#2011 — the toy family's HARNESS reaches no UI-tier type either.
+          // Named file by file, because this project's other sources name the
+          // tier on purpose (the probes above spell it), and the claim is about
+          // the files the conformance leg, the Fable leg and the proof host run.
+          test "the driver-semantics-toy harness: no source names the tier" {
+              let harness =
+                  [ "ToyDomain.fs"
+                    "ToyWire.fs"
+                    "ToyScenarios.fs"
+                    "ToyServerPlacement.fs"
+                    "ToySeeds.fs"
+                    "ToyCorpus.fs"
+                    "ToyFamilyTests.fs" ]
+
+              for file in harness do
+                  Expect.isTrue (File.Exists(Path.Combine(__SOURCE_DIRECTORY__, file))) (file + " is where it is named")
+
+              expectNone "the toy harness" (namedInFiles __SOURCE_DIRECTORY__ harness)
+          }
+
+          test "the driver-semantics-toy harness: its project neither declares nor resolves the tier" {
+              let project = __SOURCE_DIRECTORY__
+              expectNone "Fuaran.Program.Tests" (declaredIn (Path.Combine(project, "Fuaran.Program.Tests.fsproj")))
+              expectNone "Fuaran.Program.Tests (resolved graph)" (expectRead "toy harness" (resolvedIn project))
+
+              expectNone
+                  "Fuaran.Program.Tests (built assembly)"
+                  (expectRead "toy harness" (referencedBy project "Fuaran.Program.Tests"))
+          }
 
           // The probes, proven able to fail: every reading finds the tier in the
           // UI adapter, which references it by design.

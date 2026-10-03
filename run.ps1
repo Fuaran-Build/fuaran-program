@@ -39,7 +39,16 @@ param(
     # would buy ~25s at the price of a conformance or parity leg. The Fable leg is about half of
     # the whole gate, and it is the one thing `fast` drops.
     [ValidateSet('pure', 'fast', 'full')]
-    [string] $Lane = 'full'
+    [string] $Lane = 'full',
+    # fuaran#2011 - the conformance corpus's SCENARIO FAMILIES this run certifies, by name
+    # (the manifest's `scenarioFamilies`). Omitted, every declared family runs - the gate as
+    # it stood. `-Families driver-semantics-toy` runs the toy witness's family alone: every
+    # suite that reads a family consults the selection and SKIPS a deselected one by name,
+    # and a name the manifest does not declare fails the run rather than matching nothing.
+    # Passed to the suites as FUARAN_PROGRAM_FAMILIES, which a caller may also set directly.
+    # Which suites certify which family, and the one suite that reads its family on every run
+    # regardless, is recorded by a test (tests/Fuaran.Program.Tests/ToyFamilyTests.fs).
+    [string[]] $Families
 )
 
 $ErrorActionPreference = 'Stop'
@@ -68,6 +77,13 @@ function Write-Skip([string] $what, [string] $why) {
 
 if ($Lane -ne 'full') {
     Write-Host "── lane '$Lane' (the citable gate is the full lane: pwsh ./run.ps1) ──" -ForegroundColor Yellow
+}
+
+if ($Families) {
+    $env:FUARAN_PROGRAM_FAMILIES = ($Families -join ',')
+}
+if ($env:FUARAN_PROGRAM_FAMILIES) {
+    Write-Host "── scenario families selected: $($env:FUARAN_PROGRAM_FAMILIES) ──" -ForegroundColor Yellow
 }
 
 if (-not $SkipFormat) {

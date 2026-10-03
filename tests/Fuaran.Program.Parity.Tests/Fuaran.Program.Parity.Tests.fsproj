@@ -15,6 +15,11 @@
          so the generic differential below and the genericity tests there run
          the SAME domain. -->
     <Compile Include="..\Fuaran.Program.Tests\ToyDomain.fs" Link="ToyDomain.fs" />
+    <!-- fuaran#2011: the toy codec and the driver-semantics-toy family's shared
+         runner, so the generic differential below folds the SPECIFICATION's toy
+         scenarios as well as this host's own corpus. -->
+    <Compile Include="..\Fuaran.Program.Tests\ToyWire.fs" Link="ToyWire.fs" />
+    <Compile Include="..\Fuaran.Program.Tests\ToyScenarios.fs" Link="ToyScenarios.fs" />
     <Compile Include="ProofOracleTests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>

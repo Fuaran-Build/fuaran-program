@@ -1701,6 +1701,22 @@
         "document": "docs/generic-tier.md"
       },
       "reason": "the specification references the action and op algebras and does not spell their shapes (its §3, rule 2); a compute stage's action and an ApplyOps effect's ops travel in the domain's own codec, spliced verbatim (K6), which is where an Each is encoded — the toy's and the verb's test codecs gain a case; the UI adapter's codec is the UI specification's and its tier adopts no Each. DECISIONS.md D29 item 6 records the phase's wire task as answered rather than performed, and the codec families, the driver scenarios, the parity suite and the Fable leg pass byte for byte."
+    },
+    {
+      "id": "toy-family-model-agrees-with-shipped-code",
+      "level": "tested",
+      "phase": "fuaran#2011",
+      "claim": "The extracted generic fold and the ported core produce the same store, effects, diagnostics and halt flag for every scripted action of every scenario in the specification's driver-semantics-toy family — the action the toy transport resolves each event to, admitted within the budget, each side threading its own store from the empty one through the scenario's script — at a placement that answers no call. The family is the specification's, not this host's: the comparison reads it off the same corpus clone the conformance legs certify against, so a scenario added there is compared here without an edit.",
+      "evidence": {
+        "family": "Phase 1715 - the proved bounded fold as oracle",
+        "host": "tests/Fuaran.Program.Parity.Tests/ProofOracleTests.fs",
+        "cases": [
+          "the toy driver-semantics family yields actions to compare (fuaran#2011)",
+          "the extracted generic fold agrees with the ported core over the toy driver-semantics family (fuaran#2011)"
+        ],
+        "runner": "run.ps1 (the Parity.Tests project) and proofs/check.ps1 step 6, whose case-count floor these two raise past rather than meet",
+        "note": "a handler-loop scenario's call is compared UNANSWERED here: answering it is a handler run under the staging discipline, which is the staging oracle's subject in the server suite. The conformance leg (tests/Fuaran.Program.Tests/ToyFamilyTests.fs) and the Fable parity leg certify the same family against the recorded traces; this entry ties the family to the model, which neither of them does"
+      }
     }
   ]
 }

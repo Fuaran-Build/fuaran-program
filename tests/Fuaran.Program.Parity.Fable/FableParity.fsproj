@@ -7,6 +7,12 @@
     <Nullable>disable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <!-- fuaran#2011: the toy witness, its codec and the driver-semantics-toy
+         family's shared runner, compiled to JavaScript beside the UI runner so
+         this leg runs BOTH scenario families over the same corpus. -->
+    <Compile Include="..\Fuaran.Program.Tests\ToyDomain.fs" Link="ToyDomain.fs" />
+    <Compile Include="..\Fuaran.Program.Tests\ToyWire.fs" Link="ToyWire.fs" />
+    <Compile Include="..\Fuaran.Program.Tests\ToyScenarios.fs" Link="ToyScenarios.fs" />
     <Compile Include="Main.fs" />
   </ItemGroup>
   <ItemGroup>

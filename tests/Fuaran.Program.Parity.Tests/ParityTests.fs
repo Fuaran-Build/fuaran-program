@@ -27,8 +27,8 @@ open Fuaran.Program.Parity
 /// gate, it is a coincidence.
 let fixturesRoot = FixtureIo.fixturesRoot
 
-[<Tests>]
-let tests =
+/// The UI family's parity cases, built only when the run selects that family.
+let private parityTests () =
     let declared = FixtureIo.scenarios fixturesRoot
     let fixtures = FixtureIo.load fixturesRoot
 
@@ -257,3 +257,17 @@ let tests =
                   fromCorpus
                   "a genuinely different tree does not normalise onto the recorded one"
           } ]
+
+/// fuaran#2011 — a run selecting the toy family alone (`FUARAN_PROGRAM_FAMILIES`)
+/// leaves the UI family unread, and says so by name rather than vanishing: a
+/// suite that silently ran nothing would read as one that passed.
+[<Tests>]
+let tests =
+    if FixtureIo.selected fixturesRoot then
+        parityTests ()
+    else
+        testList
+            "tier parity"
+            [ test "the UI driver-semantics family" {
+                  skiptestf "%s is not selected by %s" FixtureIo.scenarioFamily FixtureIo.SelectionVariable
+              } ]
