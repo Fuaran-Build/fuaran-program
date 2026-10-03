@@ -19,7 +19,9 @@ records, per version slot, what a consumer pays to adopt it and why.
 This document starts at `0.6.0`. The slots before it are recorded where they were cut, in the
 comments beside `<Version>` in `Directory.Build.props`, and are not restated here.
 
-## 0.7.0 — RELEASED (tagged `v0.7.0`, 2026-10-03) — what the second witness found (Phase 1967)
+## 0.7.1 — RELEASED (tagged `v0.7.1`, 2026-10-03) — what the second witness found (Phase 1967)
+
+**Released as 0.7.1, not 0.7.0.** `0.7.0` was this slot's draft number, and drafts of it were packed and resolved while its public surface was still moving (the Phase 1967 work, then the raise onto the newest released lines). A released version names one contract, so the release takes the next patch; `0.7.0` was never tagged and never published, and no consumer should pin it. Everything below describes `0.7.1`.
 
 **Class: breaking**, for `Fuaran.Program.Bounded` and `Fuaran.Program.Server`, and for every
 consumer that constructs a witness. `v0.6.0` is tagged, so this cannot ride it.
