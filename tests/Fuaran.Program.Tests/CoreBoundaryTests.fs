@@ -241,3 +241,163 @@ let tests =
                   (fun library -> library.StartsWith "Fuaran.Program.UI/")
                   "the resolved-graph probe names the adapter project"
           } ]
+
+// ─── fuaran#2012 — the evidence that cannot leave with the UI tier yet ──────
+
+/// The project references a project file declares, as full paths.
+let private projectReferencesOf (fsproj: string) : string list =
+    let dir = Path.GetDirectoryName fsproj
+
+    Regex.Matches(File.ReadAllText fsproj, @"<ProjectReference\s+Include=""([^""]+)""")
+    |> Seq.map (fun m ->
+        Path.GetFullPath(Path.Combine(dir, m.Groups[1].Value.Replace('\\', Path.DirectorySeparatorChar))))
+    |> List.ofSeq
+
+/// Whether a project reaches the UI tier through a declared reference: its own,
+/// or one of the projects it references, transitively.
+let rec private reachesUiTier (fsproj: string) : bool =
+    not (List.isEmpty (declaredIn fsproj))
+    || (projectReferencesOf fsproj |> List.exists reachesUiTier)
+
+/// The project file of a suite under `tests/`.
+let private suiteProject (suite: string) : string =
+    match Directory.GetFiles(Path.Combine(repoRoot, "tests", suite), "*.fsproj") with
+    | [| fsproj |] -> fsproj
+    | found -> failwithf "tests/%s holds %d project files, not one" suite found.Length
+
+/// The proof ladder's `tested` claims (proofs.json), as (claim id, host path).
+let private testedClaims () : (string * string) list =
+    use doc =
+        System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(repoRoot, "proofs.json")))
+
+    doc.RootElement.GetProperty("claims").EnumerateArray()
+    |> Seq.filter (fun claim -> claim.GetProperty("level").GetString() = "tested")
+    |> Seq.map (fun claim ->
+        claim.GetProperty("id").GetString(), claim.GetProperty("evidence").GetProperty("host").GetString())
+    |> List.ofSeq
+
+/// The suite a host path names: `tests/<suite>/<file>`.
+let private suiteOf (host: string) : string option =
+    match host.Split '/' with
+    | [| "tests"; suite; _ |] -> Some suite
+    | _ -> None
+
+/// What this repository's gate certifies ONLY through the UI tier, by suite —
+/// the record fuaran#2012 made when it was dispatched to move the UI adapters
+/// and their suites to the UI tier's own repository, and the reason that move
+/// is sequenced after this list is empty rather than before it.
+///
+/// Two kinds of evidence sit here, and neither can follow the suites out:
+///
+///   * `tested` claims of the proof ladder. Their differential hosts compile
+///     the extracted models (`proofs/oracle`), which is not a package and stays
+///     something this repository alone builds — so a host that moved would
+///     leave its claim naming a file this repository does not hold, and the
+///     core the models describe would no longer be compared with them on any
+///     gate of its own. The flow-shapes, each and toy-family claims run over
+///     non-UI witnesses already and need only a project that does not reach
+///     the tier; the rest are written against the UI witness and need
+///     re-hosting over a non-UI one (re-homing D7's proof-host leg).
+///   * the program wire format's own conformance: the corpus manifest's
+///     `vectors` are documents in the UI vocabulary, so the one host that
+///     certifies this repository's codec against them is UI-typed. Moved, the
+///     codec would be certified against a released version only, never against
+///     the tree a change is made in.
+///
+/// Shrink this list as the evidence is re-hosted over a non-UI witness. The
+/// tests below go red when a host moves, or a claim is added or re-hosted,
+/// without the list saying so.
+let uiHostedEvidence: (string * string list) list =
+    [ "Fuaran.Program.Parity.Tests",
+      [ "budget-model-agrees-with-shipped-code"
+        "each-model-agrees-with-shipped-code"
+        "flow-shapes-model-agrees-with-shipped-code"
+        "model-agrees-with-shipped-code"
+        "toy-family-model-agrees-with-shipped-code" ]
+      "Fuaran.Program.Server.Tests",
+      [ "durable-replay-model-agrees-with-shipped-code"
+        "effect-gate-model-agrees-with-shipped-code"
+        "op-contract-keyed-agrees-at-the-handler"
+        "op-contract-wrapper-agrees-with-shipped-code"
+        "staging-model-agrees-with-shipped-code"
+        "undo-model-agrees-with-shipped-code"
+        "wire-vectors" ] ]
+
+/// The suites whose sources read the corpus manifest's wire `vectors`.
+let private wireVectorSuites () : string list =
+    Directory.GetDirectories(Path.Combine(repoRoot, "tests"))
+    |> Array.filter (fun dir ->
+        Directory.GetFiles(dir, "*.fs")
+        |> Array.exists (fun path ->
+            File.ReadAllLines path
+            |> Array.exists (fun line ->
+                let code =
+                    match line.IndexOf "//" with
+                    | -1 -> line
+                    | at -> line.Substring(0, at)
+
+                code.Contains "\"vectors\"")))
+    |> Array.map Path.GetFileName
+    |> Array.sort
+    |> List.ofArray
+
+[<Tests>]
+let evidenceTests =
+    testList
+        "fuaran#2012 - the evidence certified only through the UI tier"
+        [ test "every tested claim is hosted in a suite this repository's gate runs" {
+              let claims = testedClaims ()
+              Expect.isNonEmpty claims "proofs.json declares tested claims"
+
+              for id, host in claims do
+                  Expect.isTrue
+                      (File.Exists(Path.Combine(repoRoot, host)))
+                      (sprintf "%s: its host %s is in this repository" id host)
+
+                  match suiteOf host with
+                  | None -> failtestf "%s: its host %s is not a file of a suite under tests/" id host
+                  | Some suite ->
+                      Expect.stringContains
+                          (File.ReadAllText(suiteProject suite))
+                          "<OutputType>Exe</OutputType>"
+                          (sprintf "%s: %s is a runner the gate runs" id suite)
+          }
+
+          test "the evidence certified only through the UI tier is exactly the recorded list" {
+              let claims =
+                  testedClaims ()
+                  |> List.choose (fun (id, host) ->
+                      suiteOf host
+                      |> Option.filter (suiteProject >> reachesUiTier)
+                      |> Option.map (fun suite -> suite, id))
+
+              let vectors =
+                  wireVectorSuites ()
+                  |> List.filter (suiteProject >> reachesUiTier)
+                  |> List.map (fun suite -> suite, "wire-vectors")
+
+              let found =
+                  claims @ vectors
+                  |> List.groupBy fst
+                  |> List.map (fun (suite, entries) -> suite, entries |> List.map snd |> List.sort)
+                  |> List.sortBy fst
+
+              Expect.equal found uiHostedEvidence "the UI-hosted evidence, by suite"
+          }
+
+          test "the wire vectors are certified by some suite of this repository" {
+              Expect.isNonEmpty (wireVectorSuites ()) "a suite reads the corpus manifest's vectors"
+          }
+
+          // The reachability probe, proven able to answer both ways: a suite that
+          // reaches the tier only through a referenced project is caught, and the
+          // toy harness's project is not.
+          test "the reachability probe finds the tier through a project reference, and only there" {
+              let parityTests = suiteProject "Fuaran.Program.Parity.Tests"
+              Expect.isEmpty (declaredIn parityTests) "the parity runner declares no UI reference itself"
+              Expect.isTrue (reachesUiTier parityTests) "and reaches the tier through the parity project"
+
+              Expect.isFalse
+                  (reachesUiTier (suiteProject "Fuaran.Program.Tests"))
+                  "the toy harness's project reaches no UI tier"
+          } ]
