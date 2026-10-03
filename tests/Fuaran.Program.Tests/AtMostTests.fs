@@ -10,6 +10,7 @@ module Fuaran.Program.Tests.AtMostTests
 
 open Expecto
 open Fuaran.Core
+open Fuaran.Compute
 open Fuaran.Program.Bounded
 open Fuaran.Program.Server
 open Fuaran.Program.Tests.VerbDomain

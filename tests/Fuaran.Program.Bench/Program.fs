@@ -20,6 +20,7 @@ module Fuaran.Program.Bench.Program
 open System
 open System.Diagnostics
 open Fuaran.Core
+open Fuaran.Compute
 open Fuaran.Program.Server
 open Fuaran.Program.Server.UI
 

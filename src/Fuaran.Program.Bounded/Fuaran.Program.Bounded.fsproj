@@ -53,7 +53,7 @@
     <PackageReference Include="FSharp.Core" />
     <PackageReference Include="Fuaran.Core.Wire" />
     <PackageReference Include="Fuaran.Core.Column" />
-    <PackageReference Include="Fuaran.Core.DataFrame" />
+    <PackageReference Include="Fuaran.Compute.DataFrame" />
     <PackageReference Include="Fuaran.Core.Tree" />
     <PackageReference Include="Fuaran.Core.OpStream" />
   </ItemGroup>

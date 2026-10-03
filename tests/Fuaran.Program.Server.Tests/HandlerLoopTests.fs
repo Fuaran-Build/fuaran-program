@@ -91,8 +91,8 @@ let private openRegistry (record: string list ref) =
         Ok(jstr "recorded"))
     |> ServerEffectRegistry.permissive
 
-let private sources: string -> Result<Fuaran.Core.Table, Fuaran.Core.EvalError> =
-    Fuaran.Core.DataFrame.noResolve
+let private sources: string -> Result<Fuaran.Core.Table, Fuaran.Compute.EvalError> =
+    Fuaran.Compute.DataFrame.noResolve
 
 // ─── tests ───────────────────────────────────────────────────────────
 
@@ -161,7 +161,7 @@ let tests =
                             ServerEffect.RunQuery(
                                 "rows",
                                 Fuaran.Core.Embedded rows,
-                                [ Fuaran.Core.Limit(Fuaran.Core.Slot.Lit 2, Fuaran.Core.Slot.Lit 0) ]
+                                [ Fuaran.Compute.Limit(Fuaran.Compute.Slot.Lit 2, Fuaran.Compute.Slot.Lit 0) ]
                             )
                         )
                         Compute(Action.SetState("status", Some(jstr "written"), None))
@@ -221,7 +221,7 @@ let tests =
                             ServerEffect.RunQuery(
                                 "rows",
                                 Fuaran.Core.Embedded rows,
-                                [ Fuaran.Core.Limit(Fuaran.Core.Slot.Lit 2, Fuaran.Core.Slot.Lit 0) ]
+                                [ Fuaran.Compute.Limit(Fuaran.Compute.Slot.Lit 2, Fuaran.Compute.Slot.Lit 0) ]
                             )
                         ) ] }
 

@@ -64,6 +64,6 @@
     <PackageReference Include="FSharp.Core" />
     <PackageReference Include="Fuaran.Core.Wire" />
     <PackageReference Include="Fuaran.Core.Column" />
-    <PackageReference Include="Fuaran.Core.DataFrame" />
+    <PackageReference Include="Fuaran.Compute.DataFrame" />
   </ItemGroup>
 </Project>

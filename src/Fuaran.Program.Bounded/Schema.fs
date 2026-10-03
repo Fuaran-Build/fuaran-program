@@ -1,6 +1,7 @@
 namespace Fuaran.Program.Bounded
 
 open Fuaran.Core
+open Fuaran.Compute
 
 // ============================================================================
 //  The static query-schema walk, and the validator family over it.
@@ -209,6 +210,10 @@ module Schema =
         | ColExpr.InList(x, items) -> readsOfExpr x @ (items |> List.collect readsOfExpr)
         | ColExpr.IsNull x -> readsOfExpr x
         | ColExpr.InParam(x, _) -> readsOfExpr x
+        // The exact-number pair (Core-Compute 0.36.0): a rounding's scale is a
+        // literal or a parameter slot, never a column, so only the operands read.
+        | ColExpr.Quotient(a, b, _) -> readsOfExpr a @ readsOfExpr b
+        | ColExpr.Rounded(x, _) -> readsOfExpr x
 
     /// The verb's discriminator — log-safe, and the name a finding uses so a
     /// reader can find the step in the declared pipeline.

@@ -145,7 +145,7 @@ let private refreshHandler: Handler =
               ServerEffect.RunQuery(
                   "rows",
                   Fuaran.Core.Embedded rows,
-                  [ Fuaran.Core.Limit(Fuaran.Core.Slot.Lit 2, Fuaran.Core.Slot.Lit 0) ]
+                  [ Fuaran.Compute.Limit(Fuaran.Compute.Slot.Lit 2, Fuaran.Compute.Slot.Lit 0) ]
               )
           )
           Compute(Action.SetState("rows", Some(Fuaran.Core.JStr "2 rows"), None))

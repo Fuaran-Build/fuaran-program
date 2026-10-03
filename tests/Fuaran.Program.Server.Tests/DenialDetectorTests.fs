@@ -63,8 +63,8 @@ let private store: ServerStore =
     { Tree = Fuaran.markdown "root" "watched"
       Bindings = empty }
 
-let private sources: string -> Result<Fuaran.Core.Table, Fuaran.Core.EvalError> =
-    Fuaran.Core.DataFrame.noResolve
+let private sources: string -> Result<Fuaran.Core.Table, Fuaran.Compute.EvalError> =
+    Fuaran.Compute.DataFrame.noResolve
 
 /// A session's controls over a fresh in-memory stream, returned with the stream
 /// so a test can read back what was recorded.

@@ -113,7 +113,7 @@ module ServerDemanded =
     /// what an allow-list bounds, so a demanded source and a checked one cannot
     /// be two enumerations of one vocabulary. The no-wildcard forward coupling
     /// this file used to carry moved with the function; its note is there.
-    let private refsOfQuery (source: Fuaran.Core.DataSource) (pipeline: Fuaran.Core.Transform list) : string list =
+    let private refsOfQuery (source: Fuaran.Core.DataSource) (pipeline: Fuaran.Compute.Transform list) : string list =
         ServerArgumentPolicy.refsOfSource source
         @ (pipeline |> List.collect ServerArgumentPolicy.refsOfTransform)
 

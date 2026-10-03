@@ -424,7 +424,7 @@ module Undo =
         (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (registry: ServerEffectRegistry)
         (performance: OpPerformance<'Node, 'Op>)
-        (resolve: string -> Result<Fuaran.Core.Table, Fuaran.Core.EvalError>)
+        (resolve: string -> Result<Fuaran.Core.Table, Fuaran.Compute.EvalError>)
         (nodeId: string)
         (plan: UndoPlan<'Node, 'Op, 'Action>)
         (post: ServerStore<'Node, 'Store>)

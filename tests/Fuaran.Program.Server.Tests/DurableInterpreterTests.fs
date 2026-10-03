@@ -113,7 +113,7 @@ let private refreshHandler: Handler =
               ServerEffect.RunQuery(
                   "rows",
                   Fuaran.Core.Embedded rows,
-                  [ Fuaran.Core.Limit(Fuaran.Core.Slot.Lit 2, Fuaran.Core.Slot.Lit 0) ]
+                  [ Fuaran.Compute.Limit(Fuaran.Compute.Slot.Lit 2, Fuaran.Compute.Slot.Lit 0) ]
               )
           )
           Compute(Action.SetState("rows", Some(jstr "2 rows"), None))
@@ -351,7 +351,7 @@ let private runEdits
         "inv"
         registry
         performance
-        Fuaran.Core.DataFrame.noResolve
+        Fuaran.Compute.DataFrame.noResolve
         "node"
         handler
         emptyStore
@@ -565,14 +565,14 @@ let tests =
                     let registry = registryOf [ "audit", counting counter "recorded" ]
 
                     let direct =
-                        Handler.run registry Fuaran.Core.DataFrame.noResolve "node" refreshHandler emptyStore
+                        Handler.run registry Fuaran.Compute.DataFrame.noResolve "node" refreshHandler emptyStore
 
                     let durable =
                         Durable.run
                             (DurableServices.create |> DurableServices.withJournal (Journal.inMemory ()))
                             "inv"
                             registry
-                            Fuaran.Core.DataFrame.noResolve
+                            Fuaran.Compute.DataFrame.noResolve
                             "node"
                             refreshHandler
                             emptyStore
@@ -600,14 +600,14 @@ let tests =
                     let handler = twoCalls "ok" "no"
 
                     let direct =
-                        Handler.run registry Fuaran.Core.DataFrame.noResolve "node" handler emptyStore
+                        Handler.run registry Fuaran.Compute.DataFrame.noResolve "node" handler emptyStore
 
                     let durable =
                         Durable.run
                             (DurableServices.create |> DurableServices.withJournal (Journal.inMemory ()))
                             "inv"
                             registry
-                            Fuaran.Core.DataFrame.noResolve
+                            Fuaran.Compute.DataFrame.noResolve
                             "node"
                             handler
                             emptyStore
@@ -673,7 +673,7 @@ let tests =
                             services
                             "inv"
                             registry
-                            Fuaran.Core.DataFrame.noResolve
+                            Fuaran.Compute.DataFrame.noResolve
                             "node"
                             refreshHandler
                             emptyStore
@@ -683,7 +683,7 @@ let tests =
                             services
                             "inv"
                             registry
-                            Fuaran.Core.DataFrame.noResolve
+                            Fuaran.Compute.DataFrame.noResolve
                             "node"
                             refreshHandler
                             emptyStore
@@ -716,7 +716,7 @@ let tests =
                                 services
                                 "inv"
                                 (registryOf [ "first", counting first "a"; "boom", committingThenDying boom ])
-                                Fuaran.Core.DataFrame.noResolve
+                                Fuaran.Compute.DataFrame.noResolve
                                 "node"
                                 handler
                                 emptyStore)
@@ -737,7 +737,7 @@ let tests =
                             services
                             "inv"
                             (registryOf [ "first", counting first "a"; "boom", counting boom "b" ])
-                            Fuaran.Core.DataFrame.noResolve
+                            Fuaran.Compute.DataFrame.noResolve
                             "node"
                             handler
                             emptyStore
@@ -766,7 +766,7 @@ let tests =
                             services
                             "inv"
                             (registryOf [ "boom", committingThenDying boom ])
-                            Fuaran.Core.DataFrame.noResolve
+                            Fuaran.Compute.DataFrame.noResolve
                             "node"
                             handler
                             emptyStore)
@@ -779,7 +779,7 @@ let tests =
                             services
                             "inv"
                             (registryOf [ "boom", counting boom "b" ])
-                            Fuaran.Core.DataFrame.noResolve
+                            Fuaran.Compute.DataFrame.noResolve
                             "node"
                             handler
                             emptyStore
@@ -809,7 +809,7 @@ let tests =
                             services
                             "inv"
                             (registryOf [ "boom", committingThenDying boom ])
-                            Fuaran.Core.DataFrame.noResolve
+                            Fuaran.Compute.DataFrame.noResolve
                             "node"
                             handler
                             emptyStore)
@@ -820,7 +820,7 @@ let tests =
                             services
                             "inv"
                             (registryOf [ "boom", counting boom "b" ])
-                            Fuaran.Core.DataFrame.noResolve
+                            Fuaran.Compute.DataFrame.noResolve
                             "node"
                             handler
                             emptyStore
@@ -850,7 +850,7 @@ let tests =
                             services
                             "inv"
                             (registryOf [ "boom", dyingBeforeCommitting boom ])
-                            Fuaran.Core.DataFrame.noResolve
+                            Fuaran.Compute.DataFrame.noResolve
                             "node"
                             handler
                             emptyStore)
@@ -863,7 +863,7 @@ let tests =
                             services
                             "inv"
                             (registryOf [ "boom", counting boom "b" ])
-                            Fuaran.Core.DataFrame.noResolve
+                            Fuaran.Compute.DataFrame.noResolve
                             "node"
                             handler
                             emptyStore
@@ -888,7 +888,7 @@ let tests =
                         services
                         "inv"
                         (registryOf [ "alpha", counting counter "a"; "beta", counting counter "b" ])
-                        Fuaran.Core.DataFrame.noResolve
+                        Fuaran.Compute.DataFrame.noResolve
                         "node"
                         (twoCalls "alpha" "beta")
                         emptyStore
@@ -900,7 +900,7 @@ let tests =
                             services
                             "inv"
                             (registryOf [ "alpha", counting counter "a"; "beta", counting counter "b" ])
-                            Fuaran.Core.DataFrame.noResolve
+                            Fuaran.Compute.DataFrame.noResolve
                             "node"
                             (twoCalls "beta" "alpha")
                             emptyStore
@@ -924,7 +924,7 @@ let tests =
                             DurableServices.create
                             "inv"
                             registry
-                            Fuaran.Core.DataFrame.noResolve
+                            Fuaran.Compute.DataFrame.noResolve
                             "node"
                             refreshHandler
                             emptyStore
@@ -934,7 +934,7 @@ let tests =
                             DurableServices.create
                             "inv"
                             registry
-                            Fuaran.Core.DataFrame.noResolve
+                            Fuaran.Compute.DataFrame.noResolve
                             "node"
                             refreshHandler
                             emptyStore
@@ -1315,7 +1315,7 @@ let tests =
                             services
                             "inv"
                             (auditRegistry audit)
-                            Fuaran.Core.DataFrame.noResolve
+                            Fuaran.Compute.DataFrame.noResolve
                             "node"
                             editsThenAudit
                             emptyStore

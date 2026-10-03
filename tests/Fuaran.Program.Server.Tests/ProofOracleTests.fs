@@ -74,7 +74,7 @@ let private jstr (s: string) = Fuaran.Core.JStr s
 // rung, and the point of the differential is that everything ELSE is the
 // extraction.
 
-type private Query = Fuaran.Core.DataSource * Fuaran.Core.Transform list
+type private Query = Fuaran.Core.DataSource * Fuaran.Compute.Transform list
 type private Performer = Fuaran.Core.JVal -> Result<Fuaran.Core.JVal, string>
 
 type private ModelWitness =
@@ -111,9 +111,9 @@ let private modelRes (value: Result<'T, string>) : Staging.res<'T> =
 /// union rather than restated arm by arm — so a production arm whose text
 /// stopped being its name would surface here as a diagnostic divergence
 /// rather than being copied into agreement.
-let private evalErrorKind (error: Fuaran.Core.EvalError) : string =
+let private evalErrorKind (error: Fuaran.Compute.EvalError) : string =
     let case, _ =
-        Microsoft.FSharp.Reflection.FSharpValue.GetUnionFields(error, typeof<Fuaran.Core.EvalError>)
+        Microsoft.FSharp.Reflection.FSharpValue.GetUnionFields(error, typeof<Fuaran.Compute.EvalError>)
 
     case.Name
 
@@ -136,7 +136,7 @@ let private guardedWitness: UiWitness.UiProgramWitness =
 
 let private modelWitness
     (witness: UiWitness.UiProgramWitness)
-    (resolve: string -> Result<Fuaran.Core.Table, Fuaran.Core.EvalError>)
+    (resolve: string -> Result<Fuaran.Core.Table, Fuaran.Compute.EvalError>)
     : ModelWitness =
     { w_compute =
         fun nodeId action bindings ->
@@ -164,8 +164,8 @@ let private modelWitness
                 Staging.ONone
       w_query =
         fun name (source, pipeline) bindings ->
-            Fuaran.Core.DataFrame.evalSource resolve source
-            |> Result.bind (Fuaran.Core.DataFrame.evalPipelineWith resolve pipeline)
+            Fuaran.Compute.DataFrame.evalSource resolve source
+            |> Result.bind (Fuaran.Compute.DataFrame.evalPipelineWith resolve pipeline)
             |> Result.map (fun table -> witness.Dispatch.Store.LandQuery name table bindings)
             |> Result.mapError evalErrorKind
             |> modelRes
@@ -306,7 +306,7 @@ let private runModel
     (witness: UiWitness.UiProgramWitness)
     (performance: OpPerformance<Node<obj>, TreeOp<obj>>)
     (registry: ServerEffectRegistry)
-    (resolve: string -> Result<Fuaran.Core.Table, Fuaran.Core.EvalError>)
+    (resolve: string -> Result<Fuaran.Core.Table, Fuaran.Compute.EvalError>)
     (nodeId: string)
     (handler: Handler)
     (store: ServerStore)
@@ -379,7 +379,7 @@ type private StagingCase =
         /// Wraps the permissive, fully-registered registry — the gate and the
         /// constraints a case narrows with.
         Shape: ServerEffectRegistry -> ServerEffectRegistry
-        Resolve: string -> Result<Fuaran.Core.Table, Fuaran.Core.EvalError>
+        Resolve: string -> Result<Fuaran.Core.Table, Fuaran.Compute.EvalError>
         /// Whether this case registers the scripted OP performer (Phase 1967),
         /// making `ApplyOps` a staged arm; `false` is in-memory, every
         /// placement's default and the UI tier's.
@@ -527,7 +527,7 @@ let private rows: Fuaran.Core.Table =
                 Cells = [ Fuaran.Core.Int 1; Fuaran.Core.Int 2; Fuaran.Core.Int 3 ] } ] }
 
 let private limitTwo =
-    [ Fuaran.Core.Limit(Fuaran.Core.Slot.Lit 2, Fuaran.Core.Slot.Lit 0) ]
+    [ Fuaran.Compute.Limit(Fuaran.Compute.Slot.Lit 2, Fuaran.Compute.Slot.Lit 0) ]
 
 /// `HandlerLoopTests`' tree: one node the handlers address.
 let private loopTree: Node<obj> =
@@ -570,7 +570,7 @@ let private case
       Handler = { Name = name; Stages = stages }
       Store = store
       Shape = id
-      Resolve = Fuaran.Core.DataFrame.noResolve
+      Resolve = Fuaran.Compute.DataFrame.noResolve
       PerformOps = false
       Guarded = false }
 
@@ -1874,14 +1874,14 @@ let private runTripleWith
     let production =
         Handler.run
             (productionRegistry productionEvents triple)
-            Fuaran.Core.DataFrame.noResolve
+            Fuaran.Compute.DataFrame.noResolve
             "call"
             (handlerOf triple)
             loopStore
 
     let model =
         run
-            (modelWitness witness Fuaran.Core.DataFrame.noResolve)
+            (modelWitness witness Fuaran.Compute.DataFrame.noResolve)
             (gateModelRegistry modelEvents triple)
             "call"
             (triple.Stages |> List.map modelStage)
@@ -2350,7 +2350,7 @@ let private runKeyed (keying: OpKeying) (c: KeyedCase) : KeyedRun =
             witness
             registry
             performance
-            Fuaran.Core.DataFrame.noResolve
+            Fuaran.Compute.DataFrame.noResolve
             "call"
             (keyedHandler c)
             durableStore
@@ -2359,7 +2359,7 @@ let private runKeyed (keying: OpKeying) (c: KeyedCase) : KeyedRun =
 
     let model =
         Staging.run
-            (modelWitness witness Fuaran.Core.DataFrame.noResolve)
+            (modelWitness witness Fuaran.Compute.DataFrame.noResolve)
             (keyedModel keyingFor modelSide (System.Collections.Generic.List<_>()))
             "call"
             (c.Stages |> List.map modelStage)
@@ -2469,7 +2469,7 @@ let private runKeyedDurably (c: KeyedCase) : DurableKeyedRun =
           d_reinvoke = services.ReinvokeIndeterminate }
 
     let keying = if c.Contracted then KeyedOnToken else Uncontracted
-    let mw = modelWitness witness Fuaran.Core.DataFrame.noResolve
+    let mw = modelWitness witness Fuaran.Compute.DataFrame.noResolve
     let stages = c.Stages |> List.map modelStage
 
     let runProduction () =
@@ -2482,7 +2482,7 @@ let private runKeyedDurably (c: KeyedCase) : DurableKeyedRun =
             "inv"
             registry
             performance
-            Fuaran.Core.DataFrame.noResolve
+            Fuaran.Compute.DataFrame.noResolve
             "call"
             (keyedHandler c)
             durableStore
@@ -3044,7 +3044,7 @@ let effectGateTests =
                   let staged =
                       let planned =
                           Staging.plan
-                              (modelWitness witness Fuaran.Core.DataFrame.noResolve)
+                              (modelWitness witness Fuaran.Compute.DataFrame.noResolve)
                               (keyedModel KeyedOnToken (keyedSide c.Behaviour) (System.Collections.Generic.List<_>()))
                               "call"
                               (c.Stages |> List.map modelStage)

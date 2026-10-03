@@ -1,6 +1,7 @@
 namespace Fuaran.Program.Bounded
 
 open Fuaran.Core
+open Fuaran.Compute
 
 // ============================================================================
 //  The program wire — the shared half.

@@ -515,6 +515,37 @@ takes the sequence's case in each.
 
 **What a consumer does about it:** `docs/migrations/phase-1990.md` — one page, a diff per file.
 
+### Rides the draft: the substrate and the UI tier at their newest releases (2026-10-03)
+
+**Class: breaking, at the dependency floor.** The draft already carries that class, so this rides it.
+A change to the contract a package was BUILT against counts here as a change to its own contract
+(the versioning policy above). `v0.6.0` is the newest tag, and nothing public pins `0.7.0`.
+
+**The pins move:**
+- `Fuaran.UI.*`: `0.86.0` → `0.90.0`.
+- `Fuaran.Core.*`: `0.32.0` → `0.34.0`.
+- **The evaluator moves to its new id.** `Fuaran.Core.DataFrame` `0.34.0` becomes
+  `Fuaran.Compute.DataFrame` `0.37.0`, the id and namespace Core-Compute took at `0.36.0` (its
+  DECISIONS D4).
+
+These are the newest released lines, and they agree with each other: `Fuaran.UI` `0.90.0` is built
+on exactly `Fuaran.Core` `0.34.0` and `Fuaran.Compute.DataFrame` `0.37.0`.
+
+**What a consumer meets:**
+- **The evaluator's types live in `Fuaran.Compute`.** That covers `ColExpr`, `Transform`,
+  `EvalError` and `Slot` with their cases, and the `DataFrame` module itself. `DataSource`,
+  `Table`, `Cell` and the JSON types stay in `Fuaran.Core`. A file that names them adds
+  `open Fuaran.Compute`, or writes `Fuaran.Compute.` where it wrote `Fuaran.Core.`.
+- **`ServerEffect.RunQuery` takes the new types.** Its pipeline is `Fuaran.Compute.Transform list`,
+  and a query's failure is a `Fuaran.Compute.EvalError`.
+- **`ColExpr` gained `Quotient` and `Rounded`** (Core-Compute `0.36.0`). The static query-schema
+  walk reads their operands' columns. A consumer's own exhaustive match over `ColExpr` names both.
+- **A consumer of the UI adapters raises the UI tier to `0.90.0`**, since the adapters are built
+  against it.
+
+**What did NOT change:** no wire member, no fixture byte, no demanded-document byte, no proof
+statement, and no envelope needs re-signing.
+
 ## 0.6.0 — RELEASED (tagged `v0.6.0`, 2026-09-28) — the core becomes domain-generic (Phase 1896)
 
 **Class: breaking**, for `Fuaran.Program.Bounded`, `Fuaran.Program.Runtime` and

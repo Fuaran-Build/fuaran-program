@@ -530,7 +530,7 @@ let tests =
                       controls
                       "inv-0"
                       registry
-                      Fuaran.Core.DataFrame.noResolve
+                      Fuaran.Compute.DataFrame.noResolve
                       "call"
                       (auditing "done")
                       store
@@ -605,7 +605,7 @@ let tests =
                       (durableWith (Journal.inMemory ()))
                       "inv-0"
                       (registryOf uncontrolled.Performer)
-                      Fuaran.Core.DataFrame.noResolve
+                      Fuaran.Compute.DataFrame.noResolve
                       "call"
                       (auditing "done")
                       store
@@ -616,7 +616,7 @@ let tests =
                       (ControlServices.create scope)
                       "inv-0"
                       (registryOf controlled.Performer)
-                      Fuaran.Core.DataFrame.noResolve
+                      Fuaran.Compute.DataFrame.noResolve
                       "call"
                       (auditing "done")
                       store
@@ -707,7 +707,7 @@ let tests =
                           controls
                           "inv-0"
                           dying
-                          Fuaran.Core.DataFrame.noResolve
+                          Fuaran.Compute.DataFrame.noResolve
                           "call"
                           (auditing "done")
                           store
@@ -756,7 +756,7 @@ let tests =
                       controls
                       "inv-0"
                       (registryOf counter.Performer)
-                      Fuaran.Core.DataFrame.noResolve
+                      Fuaran.Compute.DataFrame.noResolve
                       "call"
                       (auditing "done")
                       store
@@ -935,7 +935,7 @@ let private runControlled
         "inv-0"
         registry
         performance
-        Fuaran.Core.DataFrame.noResolve
+        Fuaran.Compute.DataFrame.noResolve
         "call"
         handler
         store
@@ -956,7 +956,7 @@ let private runDirect
             UiWitness.witness
             (Controls.apply refusals.Add state registry)
             (Controls.performance refusals.Add state performance)
-            Fuaran.Core.DataFrame.noResolve
+            Fuaran.Compute.DataFrame.noResolve
             "call"
             handler
             store
@@ -1294,7 +1294,7 @@ let opPerformerRevocation =
                       "inv-0"
                       (registryOf (Counter()).Performer)
                       uncontrolledOps.Performance
-                      Fuaran.Core.DataFrame.noResolve
+                      Fuaran.Compute.DataFrame.noResolve
                       "call"
                       editsThenAudit
                       store
@@ -1324,7 +1324,7 @@ let opPerformerRevocation =
                       UiWitness.witness
                       (registryOf (Counter()).Performer)
                       (OpCounter()).Performance
-                      Fuaran.Core.DataFrame.noResolve
+                      Fuaran.Compute.DataFrame.noResolve
                       "call"
                       editsThenAudit
                       store

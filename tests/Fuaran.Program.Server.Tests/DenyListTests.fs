@@ -51,8 +51,8 @@ let private tree: Node<obj> =
 
 let private store: ServerStore = { Tree = tree; Bindings = empty }
 
-let private sources: string -> Result<Fuaran.Core.Table, Fuaran.Core.EvalError> =
-    Fuaran.Core.DataFrame.noResolve
+let private sources: string -> Result<Fuaran.Core.Table, Fuaran.Compute.EvalError> =
+    Fuaran.Compute.DataFrame.noResolve
 
 /// The names that exist BEFORE the run — the only universe an allow-list
 /// standing in for a lock could be computed over.

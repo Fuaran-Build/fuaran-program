@@ -10,6 +10,7 @@ namespace Fuaran.Program.Server.UI
 // ============================================================================
 
 open Fuaran.Core
+open Fuaran.Compute
 open Fuaran.UI.Types
 open Fuaran.UI.Ops.Types
 open Fuaran.UI.Renderer.BindingResolver

@@ -11,6 +11,7 @@ module Fuaran.Program.Tests.FlowDecisionTests
 
 open Expecto
 open Fuaran.Core
+open Fuaran.Compute
 open Fuaran.Program.Bounded
 open Fuaran.Program.Server
 

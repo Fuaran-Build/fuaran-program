@@ -52,7 +52,7 @@ namespace Fuaran.Program.Server
 type ServerEffect<'Op> =
     /// Evaluate `pipeline` over `source` and land the resulting table in the
     /// session's query slot `name`. A read: it touches no domain state.
-    | RunQuery of name: string * source: Fuaran.Core.DataSource * pipeline: Fuaran.Core.Transform list
+    | RunQuery of name: string * source: Fuaran.Core.DataSource * pipeline: Fuaran.Compute.Transform list
     /// Apply a `TreeOp` sequence to the domain tree through the apply engine.
     /// **The only domain-state mutation in the whole placement.**
     | ApplyOps of ops: 'Op list
@@ -401,22 +401,22 @@ module ServerArgumentPolicy =
     /// could see, so the arms are enumerated and there is deliberately no
     /// wildcard: raising the substrate pin surfaces a new source-bearing arm as
     /// an incomplete-match warning against a gate that runs at zero warnings.
-    let internal refsOfTransform (transform: Fuaran.Core.Transform) : string list =
+    let internal refsOfTransform (transform: Fuaran.Compute.Transform) : string list =
         match transform with
-        | Fuaran.Core.Join(source, _, _) -> refsOfSource source
-        | Fuaran.Core.Union source
-        | Fuaran.Core.Intersect source
-        | Fuaran.Core.Except source -> refsOfSource source
-        | Fuaran.Core.Filter _
-        | Fuaran.Core.Project _
-        | Fuaran.Core.Derive _
-        | Fuaran.Core.GroupBy _
-        | Fuaran.Core.Window _
-        | Fuaran.Core.Pivot _
-        | Fuaran.Core.Unpivot _
-        | Fuaran.Core.Sort _
-        | Fuaran.Core.Distinct
-        | Fuaran.Core.Limit _ -> []
+        | Fuaran.Compute.Join(source, _, _) -> refsOfSource source
+        | Fuaran.Compute.Union source
+        | Fuaran.Compute.Intersect source
+        | Fuaran.Compute.Except source -> refsOfSource source
+        | Fuaran.Compute.Filter _
+        | Fuaran.Compute.Project _
+        | Fuaran.Compute.Derive _
+        | Fuaran.Compute.GroupBy _
+        | Fuaran.Compute.Window _
+        | Fuaran.Compute.Pivot _
+        | Fuaran.Compute.Unpivot _
+        | Fuaran.Compute.Sort _
+        | Fuaran.Compute.Distinct
+        | Fuaran.Compute.Limit _ -> []
 
     /// The effect's named arguments, as `argument, value` pairs.
     ///

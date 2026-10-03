@@ -6,7 +6,7 @@
     <!-- Fable client tier — consumed only by samples/, never by a shipping package. -->
     <PackageVersion Include="Fable.Core" Version="5.0" />
     <PackageVersion Include="Feliz" Version="3.3.3" />
-    <PackageVersion Include="Fuaran.UI.Renderer" Version="0.86.0" />
+    <PackageVersion Include="Fuaran.UI.Renderer" Version="0.90.0" />
     <!-- The substrate, pinned DIRECTLY (Phase 1896). The core packages reference
          no UI-tier package, so what they use of the substrate they name
          themselves: the JSON value and canonical form (Wire), the columnar
@@ -15,9 +15,11 @@
          (OpStream). Until Phase 1896 every one of these arrived only
          transitively, through the UI tier.
 
-         The evaluator is pinned at the current Core-Compute release, 0.34.0,
-         and the rest of the substrate at the 0.32.0 it declares — exactly the
-         versions the UI-tier pin below (0.86.0) was built on. That match is
+         The evaluator is pinned at the current Core-Compute release, 0.37.0,
+         under the id it took at 0.36.0 (`Fuaran.Compute.DataFrame`, namespace
+         `Fuaran.Compute`: Core-Compute's DECISIONS D4), and the rest of the
+         substrate at the 0.34.0 it declares — exactly the versions the
+         UI-tier pin below (0.90.0) was built on. That match is
          the point, not a coincidence: this repository's UI adapter shares
          this restore graph, and under Fable it compiles the UI tier FROM
          SOURCE against these very versions, so the substrate and the UI tier
@@ -27,11 +29,11 @@
          docs/runquery-benchmark.md. Every version here is one the PUBLIC
          restore path serves exactly — `tools/check-pins.ps1` refuses anything
          else. -->
-    <PackageVersion Include="Fuaran.Core.Wire" Version="0.32.0" />
-    <PackageVersion Include="Fuaran.Core.Column" Version="0.32.0" />
-    <PackageVersion Include="Fuaran.Core.DataFrame" Version="0.34.0" />
-    <PackageVersion Include="Fuaran.Core.Tree" Version="0.32.0" />
-    <PackageVersion Include="Fuaran.Core.OpStream" Version="0.32.0" />
+    <PackageVersion Include="Fuaran.Core.Wire" Version="0.34.0" />
+    <PackageVersion Include="Fuaran.Core.Column" Version="0.34.0" />
+    <PackageVersion Include="Fuaran.Compute.DataFrame" Version="0.37.0" />
+    <PackageVersion Include="Fuaran.Core.Tree" Version="0.34.0" />
+    <PackageVersion Include="Fuaran.Core.OpStream" Version="0.34.0" />
     <!-- The UI tier — the first host instantiation consumes its types by
          PackageReference off the local feed / nuget.org (DECISIONS.md D4). The
          dependency runs ONE WAY: nothing in the UI tier references back, which
@@ -71,12 +73,12 @@
          merely NAMES the token is quoted in place of the marker that follows,
          and the attribution a reader is shown is a fragment of the wrong
          sentence. Observed here before this wording. -->
-    <PackageVersion Include="Fuaran.UI" Version="0.86.0" />
-    <PackageVersion Include="Fuaran.UI.Ops" Version="0.86.0" />
-    <PackageVersion Include="Fuaran.UI.Ops.Abstractions" Version="0.86.0" />
-    <PackageVersion Include="Fuaran.UI.OpStream.Abstractions" Version="0.86.0" />
-    <PackageVersion Include="Fuaran.UI.OpStream.Replay" Version="0.86.0" />
-    <PackageVersion Include="Fuaran.UI.Renderer.Core" Version="0.86.0" />
-    <PackageVersion Include="Fuaran.UI.ServerDriven" Version="0.86.0" />
+    <PackageVersion Include="Fuaran.UI" Version="0.90.0" />
+    <PackageVersion Include="Fuaran.UI.Ops" Version="0.90.0" />
+    <PackageVersion Include="Fuaran.UI.Ops.Abstractions" Version="0.90.0" />
+    <PackageVersion Include="Fuaran.UI.OpStream.Abstractions" Version="0.90.0" />
+    <PackageVersion Include="Fuaran.UI.OpStream.Replay" Version="0.90.0" />
+    <PackageVersion Include="Fuaran.UI.Renderer.Core" Version="0.90.0" />
+    <PackageVersion Include="Fuaran.UI.ServerDriven" Version="0.90.0" />
   </ItemGroup>
 </Project>

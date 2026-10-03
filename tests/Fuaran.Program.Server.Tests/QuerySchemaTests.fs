@@ -129,7 +129,7 @@ let private coversEverything: HostCoverage =
     |> HostCoverage.withEffects [ "Navigate"; "WriteToClipboard"; "ReadFileBody" ]
     |> HostCoverage.permissive
 
-let private handlerWith (name: string) (slot: string) (pipeline: Fuaran.Core.Transform list) : Handler =
+let private handlerWith (name: string) (slot: string) (pipeline: Fuaran.Compute.Transform list) : Handler =
     { Name = name
       Stages = [ Effect(ServerEffect.RunQuery(slot, embedded, pipeline)) ] }
 
@@ -155,7 +155,7 @@ let private derivationTests =
                   Schema.ofPipeline
                       SourceSchemas.none
                       embedded
-                      [ Fuaran.Core.Transform.Project [ "total", "amount"; "id", "id" ] ]
+                      [ Fuaran.Compute.Transform.Project [ "total", "amount"; "id", "id" ] ]
 
               Expect.equal (closedNames knowledge) [ "amount"; "id" ] "projected names"
               Expect.equal (Schema.typeOf "amount" knowledge) (Some Fuaran.Core.FloatType) "renamed type carries over"
@@ -166,7 +166,7 @@ let private derivationTests =
                   Schema.ofPipeline
                       SourceSchemas.none
                       embedded
-                      [ Fuaran.Core.Transform.Derive("doubled", Fuaran.Core.ColExpr.Col "total") ]
+                      [ Fuaran.Compute.Transform.Derive("doubled", Fuaran.Compute.ColExpr.Col "total") ]
 
               Expect.equal (closedNames knowledge) [ "id"; "total"; "region"; "doubled" ] "appended"
               // The evaluator infers the type from the cells the expression
@@ -180,7 +180,7 @@ let private derivationTests =
                   Schema.ofPipeline
                       SourceSchemas.none
                       embedded
-                      [ Fuaran.Core.Transform.GroupBy(
+                      [ Fuaran.Compute.Transform.GroupBy(
                             [ "region" ],
                             [ { Name = "n"
                                 Fn = Fuaran.Core.Count
@@ -204,8 +204,8 @@ let private derivationTests =
                   Schema.ofPipeline
                       SourceSchemas.none
                       embedded
-                      [ Fuaran.Core.Transform.Derive("tag", Fuaran.Core.ColExpr.Col "region")
-                        Fuaran.Core.Transform.GroupBy(
+                      [ Fuaran.Compute.Transform.Derive("tag", Fuaran.Compute.ColExpr.Col "region")
+                        Fuaran.Compute.Transform.GroupBy(
                             [ "region" ],
                             [ { Name = "tags"
                                 Fn = Fuaran.Core.CountDistinct
@@ -218,7 +218,7 @@ let private derivationTests =
                       (Schema.ofPipeline
                           SourceSchemas.none
                           embedded
-                          [ Fuaran.Core.Transform.Derive("tag", Fuaran.Core.ColExpr.Col "region") ]))
+                          [ Fuaran.Compute.Transform.Derive("tag", Fuaran.Compute.ColExpr.Col "region") ]))
                   "the source column really is untyped, so the aggregate arm under test is the one that runs"
 
               Expect.equal (closedNames knowledge) [ "region"; "tags" ] "grouped names"
@@ -230,10 +230,10 @@ let private derivationTests =
                   Schema.ofPipeline
                       SourceSchemas.none
                       embedded
-                      [ Fuaran.Core.Transform.Window
+                      [ Fuaran.Compute.Transform.Window
                             { PartitionBy = [ "region" ]
-                              OrderBy = [ "total", Fuaran.Core.Desc ]
-                              Fn = Fuaran.Core.RowNumber
+                              OrderBy = [ "total", Fuaran.Compute.Desc ]
+                              Fn = Fuaran.Compute.RowNumber
                               Of = "total"
                               As = "rank" } ]
 
@@ -247,15 +247,15 @@ let private derivationTests =
               // resolving it, so a check that required it would refuse a
               // handler that runs perfectly well — which is what a wildcard
               // arm would have done the moment this case arrived.
-              let spec: Fuaran.Core.WindowSpec =
+              let spec: Fuaran.Compute.WindowSpec =
                   { PartitionBy = [ "region" ]
-                    OrderBy = [ "total", Fuaran.Core.Desc ]
-                    Fn = Fuaran.Core.CompetitionRank
+                    OrderBy = [ "total", Fuaran.Compute.Desc ]
+                    Fn = Fuaran.Compute.CompetitionRank
                     Of = "no-such-column"
                     As = "place" }
 
               let knowledge =
-                  Schema.ofPipeline SourceSchemas.none embedded [ Fuaran.Core.Transform.Window spec ]
+                  Schema.ofPipeline SourceSchemas.none embedded [ Fuaran.Compute.Transform.Window spec ]
 
               Expect.equal (closedNames knowledge) [ "id"; "total"; "region"; "place" ] "windowed names"
 
@@ -265,12 +265,12 @@ let private derivationTests =
                   "SQL RANK() is an int, like the ranking family it joined"
 
               Expect.isEmpty
-                  (Schema.readsOfTransform (Fuaran.Core.Transform.Window spec))
+                  (Schema.readsOfTransform (Fuaran.Compute.Transform.Window spec))
                   "a ranking window is computed from the ORDER key alone"
           }
 
           test "an Except takes the left schema through, and a finding can name it" {
-              let step = Fuaran.Core.Transform.Except(Fuaran.Core.DataSource.Embedded orders)
+              let step = Fuaran.Compute.Transform.Except(Fuaran.Core.DataSource.Embedded orders)
 
               let knowledge = Schema.ofPipeline SourceSchemas.none embedded [ step ]
 
@@ -285,7 +285,10 @@ let private derivationTests =
 
           test "Unpivot closes to the id columns plus the melted pair" {
               let knowledge =
-                  Schema.ofPipeline SourceSchemas.none embedded [ Fuaran.Core.Transform.Unpivot([ "id" ], [ "total" ]) ]
+                  Schema.ofPipeline
+                      SourceSchemas.none
+                      embedded
+                      [ Fuaran.Compute.Transform.Unpivot([ "id" ], [ "total" ]) ]
 
               Expect.equal (closedNames knowledge) [ "id"; "variable"; "value" ] "melted names"
               Expect.equal (Schema.typeOf "variable" knowledge) (Some Fuaran.Core.StringType) "the label is a string"
@@ -303,10 +306,10 @@ let private derivationTests =
                   Schema.ofPipeline
                       SourceSchemas.none
                       embedded
-                      [ Fuaran.Core.Transform.Join(
+                      [ Fuaran.Compute.Transform.Join(
                             Fuaran.Core.DataSource.Embedded right,
                             [ "id", "id" ],
-                            Fuaran.Core.Inner
+                            Fuaran.Compute.Inner
                         ) ]
 
               Expect.equal
@@ -320,7 +323,7 @@ let private derivationTests =
                   Schema.ofPipeline
                       SourceSchemas.none
                       embedded
-                      [ Fuaran.Core.Transform.Pivot
+                      [ Fuaran.Compute.Transform.Pivot
                             { Index = [ "id" ]
                               On = "region"
                               Values = "total"
@@ -413,11 +416,11 @@ let private readerTests =
 
 /// A pipeline that keeps only `id` — so a reader wanting `total` cannot be
 /// satisfied, and nothing in the pipeline itself is wrong.
-let private dropsTotal = [ Fuaran.Core.Transform.Project [ "id", "id" ] ]
+let private dropsTotal = [ Fuaran.Compute.Transform.Project [ "id", "id" ] ]
 
 /// A pipeline that names a column its source does not carry — the runtime's
 /// `UnknownColumn`, waiting to happen.
-let private readsMissing = [ Fuaran.Core.Transform.Project [ "missing", "x" ] ]
+let private readsMissing = [ Fuaran.Compute.Transform.Project [ "missing", "x" ] ]
 
 let private refusalTests =
     testList
@@ -457,7 +460,10 @@ let private refusalTests =
 
               let services =
                   servicesWith (
-                      handlerWith "orders" "orders" [ Fuaran.Core.Transform.Project [ "id", "id"; "total", "total" ] ]
+                      handlerWith
+                          "orders"
+                          "orders"
+                          [ Fuaran.Compute.Transform.Project [ "id", "id"; "total", "total" ] ]
                   )
 
               match ServerSession.initStrict coversEverything services empty (wireOf tree) with
@@ -527,7 +533,7 @@ let private refusalTests =
                       handlerWith
                           "orders"
                           "orders"
-                          [ Fuaran.Core.Transform.Union(Fuaran.Core.DataSource.Embedded reordered) ]
+                          [ Fuaran.Compute.Transform.Union(Fuaran.Core.DataSource.Embedded reordered) ]
                   )
 
               match ServerSession.initStrict coversEverything services empty (wireOf tree) with
@@ -553,7 +559,7 @@ let private honestyTests =
                       handlerWith
                           "orders"
                           "orders"
-                          [ Fuaran.Core.Transform.Pivot
+                          [ Fuaran.Compute.Transform.Pivot
                                 { Index = [ "id" ]
                                   On = "region"
                                   Values = "total"
@@ -585,7 +591,7 @@ let private honestyTests =
                             ServerEffect.RunQuery(
                                 "orders",
                                 Fuaran.Core.DataSource.Ref "orders",
-                                [ Fuaran.Core.Transform.Project [ "id", "id" ] ]
+                                [ Fuaran.Compute.Transform.Project [ "id", "id" ] ]
                             )
                         ) ] }
 
@@ -608,7 +614,7 @@ let private honestyTests =
               let tree = page [ grid "grid" "orders" [ Some "id"; None ] ]
 
               let services =
-                  servicesWith (handlerWith "orders" "orders" [ Fuaran.Core.Transform.Project [ "id", "id" ] ])
+                  servicesWith (handlerWith "orders" "orders" [ Fuaran.Compute.Transform.Project [ "id", "id" ] ])
 
               let report = ServerSession.querySchemaReport services (wireOf tree)
               Expect.isEmpty report.Findings "the declared field is satisfied"

@@ -15,6 +15,7 @@ module Fuaran.Program.Tests.DocWitnessTests
 
 open Expecto
 open Fuaran.Core
+open Fuaran.Compute
 open Fuaran.Program.Bounded
 open Fuaran.Program.Server
 open Fuaran.Program.Tests.DocDomain

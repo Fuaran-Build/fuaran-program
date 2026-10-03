@@ -53,8 +53,8 @@ let private tree: Node<obj> =
 
 let private store: ServerStore = { Tree = tree; Bindings = empty }
 
-let private sources: string -> Result<Fuaran.Core.Table, Fuaran.Core.EvalError> =
-    Fuaran.Core.DataFrame.noResolve
+let private sources: string -> Result<Fuaran.Core.Table, Fuaran.Compute.EvalError> =
+    Fuaran.Compute.DataFrame.noResolve
 
 /// A host call to `fetch` carrying `url` — the shape the whole phase is about:
 /// an argument a generated tree can put a value into, under a capability a host
@@ -234,7 +234,7 @@ let tests =
                                   ServerEffect.RunQuery(
                                       "slot",
                                       Fuaran.Core.Ref "orders",
-                                      [ Fuaran.Core.Union(Fuaran.Core.Ref "payroll") ]
+                                      [ Fuaran.Compute.Union(Fuaran.Core.Ref "payroll") ]
                                   )
                               ) ] }
 

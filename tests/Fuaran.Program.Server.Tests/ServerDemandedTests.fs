@@ -155,7 +155,7 @@ let tests =
                                 ServerEffect.RunQuery(
                                     "rows",
                                     Fuaran.Core.Ref "orders",
-                                    [ Fuaran.Core.Union(Fuaran.Core.Ref "archive"); Fuaran.Core.Distinct ]
+                                    [ Fuaran.Compute.Union(Fuaran.Core.Ref "archive"); Fuaran.Compute.Distinct ]
                                 )
                             ) ]
                   )
@@ -184,7 +184,7 @@ let tests =
                                 ServerEffect.RunQuery(
                                     "rows",
                                     Fuaran.Core.Ref "orders",
-                                    [ Fuaran.Core.Except(Fuaran.Core.Ref "cancelled") ]
+                                    [ Fuaran.Compute.Except(Fuaran.Core.Ref "cancelled") ]
                                 )
                             ) ]
                   )

@@ -4,6 +4,7 @@ module Fuaran.Program.Tests.SchemaClockTests
 
 open Expecto
 open Fuaran.Core
+open Fuaran.Compute
 open Fuaran.Program.Bounded
 
 [<Tests>]

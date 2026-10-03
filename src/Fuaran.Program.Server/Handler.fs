@@ -382,19 +382,19 @@ module Handler =
 
     /// The discriminator of a pipeline-evaluation failure. Deliberately not the
     /// full error: see `ServerDiagnostic.Failed`.
-    let private evalErrorKind (error: Fuaran.Core.EvalError) : string =
+    let private evalErrorKind (error: Fuaran.Compute.EvalError) : string =
         match error with
-        | Fuaran.Core.UnknownColumn _ -> "UnknownColumn"
-        | Fuaran.Core.TypeError _ -> "TypeError"
-        | Fuaran.Core.AggError _ -> "AggError"
-        | Fuaran.Core.JoinError _ -> "JoinError"
-        | Fuaran.Core.ArityError _ -> "ArityError"
-        | Fuaran.Core.UnresolvedSource _ -> "UnresolvedSource"
-        | Fuaran.Core.OverflowError _ -> "OverflowError"
-        | Fuaran.Core.UnboundParam _ -> "UnboundParam"
+        | Fuaran.Compute.UnknownColumn _ -> "UnknownColumn"
+        | Fuaran.Compute.TypeError _ -> "TypeError"
+        | Fuaran.Compute.AggError _ -> "AggError"
+        | Fuaran.Compute.JoinError _ -> "JoinError"
+        | Fuaran.Compute.ArityError _ -> "ArityError"
+        | Fuaran.Compute.UnresolvedSource _ -> "UnresolvedSource"
+        | Fuaran.Compute.OverflowError _ -> "OverflowError"
+        | Fuaran.Compute.UnboundParam _ -> "UnboundParam"
         // The evaluator's clock read with no pinned evaluation instant
         // (Core-Compute 0.34.0).
-        | Fuaran.Core.UnpinnedClock _ -> "UnpinnedClock"
+        | Fuaran.Compute.UnpinnedClock _ -> "UnpinnedClock"
 
     let private halt
         (capability: string)
@@ -620,7 +620,7 @@ module Handler =
         (channel: StoreWitness<'Store> option)
         (registry: ServerEffectRegistry)
         (performance: OpPerformance<'Node, 'Op>)
-        (resolve: string -> Result<Fuaran.Core.Table, Fuaran.Core.EvalError>)
+        (resolve: string -> Result<Fuaran.Core.Table, Fuaran.Compute.EvalError>)
         (effect: ServerEffect<'Op>)
         (acc: Accumulator<'Node, 'Store, 'Op, 'Effect, 'Action>)
         : Accumulator<'Node, 'Store, 'Op, 'Effect, 'Action> =
@@ -683,8 +683,8 @@ module Handler =
                     | None -> halt capability NoBindingChannel acc
                     | Some store ->
                         let evaluated =
-                            Fuaran.Core.DataFrame.evalSource resolve source
-                            |> Result.bind (Fuaran.Core.DataFrame.evalPipelineWith resolve pipeline)
+                            Fuaran.Compute.DataFrame.evalSource resolve source
+                            |> Result.bind (Fuaran.Compute.DataFrame.evalPipelineWith resolve pipeline)
 
                         match evaluated with
                         | Error err -> halt capability (evalErrorKind err) acc
@@ -788,7 +788,7 @@ module Handler =
         (compute: string -> 'Action -> 'Store -> BoundedOutcome<'Store, 'Effect> * Trace)
         (registry: ServerEffectRegistry)
         (performance: OpPerformance<'Node, 'Op>)
-        (resolve: string -> Result<Fuaran.Core.Table, Fuaran.Core.EvalError>)
+        (resolve: string -> Result<Fuaran.Core.Table, Fuaran.Compute.EvalError>)
         (nodeId: string)
         (stage: HandlerStage<'Action, 'Op>)
         (acc: Accumulator<'Node, 'Store, 'Op, 'Effect, 'Action>)
@@ -889,7 +889,7 @@ module Handler =
         (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (registry: ServerEffectRegistry)
         (performance: OpPerformance<'Node, 'Op>)
-        (resolve: string -> Result<Fuaran.Core.Table, Fuaran.Core.EvalError>)
+        (resolve: string -> Result<Fuaran.Core.Table, Fuaran.Compute.EvalError>)
         (nodeId: string)
         (handler: Handler<'Action, 'Op>)
         (store: ServerStore<'Node, 'Store>)
@@ -982,7 +982,7 @@ module Handler =
         (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (registry: ServerEffectRegistry)
         (performance: OpPerformance<'Node, 'Op>)
-        (resolve: string -> Result<Fuaran.Core.Table, Fuaran.Core.EvalError>)
+        (resolve: string -> Result<Fuaran.Core.Table, Fuaran.Compute.EvalError>)
         (nodeId: string)
         (handler: Handler<'Action, 'Op>)
         (store: ServerStore<'Node, 'Store>)
@@ -996,7 +996,7 @@ module Handler =
     let run
         (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (registry: ServerEffectRegistry)
-        (resolve: string -> Result<Fuaran.Core.Table, Fuaran.Core.EvalError>)
+        (resolve: string -> Result<Fuaran.Core.Table, Fuaran.Compute.EvalError>)
         (nodeId: string)
         (handler: Handler<'Action, 'Op>)
         (store: ServerStore<'Node, 'Store>)

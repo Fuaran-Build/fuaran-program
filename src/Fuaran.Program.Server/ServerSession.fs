@@ -84,7 +84,7 @@ type ServerServices<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect> =
         OpPerformance: OpPerformance<'Node, 'Op>
         /// Resolves a named data source for `ServerEffect.RunQuery`. Defaults to
         /// refusing every name, so a host that wires no data serves no query.
-        Sources: string -> Result<Fuaran.Core.Table, Fuaran.Core.EvalError>
+        Sources: string -> Result<Fuaran.Core.Table, Fuaran.Compute.EvalError>
         /// The SCHEMAS of those named sources, declared here beside the resolver
         /// that serves their rows. Read only by the pre-execution query-schema
         /// walk, never by the loop: a `Ref`'s rows are host-side by design, so
@@ -117,7 +117,7 @@ module ServerServices =
           Handlers = Map.empty
           Effects = ServerEffectRegistry.denyAll
           OpPerformance = OpPerformance.InMemory
-          Sources = Fuaran.Core.DataFrame.noResolve
+          Sources = Fuaran.Compute.DataFrame.noResolve
           SourceSchemas = SourceSchemas.none
           OnApply = ignore
           Budget = InteractionBudget.defaults }
@@ -257,7 +257,7 @@ module ServerSession =
     /// handlers RUN, never which are correct.
     let private declaredQueries
         (services: ServerServices<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
-        : (QueryOrigin * Fuaran.Core.DataSource * Fuaran.Core.Transform list) list =
+        : (QueryOrigin * Fuaran.Core.DataSource * Fuaran.Compute.Transform list) list =
         services.Handlers
         |> Map.toList
         |> List.collect (fun (_, handler) ->
