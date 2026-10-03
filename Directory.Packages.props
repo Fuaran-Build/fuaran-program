@@ -51,7 +51,7 @@
          assembly-reference errors naming nothing. `tools/check-pins.ps1` runs
          before the build and now refuses both shapes.
 
-         The family is pinned at 0.86.0 — the newest version every one of these
+         The family is pinned at 0.90.0 — the newest version every one of these
          eight ids is served at by the PUBLIC restore path, checked against the
          registry's own index rather than against a local feed. That distinction
          is the point: this package set publishes, so a consumer restoring it
