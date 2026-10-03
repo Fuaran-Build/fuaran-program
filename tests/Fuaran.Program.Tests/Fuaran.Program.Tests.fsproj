@@ -36,6 +36,7 @@
     <Compile Include="EachTests.fs" />
     <Compile Include="HandlerDocumentTests.fs" />
     <Compile Include="AtMostTests.fs" />
+    <Compile Include="ToyWireConformanceTests.fs" />
     <Compile Include="CoreBoundaryTests.fs" />
     <Compile Include="SchemaClockTests.fs" />
     <Compile Include="Program.fs" />
