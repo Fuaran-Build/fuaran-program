@@ -19,7 +19,7 @@ records, per version slot, what a consumer pays to adopt it and why.
 This document starts at `0.6.0`. The slots before it are recorded where they were cut, in the
 comments beside `<Version>` in `Directory.Build.props`, and are not restated here.
 
-## 0.7.0 — DRAFT (untagged, unreleased) — what the second witness found (Phase 1967)
+## 0.7.0 — RELEASED (tagged `v0.7.0`, 2026-10-03) — what the second witness found (Phase 1967)
 
 **Class: breaking**, for `Fuaran.Program.Bounded` and `Fuaran.Program.Server`, and for every
 consumer that constructs a witness. `v0.6.0` is tagged, so this cannot ride it.
