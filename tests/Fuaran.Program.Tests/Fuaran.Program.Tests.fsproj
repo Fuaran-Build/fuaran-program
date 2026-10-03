@@ -40,6 +40,7 @@
          from the UI-typed parity suite so the evidence stays when the UI
          adapters leave. -->
     <Compile Include="ToyBoundedFoldOracleTests.fs" />
+    <Compile Include="ToyBudgetOracleTests.fs" />
     <Compile Include="CoreBoundaryTests.fs" />
     <Compile Include="SchemaClockTests.fs" />
     <Compile Include="Program.fs" />
