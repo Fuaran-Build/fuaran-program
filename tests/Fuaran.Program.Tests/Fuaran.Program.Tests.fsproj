@@ -36,6 +36,9 @@
     <Compile Include="EachTests.fs" />
     <Compile Include="HandlerDocumentTests.fs" />
     <Compile Include="AtMostTests.fs" />
+    <!-- fuaran#2017: the proved staging, undo and effect gate as oracles at
+         the toy witness, beside production. -->
+    <Compile Include="ToyStagingOracleTests.fs" />
     <Compile Include="CoreBoundaryTests.fs" />
     <Compile Include="SchemaClockTests.fs" />
     <Compile Include="Program.fs" />
