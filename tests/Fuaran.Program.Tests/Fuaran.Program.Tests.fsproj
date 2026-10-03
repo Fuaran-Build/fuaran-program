@@ -36,6 +36,10 @@
     <Compile Include="EachTests.fs" />
     <Compile Include="HandlerDocumentTests.fs" />
     <Compile Include="AtMostTests.fs" />
+    <!-- fuaran#2017: the proof differentials at the toy witness, re-hosted
+         from the UI-typed parity suite so the evidence stays when the UI
+         adapters leave. -->
+    <Compile Include="ToyBoundedFoldOracleTests.fs" />
     <Compile Include="CoreBoundaryTests.fs" />
     <Compile Include="SchemaClockTests.fs" />
     <Compile Include="Program.fs" />
