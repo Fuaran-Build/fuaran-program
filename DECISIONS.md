@@ -1887,7 +1887,7 @@ handler that would genuinely benefit lands as a finding against `ui_view_no_flow
 ## D30 — Program certifies its wire format over a non-UI witness: the toy is a specification subject with a scenario family of its own, a second obligation lets a trace record a handler run, and a family selection says which families a run certifies (2026-10-03)
 
 **2026-10-03. fuaran#2011, the first of the phases that move the UI adapters out of this repository
-(fuaran#2012 moves them). Specification side: `PROGRAM_WIRE.md` §10.6, the four `toy-*` schemas, the
+(fuaran#2012 moved them: D32). Specification side: `PROGRAM_WIRE.md` §10.6, the four `toy-*` schemas, the
 `driver-semantics-toy` scenarios and the checker's toy branch. No package moves: everything on this
 side is in `tests/`, so `STABILITY.md` is untouched and no version advances.**
 
@@ -1948,15 +1948,16 @@ scope agrees, and a test holds the corpus and the seeds equal.
 `run.ps1 -Families`) selects the families a run certifies; an undeclared name fails the run. Every
 suite that reads a family consults it and skips a deselected family by name — except the server
 suite, whose two UI-family legs read the parity loader unconditionally and are UI-typed, so they
-leave with the adapters in fuaran#2012. That exception is RECORDED, not hidden: `ToyFamilyTests`
+left with the adapters in fuaran#2012 (D32). That exception is RECORDED, not hidden: `ToyFamilyTests`
 holds the table of which families each suite certifies and which suite ignores the selection, and
 checks both against the suites' own sources, so a suite that starts or stops reading a family, or
 consulting the selection, without the table saying so goes red. On a toy-alone run the gate is green,
 the parity suite, the proof host's UI corpus and the Fable leg's UI half skip by name, and the server
 suite still exercises the UI family — which is the one sense in which "the toy family alone" is not
-yet the whole gate, and the one fuaran#2012 closes. (Amended by D31, fuaran#2017: those legs, and the
+yet the whole gate, and the one fuaran#2012 closed (D32: the server suite left, and the table's
+exception with it). (Amended by D31, fuaran#2017: those legs, and the
 proof hosts and codec certification beside them, are no longer the only certification of anything this
-repository keeps — the core's evidence is re-hosted at the toy witness, so what fuaran#2012 moves is the
+repository keeps — the core's evidence is re-hosted at the toy witness, so what fuaran#2012 moved is the
 UI adapter's own evidence and nothing Program must keep.)
 
 **6. The UI family's loader reads its own family only.** `FixtureIo.scenarios` and the Fable leg's
@@ -1995,7 +1996,7 @@ The toy's apply is total and its witness has no guard, so the hosts COMPOSE what
 a strict apply refusing a relabel of an absent node, a view making check relabels `Require`, an `Undo`
 classing them one-way and one relabel a declared compensation. The toy witness itself is unchanged —
 its `Encode` shapes are digests other tests pin. Each claim in `proofs.json` names its toy host; the
-UI copies still run where they were until fuaran#2012 moves them, and are no longer any claim's host.
+UI copies ran where they were until fuaran#2012 moved them (D32), and were no longer any claim's host.
 
 **2. The proof leg runs several hosts per module.** `proofs/check.ps1` gives each module a list of
 hosts, the toy host first; a module whose model also describes UI-adapter code keeps its UI host
@@ -2036,4 +2037,72 @@ reference, and requires the guard to see it.
 **What this forecloses, and what it leaves.** It does not move anything out of the repository; that is
 fuaran#2012's, and its precondition is now met for the core's evidence. The UI-witness claims above
 still compile `proofs/oracle`, so moving their hosts is a decision fuaran#2012 has to take about the
-UI half of the models; this decision does not take it.
+UI half of the models; this decision does not take it. (fuaran#2012 took it, D32: the two claims moved
+with the adapters, over byte copies of the models and their extractions, and this repository's leg still
+checks the models.)
+
+## D32 — The UI adapters live in the UI tier's repository, which depends on this core's released packages; this repository pins, declares and names no UI-tier package; supersedes `docs/generic-tier.md` §4's option A (2026-10-04)
+
+**2026-10-04. fuaran#2012, after fuaran#2011 (D30) and fuaran#2017 (D31). Supersedes the ratification of
+option A recorded in `docs/generic-tier.md` §4 (2026-09-27). Breaking for this repository's package set:
+two packages leave it. The four core packages are unchanged and keep 0.7.1.**
+
+**What moved.** `Fuaran.Program.UI` and `Fuaran.Program.Server.UI` — the UI witness, the pre-0.6.0
+aliases over the generic core, the UI transport loop and the server placement's UI instantiation —
+moved to the UI tier's repository, file for file, under the same package ids (re-homing D6). So did
+every suite that was UI-typed: the bounded, runtime, server and parity suites, the parity project, the
+RunQuery benchmark, the UI-vocabulary family's Fable leg and the `client-program` sample. They take
+that repository's lockstep version from their first release there, so the version line jumps from
+0.7.1 to that tier's; 0.7.1 is the last version of either published from this repository. They consume
+this core by PACKAGE, at its released 0.7.1, and never by project reference.
+
+**Why the dependency now runs this way.** D5 put the adapter here because a UI package referencing a
+Program that carried UI types reproduced its version-skew class. D18 removed the UI types from the
+core, so a UI-tier package depending on this core depends on a core that contains none of them: there
+is no cycle and no skew class left for option A to avoid. What option B's "against" column named —
+the UI-typed suites and the UI-tree scenarios leaving the repository that owned the behaviour — was
+answered before the move rather than by it: D30 made the toy a specification subject and D31
+re-hosted every differential and the codec certification that is about the CORE at the toy witness,
+so nothing this repository keeps is certified only through the UI tier. What left is evidence ABOUT
+the UI adapter, and it now runs beside the adapter.
+
+**The rule, enforced.** This repository pins no `Fuaran.UI.*` package, and no project in it declares
+one or one of the two adapter ids. `CoreBoundaryTests` reads the central package file and EVERY
+project file in the tree and fails on either; it was made to fail once with a pin added to
+`Directory.Packages.props` and once with a reference added to a project, then reverted. The probes
+that used to be shown red on the adapter are now shown red on synthetic inputs, because the one real
+subject that referenced the tier has left.
+
+**The evidence, and where each piece lives now.**
+
+1. **No evidence this repository claims is certified only through the UI tier.** `uiHostedEvidence`
+   is EMPTY and the guard asserts it stays empty; it is still shown able to go red, over two synthetic
+   suites — one declaring a UI-tier reference, one reaching it only through a project reference —
+   to which a claim's host is pointed.
+2. **The two claims ABOUT the adapter moved with it** (`model-agrees-with-shipped-code`,
+   `budget-model-agrees-with-shipped-code`). Their rows stay on this ladder as pointers, carrying the
+   ladder's `repo` field and that repository's paths, not deleted. The UI tier's repository holds
+   byte copies of `proofs/BoundedFold.fst`, `proofs/Budget.fst` and their extractions, declared in its
+   `copies.json` with this repository's files as canonical, re-checks the copied models on the same
+   pin, byte-diffs their extractions and runs the two differentials, case for case. This repository's
+   proof leg still checks every model and byte-diffs every extraction; its hosts are the toy-witness
+   lists alone.
+3. **The UI-vocabulary wire vectors** are certified there by the server UI suite; this repository
+   certifies the codec against the toy-subject vectors (D31).
+4. **The demanded corpus stays here**, beside the codec that is its authority. Two of its vectors are
+   real harvests of a UI program, so its EMITTER moved with the server UI suite, which writes a byte
+   copy (declared in that repository's `copies.json`, canonical here) and compares its emission with
+   it. Here, `DemandedCorpusReadTests` re-derives every vector's recorded reading from this
+   repository's own `Demanded.decode` with no UI type in reach, so a codec change that moves a reading
+   is red here first. The corpus's `generator` member names the emitter's new home.
+5. **Three structural guards stayed.** The scans of `src/Fuaran.Program.Server` and
+   `src/Fuaran.Program.Bounded` that lived in the server suite (no second stage fold, no engine named
+   on the durable contract surface, no second evaluator) are about THIS repository's sources, so they
+   were re-homed verbatim to `CoreSourceGuardTests`.
+
+**What it costs, stated.** A change to the core that an adapter must follow is now a release here and
+a pin raise there — the cross-repository ordering option B's "against" column named. That is the
+normal posture of a substrate and its consumers, and it is what the rest of the re-homing plan needs:
+this repository's core moves to a neutral substrate organisation next, and could not while it pinned a
+UI tier. The Trusted Publishing policy for the two ids on the UI tier's repository is an operator act
+on the registry, recorded in the phase's outcome rather than here.

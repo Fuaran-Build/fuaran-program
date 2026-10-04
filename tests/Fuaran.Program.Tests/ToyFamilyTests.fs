@@ -56,35 +56,36 @@ let private shapeOf (action: ToyAction) : string =
 // ─── Which families each suite certifies ────────────────────────────────────
 
 /// The record the gate keeps of which scenario families each suite of this
-/// repository certifies. Phase 2012 moves the UI family's certification out
-/// with the UI adapters, and this is the table that move edits — and the test
-/// below reads every suite's sources, so a suite that starts or stops reading a
-/// family without this table saying so goes red here.
+/// repository certifies. fuaran#2012 moved the UI family's certification out
+/// with the UI adapters, and this is the table that move edited: every suite
+/// left here certifies the toy family alone. The test below reads every
+/// suite's sources, so a suite that starts or stops reading a family without
+/// this table saying so goes red here.
 ///
 /// A family a suite reads is certified whenever the run SELECTS it
 /// (`FUARAN_PROGRAM_FAMILIES`) — except in a suite listed in `ignoresSelection`,
 /// which reads its families on every run.
 let certifies: (string * string list) list =
-    [ "Fuaran.Program.Bench", []
-      "Fuaran.Program.Bounded.Tests", []
-      "Fuaran.Program.Parity.Fable", [ UiFamily; Family ]
-      "Fuaran.Program.Parity.Tests", [ UiFamily; Family ]
-      "Fuaran.Program.Runtime.Tests", []
-      "Fuaran.Program.Server.Tests", [ UiFamily ]
+    [ "Fuaran.Program.Parity.Fable", [ Family ]
       "Fuaran.Program.Tests", [ Family ] ]
 
+/// The declared families this repository does NOT certify, each with where it
+/// is certified instead. The UI-vocabulary family's trees are the UI tier's, and
+/// since fuaran#2012 its legs — tier parity on .NET and under Fable, and the
+/// server-logic leg — run beside the UI adapters in the UI tier's repository.
+/// Named rather than silently absent: a declared family no suite certified, and
+/// that no entry here accounts for, still goes red below.
+let certifiedElsewhere: (string * string) list =
+    [ UiFamily, "the UI tier's repository, beside the UI adapters (fuaran#2012)" ]
+
 /// The suites that read a scenario family WITHOUT consulting the selection, and
-/// so certify it even on a run that selected the toy family alone. Today that is
-/// the server suite, whose two UI-family legs (the server-logic parity leg and
-/// the durable interpreter's corpus pass) read through the parity loader
-/// unconditionally; they are UI-typed and leave this repository with the UI
-/// adapters in Phase 2012, and this entry with them. Since fuaran#2017 they
-/// carry no evidence this repository keeps: the core's differentials and its
-/// codec certification run at the toy witness in this project, so the move
-/// takes only the UI adapter's own legs. Recorded rather than
-/// hidden: a "toy alone" run that still exercised a UI leg would otherwise read
-/// as one that did not.
-let ignoresSelection: string list = [ "Fuaran.Program.Server.Tests" ]
+/// so certify it even on a run that selected the toy family alone. Until
+/// fuaran#2012 that was the server suite, whose two UI-family legs read through
+/// the parity loader unconditionally; they were UI-typed and left this
+/// repository with the UI adapters, and their entry with them. EMPTY since: every
+/// suite here consults the selection. Kept as a list, and checked below, so a
+/// suite that starts reading a family unconditionally has to say so here.
+let ignoresSelection: string list = []
 
 /// The calls through which a suite consults the selection.
 let private selectionReader =
@@ -159,9 +160,18 @@ let tests =
                       (sprintf "%s reads exactly the families the table says it certifies" suite)
 
               for family in declared do
-                  Expect.isTrue
-                      (certifies |> List.exists (snd >> List.contains family))
-                      (sprintf "the declared family %s is certified by some suite" family)
+                  match certifiedElsewhere |> List.tryFind (fst >> (=) family) with
+                  | Some(_, where) ->
+                      Expect.isFalse
+                          (certifies |> List.exists (snd >> List.contains family))
+                          (sprintf "the declared family %s is certified in %s, and by no suite here" family where)
+                  | None ->
+                      Expect.isTrue
+                          (certifies |> List.exists (snd >> List.contains family))
+                          (sprintf "the declared family %s is certified by some suite" family)
+
+              for family, _ in certifiedElsewhere do
+                  Expect.contains declared family (sprintf "%s, certified elsewhere, is a declared family" family)
 
               // Every suite that reads a family consults the selection, save
               // the ones the table names as not doing so — and those do not.

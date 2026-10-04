@@ -1,10 +1,11 @@
 # Fuaran.Program — API stability
 
 **Status:** pre-1.0. The version is single-sourced from `<Version>` in `Directory.Build.props`, and
-every package (`Fuaran.Program`, `.Bounded`, `.Runtime`, `.Server`, and since 0.6.0 the UI adapter
-packages `.UI` and `.Server.UI`) shares it: a minor bump on an untouched package costs nothing, and a
-per-package line would have to be right six times. This file
-records, per version slot, what a consumer pays to adopt it and why.
+every package (`Fuaran.Program`, `.Bounded`, `.Runtime`, `.Server`) shares it: a minor bump on an
+untouched package costs nothing, and a per-package line would have to be right four times. From 0.6.0
+to 0.7.1 the two UI adapter packages, `.UI` and `.Server.UI`, shared it too; since fuaran#2012 they
+release from the UI tier's repository (see the next section). This file records, per version slot,
+what a consumer pays to adopt it and why.
 
 ## Versioning policy
 
@@ -18,6 +19,27 @@ records, per version slot, what a consumer pays to adopt it and why.
 
 This document starts at `0.6.0`. The slots before it are recorded where they were cut, in the
 comments beside `<Version>` in `Directory.Build.props`, and are not restated here.
+
+## After 0.7.1 — the UI adapters leave this repository (fuaran#2012, DECISIONS.md D32) — BREAKING for the package set
+
+**The package set loses two packages; the four that remain do not move.** `Fuaran.Program.UI` and
+`Fuaran.Program.Server.UI` moved to the UI tier's repository, which publishes them under the SAME ids
+in its own lockstep version line: their next version is that tier's (a jump from 0.7.1 to its line,
+recorded in its own stability file), and **0.7.1 is the last version of either published from this
+repository** — this repository's publish workflow no longer packs them. The four core packages'
+sources and public surface are unchanged since `v0.7.1`, so nothing here rides a draft slot or
+advances `<Version>`: the next cut of this repository is a release of those four alone, whatever it
+carries by then.
+
+**What a consumer pays.**
+
+- **A consumer of the core only** (`Fuaran.Program.Bounded`, `.Runtime`, `.Server`): nothing.
+- **A consumer of an adapter**: nothing at 0.7.1, which stays published and restorable. To move past
+  it, take the adapter at the UI tier's version, which pins this core at its released 0.7.1 — the same
+  core bytes, now consumed by package rather than by project reference. The ids, namespaces and
+  surface the adapter shipped at 0.7.1 moved file for file.
+- **A consumer that took `Fuaran.UI.*` transitively through this repository's packages**: none of the
+  four core packages references the UI tier (D18), so there is nothing to lose here.
 
 ## 0.7.1 — RELEASED (tagged `v0.7.1`, 2026-10-03) — what the second witness found (Phase 1967)
 

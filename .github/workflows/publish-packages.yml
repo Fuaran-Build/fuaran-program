@@ -42,26 +42,28 @@ jobs:
       # treating it as empty — so mint it at exactly that depth. Getting the
       # depth wrong is the same NU1301 with the same message.
       #
-      # It stays empty, which is the point: every Fuaran.UI.* dependency then
+      # It stays empty, which is the point: every Fuaran.Core.* dependency then
       # resolves from nuget.org, exactly as a consumer of the published packages
       # will. A pin only a maintainer's machine can serve fails HERE rather than
       # in someone else's restore.
       - name: Create empty local folder feed on the runner
         run: mkdir -p ../../local-nuget-feed
 
-      # The six packable projects — the four core packages and, since 0.6.0,
-      # the two UI adapter packages released in the same version — named
-      # rather than packing the solution, which would also walk the test
-      # assemblies.
+      # The four packable projects — the core packages — named rather than
+      # packing the solution, which would also walk the test assemblies.
+      #
+      # The two UI adapter packages (Fuaran.Program.UI, Fuaran.Program.Server.UI)
+      # were packed here from 0.6.0 to 0.7.1 and are NOT any more: they moved to
+      # the UI tier's repository in fuaran#2012 (DECISIONS.md D32), which
+      # publishes them under the same ids in its own version line. 0.7.1 is the
+      # last version of either published from this repository.
       - name: Pack
         run: |
           for proj in \
             src/Fuaran.Program/Fuaran.Program.fsproj \
             src/Fuaran.Program.Bounded/Fuaran.Program.Bounded.fsproj \
             src/Fuaran.Program.Runtime/Fuaran.Program.Runtime.fsproj \
-            src/Fuaran.Program.Server/Fuaran.Program.Server.fsproj \
-            src/Fuaran.Program.UI/Fuaran.Program.UI.fsproj \
-            src/Fuaran.Program.Server.UI/Fuaran.Program.Server.UI.fsproj
+            src/Fuaran.Program.Server/Fuaran.Program.Server.fsproj
           do
             dotnet pack "$proj" -c Release -o "$GITHUB_WORKSPACE/artifacts" --nologo
           done

@@ -9,7 +9,7 @@ program's state store — plus the server placement of the program loop that dri
 > no UI-tier package. The UI instantiation — the UI witness, the pre-0.6.0 names as aliases
 > (`BoundedActions.runBoundedAction`, `Resolve.resolveTree` over a UI tree, …), and the UI transport
 > loop (`BoundedDriver`, `BoundedConnection`) — is the `Fuaran.Program.UI` adapter, released in the
-> same version. The sections below describe the UI instantiation where they name UI types.
+> same version until 0.7.1 and from the UI tier's repository since then (fuaran#2012). The sections below describe the UI instantiation where they name UI types.
 >
 > **Since Phase 1974 the witness is three records** (`DECISIONS.md` D20): a required state axis
 > (`StateWitness`), and optional walk (`WalkWitness`) and dispatch (`DispatchWitness`) axes, composed

@@ -4,19 +4,8 @@
     <Project Path="src/Fuaran.Program.Bounded/Fuaran.Program.Bounded.fsproj" />
     <Project Path="src/Fuaran.Program.Runtime/Fuaran.Program.Runtime.fsproj" />
     <Project Path="src/Fuaran.Program.Server/Fuaran.Program.Server.fsproj" />
-    <Project Path="src/Fuaran.Program.UI/Fuaran.Program.UI.fsproj" />
-    <Project Path="src/Fuaran.Program.Server.UI/Fuaran.Program.Server.UI.fsproj" />
-  </Folder>
-  <Folder Name="/samples/">
-    <Project Path="samples/client-program/ClientProgram.fsproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Fuaran.Program.Tests/Fuaran.Program.Tests.fsproj" />
-    <Project Path="tests/Fuaran.Program.Bounded.Tests/Fuaran.Program.Bounded.Tests.fsproj" />
-    <Project Path="tests/Fuaran.Program.Runtime.Tests/Fuaran.Program.Runtime.Tests.fsproj" />
-    <Project Path="tests/Fuaran.Program.Server.Tests/Fuaran.Program.Server.Tests.fsproj" />
-    <Project Path="tests/Fuaran.Program.Parity/Fuaran.Program.Parity.fsproj" />
-    <Project Path="tests/Fuaran.Program.Parity.Tests/Fuaran.Program.Parity.Tests.fsproj" />
-    <Project Path="tests/Fuaran.Program.Bench/Fuaran.Program.Bench.fsproj" />
   </Folder>
 </Solution>

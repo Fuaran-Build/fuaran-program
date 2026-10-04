@@ -128,7 +128,7 @@ jobs:
             echo "::notice title=Conformance corpus present::The FULL gate runs, conformance and parity included."
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "::warning title=Conformance corpus ABSENT - conformance and parity are NOT checked in this run::The program wire corpus could not be fetched, so Fuaran.Program.Parity.Tests, Fuaran.Program.Server.Tests and the Fable parity leg DID NOT RUN. Every other gate leg did. Cause: the PROGRAM_SPEC_TOKEN repository secret is unset or invalid, or this is a pull request from a fork (fork PRs receive no secrets, by design). This run asserts NOTHING about wire conformance."
+            echo "::warning title=Conformance corpus ABSENT - conformance and parity are NOT checked in this run::The program wire corpus could not be fetched, so the Fable parity leg DID NOT RUN. Every other gate leg did. Cause: the PROGRAM_SPEC_TOKEN repository secret is unset or invalid, or this is a pull request from a fork (fork PRs receive no secrets, by design). This run asserts NOTHING about wire conformance."
           fi
 
       - name: Setup .NET
@@ -168,15 +168,13 @@ jobs:
               exit 1
           }
           $pure = @($assign.Right.FindAll({ param($n) $n -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true) | ForEach-Object { $_.Value })
-          if ($pure.Count -eq 0) {
-              Write-Error 'run.ps1 $pureRunners yielded no runner names.'
-              exit 1
-          }
+          # Empty since fuaran#2012: the two pure runners were UI-typed suites and left
+          # with the UI adapters. run.ps1 declares the empty list deliberately.
           # The corpus-free runners the pure lane leaves out (it runs only the suites
           # that read neither the filesystem nor the corpus). Named ONCE; the reduced
           # job runs them after the pure lane.
-          $corpusFreeOutsidePure = @('Fuaran.Program.Bench', 'Fuaran.Program.Tests')
-          $corpusBound = @('Fuaran.Program.Parity.Tests', 'Fuaran.Program.Server.Tests')
+          $corpusFreeOutsidePure = @('Fuaran.Program.Tests')
+          $corpusBound = @()
           $known = $pure + $corpusFreeOutsidePure + $corpusBound
           $unclassified = $runners | Where-Object { $_ -notin $known }
           if ($unclassified) {
@@ -217,7 +215,7 @@ jobs:
         working-directory: Fuaran/Fuaran-Program
         shell: pwsh
         run: |
-          foreach ($p in 'Fuaran.Program.Bench', 'Fuaran.Program.Tests') {
+          foreach ($p in @('Fuaran.Program.Tests')) {
               Write-Host "-- tests: $p --"
               dotnet run --project (Join-Path 'tests' $p)
               if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -226,7 +224,7 @@ jobs:
       - name: SKIPPED — wire conformance and Fable parity (corpus unavailable)
         if: ${{ steps.status.outputs.present != 'true' }}
         run: |
-          echo "NOT RUN in this job: Fuaran.Program.Parity.Tests, Fuaran.Program.Server.Tests,"
-          echo "and the Fable parity leg. All three certify against the program wire corpus,"
+          echo "NOT RUN in this job: the Fable parity leg, which certifies against the program"
+          echo "wire corpus (the UI-typed suites that also did left with the UI adapters, fuaran#2012),"
           echo "which this runner could not fetch. See the warning annotation on this run."
           echo "This is a visible skip, not a pass: the run makes no conformance claim."

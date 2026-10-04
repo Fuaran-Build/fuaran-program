@@ -314,10 +314,11 @@
       "id": "model-agrees-with-shipped-code",
       "level": "tested",
       "phase": "Phase 1715",
+      "repo": "Fuaran/Fuaran-UI/fuaran-dotnet",
       "claim": "The extracted model and the shipped interpreter produce the same store, the same client-effect list and the same diagnostics for every action the conformance corpus's driver-semantics family contains, for an arm-complete corpus naming all fourteen arms and every refusal path inside the three arms that have one, and across the placement seam when a handler answers. This is the only thing that says the proved model is about the code that runs.",
       "evidence": {
         "family": "Phase 1715 - the proved bounded fold as oracle",
-        "host": "tests/Fuaran.Program.Parity.Tests/ProofOracleTests.fs",
+        "host": "src/Fuaran.Program.UI.Parity.Tests/ProofOracleTests.fs",
         "cases": [
           "the driver-semantics family yields actions to compare",
           "the oracle agrees with production over the driver-semantics family",
@@ -325,8 +326,9 @@
           "the oracle agrees with production when the placement ANSWERS a call",
           "GO RED: a fold that invokes a carried closure loses the comparison"
         ],
-        "runner": "proofs/check.ps1 step 6, which asserts a CASE COUNT because a filter matching nothing reports success",
-        "note": "production at the UI witness is the UI adapter package, src/Fuaran.Program.UI (the UI witness and the aliases over the generic core), promoted there from a non-packable project by Phase 1897; since Phase 1896 the same list also compares the extraction's generic run_action with the core's BoundedActions.run at a non-UI test witness; since Phase 1967 the toy witness's corpus names every way a guard halts and the comparison includes the halt flag; fuaran#2017: the generic half (the extraction's run_action against BoundedActions.run at the toy witness, the answering placement, and a new closure-invoking go-red) moved to tests/Fuaran.Program.Tests/ToyBoundedFoldOracleTests.fs (list \"Phase 1715 - the proved bounded fold as oracle at the toy witness\"); what stays here is the UI witness's fourteen arms, which Phase 2012 moves with the UI adapters"
+        "runner": "that repository's proofs/check.ps1 -Leg program, which re-checks a byte copy of this repository's model, byte-diffs its extraction against a copy of this repository's oracle, and runs this family",
+        "note": "production at the UI witness is the UI adapter package, src/Fuaran.Program.UI (the UI witness and the aliases over the generic core), promoted there from a non-packable project by Phase 1897; since Phase 1896 the same list also compares the extraction's generic run_action with the core's BoundedActions.run at a non-UI test witness; since Phase 1967 the toy witness's corpus names every way a guard halts and the comparison includes the halt flag; fuaran#2017: the generic half (the extraction's run_action against BoundedActions.run at the toy witness, the answering placement, and a new closure-invoking go-red) moved to tests/Fuaran.Program.Tests/ToyBoundedFoldOracleTests.fs (list \"Phase 1715 - the proved bounded fold as oracle at the toy witness\"); what stays here is the UI witness's fourteen arms, which Phase 2012 moves with the UI adapters; fuaran#2012: MOVED with the UI adapters to the UI tier's repository, which hosts this family beside the adapter it is about (DECISIONS.md D32). This row is kept as the pointer: `repo` names where the evidence lives, and the paths above are that repository's. The model and the extraction it runs are byte copies of this repository's proofs/BoundedFold.fst and its oracle, declared in that repository's copies.json with these files as canonical; this repository's proof leg still checks the model and byte-diffs the extraction, and no longer runs this host",
+        "model": "proofs/program/BoundedFold.fst"
       }
     },
     {
@@ -521,10 +523,11 @@
       "id": "budget-model-agrees-with-shipped-code",
       "level": "tested",
       "phase": "Phase 1716",
+      "repo": "Fuaran/Fuaran-UI/fuaran-dotnet",
       "claim": "The extracted budget model and the shipped pricing functions return the SAME INTEGER for the trees the bounded driver's own suite drives and for generated trees — fans, chains, every data-bearing kind, a payload at the counting cap, a payload past it, and a chart whose multiply saturates — each priced at every ceiling around its own exact cost; the same for the action cascade cost; and the model's gate agrees with BoundedDriver.step's G2 stage on the verdict, on the refusal's reason verbatim, and on the session coming back by reference.",
       "evidence": {
         "family": "Phase 1716 - the proved budget as oracle",
-        "host": "tests/Fuaran.Program.Parity.Tests/ProofOracleTests.fs",
+        "host": "src/Fuaran.Program.UI.Parity.Tests/ProofOracleTests.fs",
         "cases": [
           "the generated corpus straddles the ceiling in both directions",
           "the oracle agrees with production on the bounded driver's own trees",
@@ -533,8 +536,9 @@
           "the oracle agrees with the driver's G2 gate, and a breach mutates nothing",
           "GO RED: an accumulator that wraps loses the ceiling comparison"
         ],
-        "runner": "proofs/check.ps1 step 6, which asserts a CASE COUNT because a filter matching nothing reports success",
-        "note": "the G2 stage compared is BoundedDriver.step in the UI adapter package, src/Fuaran.Program.UI (the UI transport loop, promoted there by Phase 1897); the pricing functions are the core's Budget. The comparison is of the INTEGER and not the verdict, which is what says the model kept production's explicit stack in production's push order — above the ceiling the answer depends on which nodes were visited first. The go-red case commits a walk that accumulates with .NET's wrapping add and asserts BOTH that the harness reports it and that its ceiling comparison comes out the wrong way, the tree being admitted rather than refused; a divergence that was merely a different number would not demonstrate the defect the law excludes; fuaran#2017: the generic pricing (Budget.treeCost and Budget.actionCascadeCost over a witness) is also compared at the toy witness, budget-generic-model-agrees-at-the-toy-witness; what stays here is the UI witness's data-bearing weighing and the BoundedDriver's G2 gate, which Phase 2012 moves with the UI adapters"
+        "runner": "that repository's proofs/check.ps1 -Leg program, which re-checks a byte copy of this repository's model, byte-diffs its extraction against a copy of this repository's oracle, and runs this family",
+        "note": "the G2 stage compared is BoundedDriver.step in the UI adapter package, src/Fuaran.Program.UI (the UI transport loop, promoted there by Phase 1897); the pricing functions are the core's Budget. The comparison is of the INTEGER and not the verdict, which is what says the model kept production's explicit stack in production's push order — above the ceiling the answer depends on which nodes were visited first. The go-red case commits a walk that accumulates with .NET's wrapping add and asserts BOTH that the harness reports it and that its ceiling comparison comes out the wrong way, the tree being admitted rather than refused; a divergence that was merely a different number would not demonstrate the defect the law excludes; fuaran#2017: the generic pricing (Budget.treeCost and Budget.actionCascadeCost over a witness) is also compared at the toy witness, budget-generic-model-agrees-at-the-toy-witness; what stays here is the UI witness's data-bearing weighing and the BoundedDriver's G2 gate, which Phase 2012 moves with the UI adapters; fuaran#2012: MOVED with the UI adapters to the UI tier's repository, which hosts this family beside the adapter it is about (DECISIONS.md D32). This row is kept as the pointer: `repo` names where the evidence lives, and the paths above are that repository's. The model and the extraction it runs are byte copies of this repository's proofs/Budget.fst and its oracle, declared in that repository's copies.json with these files as canonical; this repository's proof leg still checks the model and byte-diffs the extraction, and no longer runs this host",
+        "model": "proofs/program/Budget.fst"
       }
     },
     {

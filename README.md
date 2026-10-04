@@ -32,8 +32,8 @@ safe to run untrusted: bounded code plus bounded cost.
 | `Fuaran.Program.Bounded` | the bounded interpreter, the binding re-resolution pass, the resource budget, and the demanded-effect projection, generic over a domain's witness since 0.6.0 (the server driver is the UI adapter's) — [README](src/Fuaran.Program.Bounded/README.md) |
 | `Fuaran.Program.Runtime` | the **client placement**'s effect seam, generic over a domain's effects since 0.6.0; the browser loop that runs a wire-decoded UI tree is the UI adapter's — [README](src/Fuaran.Program.Runtime/README.md) |
 | `Fuaran.Program.Server` | the **server-logic placement**: handlers as data behind a closed, default-deny server-effect vocabulary, plus a second interpreter of the same algebra under deterministic replay over an effect journal — [README](src/Fuaran.Program.Server/README.md) |
-| `Fuaran.Program.UI` | the **UI adapter** (new in 0.6.0, Fable-clean): the core instantiated at the UI tier's types — the UI witness, the pre-0.6.0 names as aliases, and the UI transport loop (the bounded driver, its channel glue, the client runtime). Open it AFTER the `Fuaran.Program.*` namespaces — [README](src/Fuaran.Program.UI/README.md) |
-| `Fuaran.Program.Server.UI` | the server placement's **UI adapter** (new in 0.6.0, .NET only): the pre-0.6.0 server names as aliases, and the UI event step in front of the core's dispatch. Open it AFTER `Fuaran.Program.Server` — [README](src/Fuaran.Program.Server.UI/README.md) |
+| `Fuaran.Program.UI` | the **UI adapter** (Fable-clean), published from this repository from 0.6.0 to 0.7.1. **Moved to the UI tier's repository in fuaran#2012** (DECISIONS.md D32), same id, that tier's version line; 0.7.1 is the last version published from here. |
+| `Fuaran.Program.Server.UI` | the server placement's **UI adapter** (.NET only), published from this repository from 0.6.0 to 0.7.1. **Moved to the UI tier's repository in fuaran#2012** (DECISIONS.md D32), with the client adapter. |
 
 One algebra, several placements — and one *interpreter* shared between them, which is what makes
 "the placements agree" a property of the code rather than a claim in a document. The server
@@ -125,7 +125,7 @@ leaves out is printed as a `SKIPPED` line naming the reason, never dropped quiet
 |---|---|---|
 | `full` (default) | every Expecto runner under `tests/`, then the Fable parity leg | the gate. `pwsh ./run.ps1` with no lane is this, and it is the only lane a release or a recorded gate run may cite |
 | `fast` | every Expecto runner; the Fable parity leg is skipped | checking your own change before you merge |
-| `pure` | `Fuaran.Program.Bounded.Tests` and `Fuaran.Program.Runtime.Tests` only | a tight loop on the interpreter and the client placement; needs no corpus |
+| `pure` | no runner since fuaran#2012 (its two runners were UI-typed suites and left with the UI adapters) | restore, format, pins and build only; says so, and runs no suite |
 
 The split comes from a measurement (2026-10-02, warm tree, `full` lane): tool restore 1.0s, format
 6.2s, pin preflight 4.5s, build 104.7s; per runner, wall-clock including `dotnet run`'s
@@ -136,7 +136,9 @@ alike, so no test project is slow — the proof oracle's differential included �
 about half of the whole gate, is the one thing `fast` drops. Measured end to end on the same
 machine: `full` 453s, `fast` 239s, `pure` 103s (the last two build-dominated on an incremental tree). The test counts
 were 567 Expecto tests plus 11 Fable parity scenarios under `full`, 567 under `fast` and 182 under
-`pure`.
+`pure`. That measurement predates fuaran#2012, which moved every runner but `Tests`, and the UI-vocabulary
+half of the Fable leg, out with the UI adapters; the gate is correspondingly shorter, and the split
+between the lanes still holds.
 
 `pure` names its runners explicitly in `run.ps1`; a name there that matches no runner fails the
 lane rather than shrinking it. A new test project joins `full` and `fast` automatically, and joins

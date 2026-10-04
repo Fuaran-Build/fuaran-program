@@ -27,12 +27,15 @@ param(
     #          release or a recorded gate run may cite.
     #   fast - every Expecto runner; the Fable parity leg is skipped, by name. The pre-merge lane.
     #   pure - only the runners named in $pureRunners below: suites that read neither the
-    #          filesystem nor the conformance corpus. Runs without the corpus present.
+    #          filesystem nor the conformance corpus. Runs without the corpus present. Since
+    #          fuaran#2012 that list is EMPTY (see it below), so this lane is restore, format,
+    #          pins and build, and every runner is reported skipped by name.
     #
     # The split is chosen from a measurement, not a guess (2026-10-02, warm tree, full lane):
     # tool restore 1.0s, format 6.2s, pins 4.5s, build 104.7s; the runners, each wall-clock
     # including `dotnet run`'s per-project up-to-date check - Bench 23.9s, Bounded.Tests 24.0s,
-    # Parity.Tests 29.7s, Runtime.Tests 26.1s, Server.Tests 28.9s, Tests 20.9s; the Fable parity
+    # Parity.Tests 29.7s, Runtime.Tests 26.1s, Server.Tests 28.9s, Tests 20.9s (all but the last
+    # left with the UI adapters in fuaran#2012, as did the UI family's half of the Fable leg); the Fable parity
     # leg 258.1s (compile 247.8s, node 10.3s). Every runner's own test execution is 1-6s and the
     # rest of its wall-clock is the up-to-date check every runner pays alike, so no test project
     # is slow - including the two that host the proof oracle's differential - and dropping one
@@ -69,7 +72,13 @@ $global:LASTEXITCODE = 0
 # filesystem or the corpus is a property of its code, not of its name or its project file. A name
 # here that matches no runner is REFUSED below rather than ignored, so a rename cannot quietly
 # empty the lane.
-$pureRunners = @('Fuaran.Program.Bounded.Tests', 'Fuaran.Program.Runtime.Tests')
+#
+# EMPTY since fuaran#2012. The two runners it named (Fuaran.Program.Bounded.Tests and
+# Fuaran.Program.Runtime.Tests) were UI-typed suites and left with the UI adapters for the UI tier's
+# repository; the one runner left here, Fuaran.Program.Tests, reads the filesystem and the corpus.
+# An empty list is a DECLARED state rather than a renamed one: the lane builds and runs nothing,
+# and says so below, instead of reporting a green it did not earn.
+$pureRunners = @()
 
 function Write-Skip([string] $what, [string] $why) {
     Write-Host "── $($what): SKIPPED — $why ──" -ForegroundColor Yellow
@@ -133,6 +142,9 @@ if (-not $SkipTests) {
             Where-Object { Get-ChildItem -Path $_.FullName -Filter *.fsproj -File } |
             Where-Object { (Get-Content (Get-ChildItem -Path $_.FullName -Filter *.fsproj -File)[0].FullName -Raw) -match '<OutputType>Exe</OutputType>' } |
             Sort-Object Name
+    if ($Lane -eq 'pure' -and $pureRunners.Count -eq 0) {
+        Write-Host "── lane 'pure' admits no runner since fuaran#2012: built and formatted, NO TESTS RUN ──" -ForegroundColor Yellow
+    }
     if ($Lane -eq 'pure') {
         $unknown = @($pureRunners | Where-Object { $_ -notin @($testProjects | ForEach-Object Name) })
         if ($unknown.Count -gt 0) {
@@ -164,8 +176,9 @@ elseif ($Lane -ne 'full') {
 }
 else {
     # Leg (c) of the tier-parity family: the SAME runner compiled to JavaScript,
-    # reading the SAME scenario files — the conformance corpus's driver-semantics
-    # family. "It compiles under Fable" and "it behaves the same under Fable" are
+    # reading the SAME scenario files — the conformance corpus's driver-semantics-toy
+    # family (the UI-vocabulary family's leg left with the UI adapters in
+    # fuaran#2012, and runs in the UI tier's repository). "It compiles under Fable" and "it behaves the same under Fable" are
     # different claims and only the second one matters, which is why this is a run
     # and not just a compile.
     #

@@ -6,7 +6,8 @@ in the browser with no hand-authored `update` function, no message type, and no 
 > **Since 0.6.0 (Phase 1896) this package holds the domain-generic client effect seam only**
 > (`EffectRegistry`, the egress policy, the destination and denial vocabulary), and references no
 > UI-tier package. The client loop described below (`Program`, `ProgramServices`) is the UI
-> instantiation, and ships in the `Fuaran.Program.UI` adapter in the same version.
+> instantiation, and ships in the `Fuaran.Program.UI` adapter — in the same version until 0.7.1, and from
+> the UI tier's repository since then (fuaran#2012).
 
 ## The shape
 

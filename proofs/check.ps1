@@ -35,15 +35,16 @@
          model beside production and requiring them to agree. Since
          fuaran#2017 every module's FIRST host is in
          `Fuaran.Program.Tests`, at the toy witness, in a project that
-         reaches no UI type: that is the host its claims name. A module
-         whose model also describes the UI adapter's code
-         (`src/Fuaran.Program.UI`, `src/Fuaran.Program.Server.UI`) keeps
-         a second host at the UI witness, in the UI-typed project beside
-         those suites, until the UI adapters leave the repository. Skippable with
+         reaches no UI type: that is the host its claims name. Since
+         fuaran#2012 it is the ONLY host: the UI adapters left the
+         repository, and the second hosts at the UI witness went with them
+         (the two claims about the adapter's own code are hosted beside it
+         now, over byte copies of BoundedFold.fst and Budget.fst and their
+         extractions — see proofs.json `repo`). Skippable with
          `-SkipHost`, because it needs the solution built and the proof
-         half does not — and the server host needs the conformance
-         corpus the server suite loads at start-up (`FUARAN_PROGRAM_SPEC`
-         or the sibling clone), exactly as `run.ps1` does.
+         half does not — and the toy-family hosts need the conformance
+         corpus (`FUARAN_PROGRAM_SPEC` or the sibling clone), exactly as
+         `run.ps1` does.
 
     Two things about reproducibility are worth knowing before reading
     the flags.
@@ -124,8 +125,6 @@ $modules = @(
         Hosts        = @(
             @{ Project = "Fuaran.Program.Tests"; List = "Phase 1715 - the proved bounded fold as oracle at the toy witness"; MinCases = 7
                Subject = "the generic fold at the toy witness: a corpus naming every view shape, refusal, flow shape and iteration, an answering placement, and the specification's driver-semantics-toy family" }
-            @{ Project = "Fuaran.Program.Parity.Tests"; List = "Phase 1715 - the proved bounded fold as oracle"; MinCases = 5
-               Subject = "the driver-semantics family and an arm-complete action corpus, through the UI adapter (src/Fuaran.Program.UI)" }
         )
     }
     @{
@@ -135,8 +134,6 @@ $modules = @(
         Hosts        = @(
             @{ Project = "Fuaran.Program.Tests"; List = "Phase 1716 - the proved budget as oracle at the toy witness"; MinCases = 6
                Subject = "the generic pricing at the toy witness: fans, chains and nodes past the counting cap at every ceiling around their cost, and the cascade cost of every shape the model can express" }
-            @{ Project = "Fuaran.Program.Parity.Tests"; List = "Phase 1716 - the proved budget as oracle"; MinCases = 6
-               Subject = "the bounded driver's own trees, generated trees straddling the ceiling, and the G2 gate of the UI adapter's BoundedDriver (src/Fuaran.Program.UI)" }
         )
     }
     @{
@@ -148,8 +145,6 @@ $modules = @(
                Subject = "the handler loop's and the durable interpreter's staging shapes, every plan-phase halt, the op performer and the op-channel guard, at every failure position of a scripted performer, against Handler.runWith at the toy witness" }
             @{ Project = "Fuaran.Program.Tests"; List = "Phase 1980 - the proved durable replay as oracle at the toy witness"; MinCases = 13
                Subject = "every journal shape the crash fixtures leave, against Durable.runWith at the toy witness, with three go-red bends" }
-            @{ Project = "Fuaran.Program.Server.Tests"; List = "Phase 1717 - the proved staging as oracle"; MinCases = 6
-               Subject = "the HandlerLoopTests and DurableInterpreterTests staging cases and every plan-phase halt, each with a scripted performer failing at every position of the staged list, against Handler.run through the UI witness (src/Fuaran.Program.Server.UI)" }
         )
     }
     @{
@@ -159,8 +154,6 @@ $modules = @(
         Hosts        = @(
             @{ Project = "Fuaran.Program.Tests"; List = "Phase 1759 - the proved effect gate as oracle at the toy witness"; MinCases = 12
                Subject = "the registry shapes and the 441 generated triples, the go-red lookup-before-gate mutant, the op-contract wrapper and the keyed op-contract handler host with its durable reading, at the toy witness" }
-            @{ Project = "Fuaran.Program.Server.Tests"; List = "Phase 1759 - the proved effect gate as oracle"; MinCases = 12
-               Subject = "the ServerEffectTests registry shapes and the generated (capability, gate, performer) triples, comparing the denial stream, the performed set and the post-state against Handler.run with ReturnContract-wrapped performers; the go-red lookup-before-gate mutant; and the op-contract handler host (Phase 1984) — an op token carrying the planned state and the op, the model's contract keyed on it beside Handler.runWith under OpPerformance.performedChecked and the extracted durable_run beside Durable.runWith, over op stages that pass, fail their contract first, and fail after a host call, with the go-red entry-state mis-keying" }
         )
     }
     @{
@@ -170,8 +163,6 @@ $modules = @(
         Hosts        = @(
             @{ Project = "Fuaran.Program.Tests"; List = "Phase 1977 - the proved undo as oracle at the toy witness"; MinCases = 6
                Subject = "the staging corpus and the undo cases undone, at the toy witness and at a composition classing relabels compensable and one-way, with a go-red wrong class" }
-            @{ Project = "Fuaran.Program.Server.Tests"; List = "Phase 1977 - the proved undo as oracle"; MinCases = 5
-               Subject = "the staging corpus and the undo cases, undone through Undo.run over the plan Handler.runPlanned records, at the UI witness and at a composition classing two ops compensable and one-way, comparing the posture, the recorded plan, the undo's answer and the undo performer's log, with the undo's performer refusing at every position of its staged list" }
         )
     }
 )

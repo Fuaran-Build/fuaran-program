@@ -812,6 +812,13 @@ can reach.
 
 ## 4. The adapter's home — two options
 
+> **Superseded by DECISIONS.md D32 (fuaran#2012, 2026-10-04).** Option A, ratified below on 2026-09-27,
+> was reversed: the two adapter packages and their UI-typed suites moved to the UI tier's repository,
+> which depends on this core's released packages, and this repository pins, declares and names no
+> UI-tier package. The analysis below is kept as the record of the choice as it stood; D32 says what
+> changed — D30 and D31 first moved every piece of evidence about the CORE onto a non-UI witness, which
+> removed option B's main cost before the move rather than paying it.
+
 The UI binding has three parts:
 
 - (a) the UI witness, which is the view, the leaf lowering, the codecs, the store and the claim
@@ -867,7 +874,7 @@ the direction D5 already chose.
   - "Release together" becomes a cross-repository ordering rule (core, then adapter), not a single
     act.
 
-### Recommendation: Option A — ratified by the operator, 2026-09-27
+### Recommendation: Option A — ratified by the operator, 2026-09-27 (superseded by D32, 2026-10-04: option B)
 
 Option A is the smaller correct change. It keeps the dependency direction D5 chose, confined to two
 leaf packages, and it keeps the behaviour's tests beside the behaviour. Phase 1896's gate test is

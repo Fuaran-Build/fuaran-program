@@ -372,8 +372,16 @@ differential is what says the discharged instance is the shipped one.
 
 ## The gap between model and production — the claims ladder
 
+> **Since fuaran#2012 (DECISIONS.md D32)** every differential host in this repository is in
+> `tests/Fuaran.Program.Tests`, at the toy witness (fuaran#2017 put them there). The UI-witness hosts
+> this section describes — the two claims ABOUT the UI adapter, `model-agrees-with-shipped-code` and
+> `budget-model-agrees-with-shipped-code` — moved with the adapter to the UI tier's repository, which
+> runs them over byte copies of `BoundedFold.fst`, `Budget.fst` and their extractions; their rows in
+> `proofs.json` carry `repo` and that repository's paths. The text below is the record of how the
+> ladder was built, with the paths it had then.
+
 A proof about a model is a claim about the code only if something runs the two side by side.
-`tests/Fuaran.Program.Parity.Tests/ProofOracleTests.fs` is that something: it runs the
+`tests/Fuaran.Program.Parity.Tests/ProofOracleTests.fs` was that something: it runs the
 EXTRACTION of `BoundedFold.fst` beside `BoundedActions.runBoundedActionWith` — the generic core
 at the UI witness, through the UI adapter package `src/Fuaran.Program.UI/` — and,
 since Phase 1896, the extraction's generic `run_action` beside `BoundedActions.run` at a non-UI
@@ -1432,11 +1440,10 @@ pwsh ./proofs/check.ps1 -SkipHost    # the proof half only; no solution build ne
 
 Six steps, each refusing rather than warning: resolve the pinned prover, CHECK, EXTRACT,
 BYTE-DIFF against the committed `oracle/*.fs`, BUILD the oracle project, RUN the differential
-host. A module names the test project that hosts its differential: the fold's and the
-budget's live in `Fuaran.Program.Parity.Tests`, the staging theorem's, the effect gate's and the
-undo's in `Fuaran.Program.Server.Tests` beside the handler suites they re-declare — which means step 6 for
-that module needs the conformance corpus the server suite loads at start-up
-(`FUARAN_PROGRAM_SPEC`, or the sibling clone), exactly as `run.ps1` does.
+host. A module names the test project that hosts its differential — since fuaran#2017 every one
+is in `Fuaran.Program.Tests`, at the toy witness, and since fuaran#2012 that is the only host (the
+UI-witness hosts left with the UI adapters, D32) — so step 6 needs the conformance corpus the toy
+family reads (`FUARAN_PROGRAM_SPEC`, or the sibling clone), exactly as `run.ps1` does.
 
 **The toolchain is a large one-off download and is NOT a build dependency.** Nothing in
 `run.ps1`, `dotnet build` or the ordinary CI matrix needs a prover — the extractions are

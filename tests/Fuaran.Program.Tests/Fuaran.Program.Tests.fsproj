@@ -50,6 +50,10 @@
     <Compile Include="ToyWireConformanceTests.fs" />
     <Compile Include="CoreBoundaryTests.fs" />
     <Compile Include="SchemaClockTests.fs" />
+    <!-- fuaran#2012: the core's source guards and the demanded corpus's readings, re-homed
+         here from the server suite that left with the UI adapters. -->
+    <Compile Include="CoreSourceGuardTests.fs" />
+    <Compile Include="DemandedCorpusReadTests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
   <ItemGroup>

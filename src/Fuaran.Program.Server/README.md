@@ -7,7 +7,8 @@ the handler runs as data — read, compute, mutate, respond — with no hand-aut
 > vocabulary and its codecs, the session and the durable interpreter run over a domain's witness and
 > reference no UI-tier package. An event is dispatched by the transport, not the algebra, so the
 > session starts at `ServerSession.dispatchWith`; the UI event step (and the pre-0.6.0 names as
-> aliases) is the `Fuaran.Program.Server.UI` adapter, released in the same version.
+> aliases) is the `Fuaran.Program.Server.UI` adapter, released in the same version until 0.7.1
+> and from the UI tier's repository since then (fuaran#2012).
 
 > **The handler now has a wire form** (`HandlerWire`), specified and conformance-tested against a
 > corpus that lives outside this package. A handler is still host-registered: the tree carries only

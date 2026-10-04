@@ -1,23 +1,23 @@
 # Tests
 
-Five suites, each its own Expecto assembly runner, plus the Fable parity leg.
-`pwsh ./run.ps1` runs them all; `-SkipFable` drops the last one. `-Lane fast` runs every runner
-but skips the Fable leg, and `-Lane pure` runs only the two suites that need neither the corpus nor
-the filesystem — see [Gate lanes](../README.md#gate-lanes).
+One Expecto assembly runner, plus the Fable parity leg. `pwsh ./run.ps1` runs both; `-SkipFable`
+drops the second. `-Lane fast` runs the runner but skips the Fable leg, and `-Lane pure` — whose
+runner list is empty since fuaran#2012 — builds and runs no suite — see
+[Gate lanes](../README.md#gate-lanes).
 
 | Suite | What it pins |
 |---|---|
-| `Fuaran.Program.Tests` | the skeleton package; the generic core at a NON-UI toy witness (`ToyDomain.fs`), and the boundary test that no core package references the UI tier, declared or resolved — this project's own graph holds no UI-tier package |
-| `Fuaran.Program.Bounded.Tests` | the interpreter's invariants and the server driver's loop |
-| `Fuaran.Program.Runtime.Tests` | the client placement's loop and the effect seam |
-| `Fuaran.Program.Server.Tests` | the server-logic placement: handlers, the server-effect seam, the pre-execution query-schema check, the replay classification's reasons and mode enforcement, and tier-parity leg (d) |
-| `Fuaran.Program.Parity.Tests` | tier parity, .NET legs (a) + (b); and the proof oracle's differential (`ProofOracleTests.fs`) |
-| `Fuaran.Program.Parity.Fable` | tier parity, leg (c) — the same runner under node |
-| `Fuaran.Program.Bench` | the `RunQuery` benchmark; a smoke pass under the gate, the measurement under `--full` (`docs/runquery-benchmark.md`) |
+| `Fuaran.Program.Tests` | the skeleton package; the generic core at a NON-UI toy witness (`ToyDomain.fs`): the specification's `driver-semantics-toy` family and toy-subject wire vectors, the proof oracle's differentials, the demanded corpus's readings, the core's source guards, and the boundary test that nothing in this repository references the UI tier, declared or resolved |
+| `Fuaran.Program.Parity.Fable` | the toy family's tier-parity leg (c) — the shared runner compiled to JavaScript and run under node |
 
-The UI instantiation the UI-tree suites run through is not a test project: it is the UI adapter,
-`src/Fuaran.Program.UI` (Fable-clean) and `src/Fuaran.Program.Server.UI` (.NET-only), written by
-Phase 1896 in two non-packable projects here and promoted to packages by Phase 1897.
+**The UI-typed suites left with the UI adapters (fuaran#2012, DECISIONS.md D32).** The bounded,
+runtime, server and parity suites, the parity project, the `RunQuery` benchmark, the UI-vocabulary
+family's Fable leg and the `client-program` sample ran through the UI adapter (`Fuaran.Program.UI`,
+`Fuaran.Program.Server.UI`); they moved with it to the UI tier's repository, where they run against
+this core's released packages. Every claim this repository keeps is certified here at the toy
+witness (D30, D31). The section below describes the tier-parity family as the UI tier's repository
+now runs it for the UI-vocabulary `driver-semantics` family; this repository runs the same discipline
+for `driver-semantics-toy`.
 
 ## The tier-parity family
 

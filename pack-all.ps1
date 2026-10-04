@@ -8,15 +8,14 @@
     the released source. Released distribution is a tag push, not this script.
 
     Packs every packable project under src: the Fuaran.Program.* core (the
-    domain package, the bounded fold, the runtime and the server placement)
-    and the two UI adapter packages, Fuaran.Program.UI and
-    Fuaran.Program.Server.UI, which release at the core's one version.
+    domain package, the bounded fold, the runtime and the server placement).
 
-    ORDERING: the UI tier packs BEFORE this one. The bounded tier consumes the
-    UI tier's published packages by PackageReference (DECISIONS.md D4), and the
-    dependency runs ONE WAY — no Fuaran.UI.* package references Fuaran.Program.*
-    (D5) — so the order is a genuine dependency edge, not a convention. The
-    reverse would be a cycle and was refused for exactly that reason.
+    ORDERING: this core packs BEFORE the UI tier. Since fuaran#2012
+    (DECISIONS.md D32) the dependency runs the other way from D4/D5: the two
+    UI adapter packages, Fuaran.Program.UI and Fuaran.Program.Server.UI, live in
+    the UI tier's repository and consume this core's packages, and nothing here
+    references the UI tier at all — so the order is a genuine dependency edge,
+    not a convention.
 
     `pwsh ./run.ps1 -Pack` packs the same set as part of the ordinary gate.
 .PARAMETER Configuration

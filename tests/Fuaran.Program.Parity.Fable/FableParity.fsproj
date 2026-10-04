@@ -8,15 +8,16 @@
   </PropertyGroup>
   <ItemGroup>
     <!-- fuaran#2011: the toy witness, its codec and the driver-semantics-toy
-         family's shared runner, compiled to JavaScript beside the UI runner so
-         this leg runs BOTH scenario families over the same corpus. -->
+         family's shared runner, compiled to JavaScript. Since fuaran#2012 this
+         leg runs the toy family alone: the UI-vocabulary family's Fable leg left
+         with the UI adapters, so nothing here reaches a UI-tier type. -->
     <Compile Include="..\Fuaran.Program.Tests\ToyDomain.fs" Link="ToyDomain.fs" />
     <Compile Include="..\Fuaran.Program.Tests\ToyWire.fs" Link="ToyWire.fs" />
     <Compile Include="..\Fuaran.Program.Tests\ToyScenarios.fs" Link="ToyScenarios.fs" />
     <Compile Include="Main.fs" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\Fuaran.Program.Parity\Fuaran.Program.Parity.fsproj" />
+    <ProjectReference Include="..\..\src\Fuaran.Program.Runtime\Fuaran.Program.Runtime.fsproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Fable.Core" />
