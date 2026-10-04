@@ -1020,7 +1020,7 @@ shortened the model's staged list to two calls, and every case that reached the 
 `ServerEffectRegistry.Gate` is a boolean over a capability name, consulted before anything else
 in `Handler.runEffect` (`src/Fuaran.Program.Server/Handler.fs`). What that buys was stated in
 prose — the policy gate is consulted before the performer, so no performer side effect can
-precede the policy decision — and the Broch trust ledger's row read "host performers are
+precede the policy decision — and a consumer's trust ledger had a row that read "host performers are
 TRUSTED; what the Sandbox buys is a bounded blast radius, not a proof of the performer". The
 policy an operator actually means is a predicate over the TRACE of performed effects, and nothing
 connected the boolean to the predicate. `EffectGate.fst` connects them, on SCIO\*'s split: an
@@ -1256,7 +1256,7 @@ token replaced by a constant made the durable comparison lose all forty.
   not statable for the extension hook, which stays host-trust territory. The ledger says so
   rather than claiming a label model.
 
-**What the trust ledger says now.** The Broch plan's row "host performers, native companions and
+**What the trust ledger says now.** That consumer's row "host performers, native companions and
 the extension hook are trusted" moves, for performers, to: performers are CONSTRAINED at the
 boundary — policy before the effect (`gate_before_perform`, `policy_sufficient`), contract on
 return (`return_contract`), values in and no reference — and the interpreter's theorems hold

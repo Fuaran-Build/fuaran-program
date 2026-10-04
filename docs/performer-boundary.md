@@ -70,8 +70,8 @@ statable, and it is already a consequence of the shape — no label is needed to
 adding one would be a second mechanism for a property the type of the performer already fixes.
 
 **At the extension hook there is nothing the model can reach.** `withExtensions` / `IHostedService`
-is the forge SDK's composition hook, and the escape-hatch inventory
-(`Fuaran-UI/docs/security/ESCAPE-HATCHES.md`, fuaran#900) resolved it to HOST-TRUST TERRITORY: a
+is a host SDK's composition hook, and the UI tier's escape-hatch inventory
+(fuaran#900) resolved it to HOST-TRUST TERRITORY: a
 hosted service runs in the process, with the process's reach, and the composition-capability gate
 that would enforce an effect declaration defaults to disabled. The state it can touch is
 higher-order — services, closures, the host's own singletons — and that is exactly the case

@@ -30,7 +30,7 @@ let private empty: FileMap = { Files = Map.empty; Published = [] }
 /// A handler under a witness that fills no dispatch axis: effect stages only.
 type private VerbHandler = Handler<Nothing, FileOp>
 
-/// The verb: check the shard exists, read it, write the archive copy, delete
+/// The verb: check the note exists, read it, write the archive copy, delete
 /// the old one, check it is gone, publish.
 let private archive: VerbHandler =
     { Name = "archive"
@@ -102,7 +102,7 @@ let private flowRegistry: ServerEffectRegistry =
           ServerConstraintClause.AllowList(ServerArgumentPolicy.DestinationArgument, [ "local"; "origin" ])
           ServerConstraintClause.AllowList("count", [ "1"; "2"; "3" ]) ]
 
-/// The verb's two-arm construct, IN Program: migrate the shard if it is there,
+/// The verb's two-arm construct, IN Program: migrate the note if it is there,
 /// create it (and leave a marker) if not, then publish. The exit assertion —
 /// no marker — holds after the true arm and fails after the false arm, which
 /// is the Janus discipline the inverse rests on.
@@ -141,7 +141,7 @@ let tests =
               Expect.equal
                   (world.Files |> Map.toList)
                   [ "notes/archive/x.md", "archived" ]
-                  "the world was written and the old shard deleted — AFTER the plan committed"
+                  "the world was written and the old note deleted — AFTER the plan committed"
 
               Expect.equal world.Published [ "origin" ] "and published"
               Expect.equal outcome.Store.Tree.Published [ "origin" ] "the committed plan agrees with the world"
@@ -291,7 +291,7 @@ let tests =
           test "ADVERSARY F1 — a guard that does not hold halts the handler with nothing performed" {
               // The archive copy already exists in the world, so the plan's
               // `Missing` check after the delete holds — but a run whose
-              // delete is absent leaves the shard in the PLAN, and the guard
+              // delete is absent leaves the note in the PLAN, and the guard
               // sees the plan.
               let world = seeded ()
 
@@ -323,7 +323,7 @@ let tests =
           }
 
           test "a guard reads the PLANNED state, not the entry state" {
-              // The entry world holds the shard; the plan deletes it; a check
+              // The entry world holds the note; the plan deletes it; a check
               // that it exists, placed after the delete, refuses — because it
               // reads the state the ops before it produced.
               let world = seeded ()
@@ -564,7 +564,7 @@ let tests =
                       { Name = "read-missing"
                         Stages = [ Effect(ServerEffect.ApplyOps [ Read "notes/x.md" ]) ] }
 
-              Expect.isFalse outcome.Committed "the read of a missing shard refuses the apply"
+              Expect.isFalse outcome.Committed "the read of a missing note refuses the apply"
               Expect.isEmpty world.Invocations "nothing performed"
 
               Expect.equal

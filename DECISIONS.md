@@ -311,8 +311,8 @@ decision rather than assumed.
 
 **Why the boundary is drawn at the repository and not at a folder.** The
 structured-document domain in this family reached the same conclusion and could
-implement it as a folder, because its estate directory already held several
-sibling repositories with room beside them. This repository *is* its directory:
+implement it as a folder, because its parent directory already held several
+repositories with room beside them. This repository *is* its directory:
 there is nowhere inside it that is not inside the publishable artefact. A sibling
 is therefore the only shape that satisfies the boundary, not merely the tidiest.
 
@@ -1326,8 +1326,8 @@ is". It was trusted on weaker ones: `OpPerformance.Performed` answered `Result<u
 performer could say only that it succeeded, and no contract could check what it did. D19 decision 2
 stated the reach obligation in one direction only — a reach must never be a payload — and nothing
 stated the other: that the reach covers what the performer touches, which is the direction a policy
-enforced against reach (a lease, a deny-list, a worker grant — the plane's planned use,
-roadmap-engine#703) actually depends on. This decision amends both. **The op performer is
+enforced against reach (a lease, a deny-list, a worker grant — the use a second instantiation that
+performs ops has planned, roadmap-engine#703) actually depends on. This decision amends both. **The op performer is
 constrained on the terms a host function is**, and **the reach obligation is stated both ways and is
 checkable through the receipt where the domain can say how.**
 
@@ -1424,8 +1424,8 @@ predicate is the shape a stronger statement would take, and nothing yet needs it
 ## D25 — The outcome names the arms it took, a state-only composition has a handler document, and a ceiling clause bounds a number; no specification act and no theorem statement moves (2026-10-02)
 
 The second witness's third run (roadmap-engine#703) placed two store-mutating verbs on this domain
-against the Phase 1976 build. It found three gaps that are generic to any domain rather than plane
-vocabulary, and so this repository's under D18. The run worked round each one. None of them should
+against the Phase 1976 build. It found three gaps that are generic to any domain rather than that
+domain's own vocabulary, and so this repository's under D18. The run worked round each one. None of them should
 need working round.
 
 **1. B3: the handler outcome carries its flow decisions, host-side.** `HandlerOutcome` gains
@@ -2106,3 +2106,67 @@ normal posture of a substrate and its consumers, and it is what the rest of the 
 this repository's core moves to a neutral substrate organisation next, and could not while it pinned a
 UI tier. The Trusted Publishing policy for the two ids on the UI tier's repository is an operator act
 on the registry, recorded in the phase's outcome rather than here.
+
+## D33 — The substrate neutrality sweep: the tree names no private project, product, repository or workspace artefact, and the history finding is recorded rather than rewritten (2026-10-04)
+
+**2026-10-04. fuaran#2013.** This repository is moving to a neutral substrate organisation, and a
+repository there references neither of the organisations it serves' private content. Program grew up
+in one of them and then served the other, so before the move its tree and its history were swept
+against that rule. This entry records the sweep so that it can be re-run, what it changed, and what it
+deliberately left.
+
+**The pattern set.** One case-insensitive extended regular expression in five classes: (1) private
+repository, product and organisation-internal names; (2) the maintainers' planning-command names and
+their workspace tooling and script names; (3) workspace instruction and planning-document file names;
+(4) framing that implies a private ecosystem around this repository, and the vocabulary of the
+coordination layer that consumes it; (5) the planning engine's name anywhere but a bare citation. An
+allow-list admits the copyright line and `NOTICE`'s attribution; bare phase citations
+(`roadmap-engine#703`, `fuaran#1967`, `Phase 1967`); the specification repository's current
+organisation slug where a workflow locates it, which the re-home retires; this repository's own pack
+script naming itself; the Unicode term "Basic Multilingual Plane"; and the workflow comment stating the
+specification's present visibility, which its public flip retires. The literal set names the private
+things it looks for, so it cannot be published in a file whose claim is that it names none. It is held
+on the maintainers' private side as a two-line file (the pattern, then the allow-list, each
+LF-terminated) whose SHA-256 is
+`e94be5417fdfb713d2d2ea99e22c90227b99d78c99f23fe1194e1dbac836f193`, and it re-runs from the repository
+root as:
+
+```powershell
+$banned, $allowed = Get-Content <the recorded pattern file>
+git grep -n -I -i -E $banned | Select-String -NotMatch -Pattern $allowed
+```
+
+An empty result is the pass. The history form is the same pattern over every commit's added lines
+(`git log --all -p`) and over every message (`git log --all --format=%B`).
+
+**What the tree sweep changed.** No behaviour moved; every change is prose or a test message.
+- **D24 and D25.** D24 explained the both-ways reach obligation by the planned use of the instantiation
+  that performs ops, naming the layer it belongs to; it now says "a second instantiation that performs
+  ops", with `roadmap-engine#703` kept. D25 said its three gaps were generic "rather than" that layer's
+  vocabulary; it now says rather than that domain's own. The re-homing plan expected the citation in
+  D19 and D25; D19 cites nothing private, and the second one sat in D24.
+- **D11** described the structured-document domain's parent folder in workspace terms; it now says its
+  parent directory. D11's unnamed statement of where the evaluation suite lives stays: it names
+  nothing, and it is the boundary's reasoning.
+- **`proofs/README.md`** cited a consumer's trust-ledger plan by name, twice; it is now "a consumer's
+  trust ledger".
+- **`docs/performer-boundary.md`** named the host SDK and gave a path into a private planning tree for
+  the escape-hatch inventory; it now says "a host SDK" and "the UI tier's escape-hatch inventory",
+  with `fuaran#900` kept.
+- **The verb witness.** `VerbDomain.fs` names nothing specific to the layer that consumes it. Its
+  tests' comments and two assertion messages called the file the verb moves a "shard", a planning
+  word; they now call it a note, which is what its path (`notes/x.md`) already said.
+
+**Deliberately not swept.** Generic nouns that name no artefact: "workspace", "estate", "vertical",
+"operator", "driver" and "dispatch" (both program vocabulary), and "shard" where a decision cites the
+plan a phase was written against. The public repositories this tier cites — the UI tier's
+`fuaran-dotnet`, `fuaran-core`'s proof kit — and the local folder-feed convention are public, so
+citing them is not a reference to private content. Revisit any of these when an outside reader is
+misled by one.
+
+**History.** 135 commits on every ref. Added lines: 14 in 9 commits (`2554a4f` 4, `aa8f9c6` 3, and
+one each in `f6a4a34`, `dd85868`, `cbeded1`, `54a4333`, `5042dbf`, `3c2a07b`, `2c73705`). Messages: 10
+lines in 5 commits (`607515f` 4, `f6a4a34` 2, `cbeded1` 2, `e7e1156`, `e7c58f8`). Most are the
+bootstrap-era instruction file and pack-script header that `607515f` removed at the public flip, and
+the citations this entry rewords. This repository is already public, so its history is not rewritten
+here: the finding is recorded, and any remedy is the maintainers' act, not this repository's.
