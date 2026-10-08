@@ -63,6 +63,69 @@ records what was decided; this entry records what a consumer pays.
   against the statically derived one. That check runs through `ServerServices.effects`, which is the
   registry every interpreter behind the placement's call actions now takes.
 
+### Rides the draft: `Each` over a collection the store holds (Phase 1991)
+
+**Class: breaking**, for every consumer that constructs or matches an `ActionView.Each` or an
+`OpView.Each`, annotates an `OpView<'Op>`, constructs a `HandlerArm`, a `ServerEffectRegistry` or a
+`DemandedProjection` as a full record literal, matches `Trace` exhaustively, or reads a demanded
+document — the class this slot already carries (D34), so it rides rather than advancing. `v0.7.1` is
+the newest tag and nothing public pins `0.8.0`. D29 foreclosed a collection the store holds; the
+operator's ruling of 2026-10-02 admitted it under four conditions; `DECISIONS.md` D36 records what
+was decided; this entry records what a consumer pays.
+
+- **`ActionView.Each`'s collection is a `Collection<'Expr>`** — `Literal of elements: JVal list`
+  (what the list was) or `Stored of source: 'Expr * ceiling: int`, an expression resolved against
+  the binding store ONCE at entry, refused before the first element when its extent is over the
+  ceiling. **`OpView<'Op>` becomes `OpView<'Node, 'Op>`**, and its `Each`'s collection is a
+  `Collection<StateCollection<'Node>>`: `{ Name; Read: 'Node -> JVal list }`, the domain's own
+  enumeration of the planned state, equal by name. Every match over either `Each` splits in two;
+  every `OpView<X>` annotation gains the node type; `OpView.edits` still fills `View` unchanged.
+- **`Trace` gains `EachOf of extent: JVal list * elements: Trace list`** — the extent the run READ,
+  which `BoundedActions.reverse` lowers the body over; `FlowDecision.ofTrace` reads it as `Iterated`.
+  A stored `Each` is IN the reversible fragment (the count is recorded, not re-read), where a
+  parameter-bound `Repeat` is not.
+- **`HandlerArm` gains `ReadExtent: ExtentReader`** (`HandlerArm.inert` reads live) and
+  **`ServerEffectRegistry` gains `ReadExtent: ExtentReader`** (`denyAll` reads live;
+  `withExtentReader`) — FS0764 on a full literal. `ExtentReader` is
+  `string -> (unit -> Result<JVal list, string>) -> Result<JVal list, string>`: the subject and the
+  live read. `Durable.runWith` journals the read at its ordinal under `ReadExtent`
+  (`ExtentReader.Capability`), subject the collection's name (the binding keys the source reads, on
+  the dispatch axis), the extent as the step's completed value, and SERVES it on replay. A journal
+  with no such step replays exactly as before.
+- **`DemandedProjection` gains `Iterations: IterationDemand list`** (`{ Collection; Ceiling }`), and
+  the document gains `iterations` between `opaqueHandlers` and `server` and moves to **version 7**;
+  `decodableVersions` is `[7]`. A program with no stored collection emits `"iterations":[]` and
+  nothing else in its document moves — but its bytes do, so a signed envelope over a version-6
+  document no longer verifies against a version-7 recomputation and is re-signed. This repository's
+  `conformance/demanded-effect-projection.json` moved to version 7 by hand, to exactly the encoder's
+  bytes; the UI tier's generator re-emits it at its raise.
+- **The budget prices a stored `Each` at its ceiling without the store** — one step for the read
+  plus the body at the ceiling, the parameter-bound repeat's rule — so the driver's gate refuses an
+  over-size loop before its first element. **The argument policy sees the body's reach with the
+  placeholder standing** (the addresses are not in the tree); an allow-list that binds addresses
+  refuses a stored loop whose addresses it cannot see. **The replay classification** reads a stored
+  `Each` as a parameter bound: undecidable, beside the body's defects.
+- **Four new refusals, each before the first element**: `the collection's ceiling is negative`,
+  `the collection's extent is over its declared ceiling`, and on the dispatch axis `the collection
+  did not resolve to a list` / `… to a value`; on the op axis the plan's `Failed` carries the same
+  two ceiling reasons and whatever the reader answered.
+- **Public walks:** `OpView.iterations` / `StateWitness.iterations` (the iteration demands of an op
+  sequence), `ExprWitness.collectionName` (the dispatch-axis collection's name, the journal's
+  subject and the document's spelling in one).
+- **The oracle differentials** map the shape to the model's `VEachOf` / `OEachOf` (the extent the
+  start store answers, the body lowered over it through production's `Substitute`) and the budget
+  oracle to the parameter-bound repeat at the ceiling; the toy corpus gains the stored cases.
+
+**What did NOT change:** no wire member, fixture byte, refusal class or rule of the program wire
+specification (D36 item 6: the collection source travels in the domain's codec; the demanded
+document is deliberately ungoverned by the specification; the journal step is D23's
+not-a-specification-act); no behaviour of any program that uses no stored collection, byte for byte
+through the parity suite and the Fable leg, except the demanded document's version; the UI tier
+views nothing as an `Each` and fills `ReadExtent` nowhere. Every earlier proof statement keeps its
+form; the stored shape takes the literal's case in each once the extent is read.
+
+**What a consumer does about it:** `docs/migrations/phase-1991.md` — one page, a diff per file.
+
 ## After 0.7.1 — the UI adapters leave this repository (fuaran#2012, DECISIONS.md D32) — BREAKING for the package set
 
 **The package set loses two packages; the four that remain do not move.** `Fuaran.Program.UI` and
