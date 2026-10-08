@@ -804,18 +804,21 @@ module Controls =
 
     /// This host's server-tier coverage **with the controls in force** — what a
     /// demanded-effect check is asked, so a withdrawn host performer is reported
-    /// as `CoverageFinding.UnregisteredServerFunction`, a suspended session as a
-    /// gate refusal, and a withdrawn OP performer as a gate refusal of
-    /// `ApplyOps` (Phase 1986, D28).
+    /// as `CoverageFinding.UnregisteredServerFunction`, a withdrawn OP performer
+    /// as `CoverageFinding.ServerCapabilityWithdrawn "ApplyOps"` (Phase 1993,
+    /// D37, amending D28 item 2), and a suspended session as a gate refusal.
+    /// The split is the coverage vocabulary's own: a revoke is monotone — no
+    /// arm of `step` lifts it — so both kinds of revoked performer read as
+    /// ABSENCES, and only the suspend, which a `Resume` lifts, reads as policy.
     ///
     /// It reads the placement's `performance` beside the registry because the
     /// op performer is not a registry member: a revoke of
     /// `OpPerformance.RegistrationKey` withdraws nothing `apply` can see, and a
     /// coverage read off the registry alone reported `ApplyOps` covered after
-    /// the revoke had taken. The coverage vocabulary gives the arm no performer
-    /// slot — `ApplyOps` is one of the arms that "only ever meet the gate" — so
-    /// the gate is the one fact it has about the arm, and the withdrawal is
-    /// carried there. Under `OpPerformance.InMemory` the apply IS the effect,
+    /// the revoke had taken (Phase 1986). The withdrawal is carried in
+    /// `ServerCoverage.Withdrawn`, the registration fact for the arms that need
+    /// no host function; the gate is the registry's under the controls,
+    /// untouched. Under `OpPerformance.InMemory` the apply IS the effect,
     /// nothing reaches outside, and a revoke of the key withdraws nothing
     /// (D26 §5): coverage is the registry's, unchanged.
     ///
@@ -833,8 +836,7 @@ module Controls =
         match performance, opPerformerRevocation state with
         | OpPerformance.Performed _, Some _ ->
             ofRegistry
-            |> ServerCoverage.withGate (fun capability ->
-                capability <> OpPerformance.RegistrationKey && ofRegistry.Gate capability)
+            |> ServerCoverage.withWithdrawn (Set.add OpPerformance.RegistrationKey ofRegistry.Withdrawn)
         | _ -> ofRegistry
 
     // ─── the wire ────────────────────────────────────────────────────────────

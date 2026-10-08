@@ -126,6 +126,41 @@ form; the stored shape takes the literal's case in each once the extent is read.
 
 **What a consumer does about it:** `docs/migrations/phase-1991.md` — one page, a diff per file.
 
+### Rides the draft: a revoked op performer reads as absent in coverage (Phase 1993)
+
+**Class: breaking**, which is the class the draft already carries, so it rides `0.8.0` rather than
+advancing it (no `v0.8*` tag exists). `DECISIONS.md` D37 records what was decided, amending D28
+item 2.
+
+- **`ServerCoverage` gains `Withdrawn: Set<string>`** — the gate-facing capabilities whose performer
+  the host has withdrawn. `ServerCoverage.nothing` carries the empty set, which means exactly what
+  coverage meant before the member existed. A coverage built from `nothing` and the `with`-style
+  functions needs nothing; a full record literal adds `Withdrawn = Set.empty` (FS0764 names it).
+  Added: `ServerCoverage.withWithdrawn`.
+- **`CoverageFinding` gains `ServerCapabilityWithdrawn of capability`**, declared between
+  `UnregisteredServerFunction` and `ServerGateRefusesCapability`. An exhaustive `match` over
+  `CoverageFinding` gains an arm; `Demanded.describe` reads it as "a handler this program can reach
+  needs server capability '…', whose performer this host has withdrawn".
+- **A behaviour a host can observe:** under `OpPerformance.Performed`, once the op performer is
+  revoked, `Controls.coverage` / `DurableControls.coverage` carry `ApplyOps` in `Withdrawn` and leave
+  the gate the registry's, so the demanded-effect check reports
+  `CoverageFinding.ServerCapabilityWithdrawn "ApplyOps"` where 0.7.1's D28 reported
+  `ServerGateRefusesCapability "ApplyOps"`, and `coverage.Gate "ApplyOps"` answers what the
+  registry's gate answers instead of `false`. A withdrawn capability is reported before the gate is
+  asked, so a session both suspended and revoked reports the op arm as withdrawn.
+
+**What did not move:** a suspended session still reads as `ServerGateRefusesCapability`; a revoked
+host performer still reads as `UnregisteredServerFunction`; with nothing revoked, and under
+`OpPerformance.InMemory`, coverage and findings are what they were. Every signature, the control
+stream and its monotonicity, the wire, every fixture and demanded-document byte, and every proof
+statement are unchanged.
+
+**What a consumer does about it:** add `Withdrawn = Set.empty` to a full `ServerCoverage` literal; add
+an arm for `ServerCapabilityWithdrawn` to an exhaustive match over `CoverageFinding`; and a consumer
+that branched on the op performer's withdrawal as `ServerGateRefusesCapability "ApplyOps"`, or read
+`coverage.Gate "ApplyOps"` to detect it, reads `ServerCapabilityWithdrawn "ApplyOps"` /
+`coverage.Withdrawn` instead.
+
 ## After 0.7.1 — the UI adapters leave this repository (fuaran#2012, DECISIONS.md D32) — BREAKING for the package set
 
 **The package set loses two packages; the four that remain do not move.** `Fuaran.Program.UI` and
