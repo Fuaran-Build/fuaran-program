@@ -133,7 +133,7 @@ $modules = @(
         Oracle       = "oracle/Budget.fs"
         Hosts        = @(
             @{ Project = "Fuaran.Program.Tests"; List = "Phase 1716 - the proved budget as oracle at the toy witness"; MinCases = 6
-               Subject = "the generic pricing at the toy witness: fans, chains and nodes past the counting cap at every ceiling around their cost, and the cascade cost of every shape the model can express" }
+               Subject = "the generic pricing at the toy witness: fans, chains and nodes past the counting cap at every ceiling around their cost, and the cascade cost of every action shape the core accepts - the three flow shapes nested, and at the saturation bound" }
         )
     }
     @{

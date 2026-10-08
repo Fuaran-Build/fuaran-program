@@ -15,13 +15,21 @@
 /// the early stop lives, and include fans of UNEQUAL nodes, whose
 /// above-the-ceiling answer differs with the visiting order.
 ///
+/// The cascade cost is compared over EVERY action shape the core accepts
+/// (fuaran#2018): the sequence, the assignment, the call, the guard and the
+/// leaves, and the three flow shapes — `Choose`, `Repeat` and `Each` — each
+/// with several trees, nested in one another, and at the saturation bound.
+/// Until 2018 the model had no shape for the three and a FINDING case held
+/// the gap open; the model now carries them and that case is a comparison.
+///
 /// Out of scope here: the G2 gate. The UI host also compares the model's
 /// `step` with the UI transport loop's budget stage; there is no toy driver,
 /// so there is no toy G2 stage to compare, and nothing here claims one.
 ///
-/// And the go-red case is what says the comparison can lose: a walk that
+/// And the go-red cases are what say the comparison can lose: a walk that
 /// accumulates with .NET's ordinary wrapping `+`, which must come out on the
-/// wrong side of the ceiling.
+/// wrong side of the ceiling, and a cascade that prices a selection by its
+/// CHEAPER arm, which the harness must report.
 module Fuaran.Program.Tests.ToyBudgetOracleTests
 
 // The extraction's top-level module, aliased BEFORE the core is opened: the
@@ -230,31 +238,60 @@ let private priced (cost: TreeCost) (trees: (string * ToyNode) list) : (string *
 
 // ─── The cascade cost ───────────────────────────────────────────────────────
 
-/// A toy action, projected onto the model's `act` — or `None` where the model
-/// has no shape for it. The model's `act` is a `Chain` of leaves: a sequence
-/// sums its members and every other action costs one. Production prices the
-/// assignment, the call, the guard and the leaves at one, as the model does;
-/// it prices a `Choose` at one plus its dearer arm, a `Repeat` at one plus its
-/// body times its bound, and an `Each` at its lowered elements summed — and the
-/// model has NO shape for any of those three. Mapping them to `ALeaf` would
-/// make the model agree by discarding the disagreement, so they are not
-/// mapped; the test below records the gap instead.
-let rec private modelCascade (a: ToyAction) : ProvedBudget.act option =
+/// A toy action, translated onto the model's `act` — TOTAL since fuaran#2018,
+/// because the model carries every shape the view has. The translation states
+/// what the pricing reads of each shape, and nothing it does not:
+///
+///  - a `Sequence` is the chain of its members;
+///  - the assignment, the call, the guard and the leaves are each a leaf;
+///  - a `Choose` is its two arms — the condition and the exit are not carried,
+///    because the price never reads them;
+///  - a `Repeat` is its bound and its body — a literal's count, or a
+///    parameter's range with the count EXPRESSION dropped, because the price
+///    reads the top of the range and never resolves the count;
+///  - an `Each` is the sequence of its lowered elements, and the elements are
+///    stated here INDEPENDENTLY of production's lowering: the body once per
+///    element of the collection. At the toy, substitution writes the element
+///    over the placeholder in expressions only and leaves the action's shape
+///    untouched (`ToyDomain.substitute`), so every lowered element prices as
+///    the body does. Building the elements with the witness's own `lowered`
+///    would be handing the oracle production's answer to the one question the
+///    `Each` arm asks; stating the toy's lowering here means a toy whose
+///    substitution ever changed an action's shape shows as a divergence.
+let rec private modelCascade (a: ToyAction) : ProvedBudget.act =
     match toyWitness.Dispatch.Action.View a with
-    | ActionView.Sequence members ->
-        let mapped = members |> List.map modelCascade
-
-        if List.forall Option.isSome mapped then
-            Some(ProvedBudget.AChain(mapped |> List.choose id))
-        else
-            None
+    | ActionView.Sequence members -> ProvedBudget.AChain(members |> List.map modelCascade)
+    | ActionView.Choose(_, whenTrue, whenFalse, _) ->
+        ProvedBudget.AChoose(modelCascade whenTrue, modelCascade whenFalse)
+    | ActionView.Repeat(Bound.Literal count, body) ->
+        ProvedBudget.ARepeat(ProvedBudget.BLiteral(bigint count), modelCascade body)
+    | ActionView.Repeat(Bound.Parameter(_, lo, hi), body) ->
+        ProvedBudget.ARepeat(ProvedBudget.BParameter(bigint lo, bigint hi), modelCascade body)
+    | ActionView.Each(collection, _, body) ->
+        ProvedBudget.AEach(List.replicate (List.length collection) (modelCascade body))
     | ActionView.Assign _
     | ActionView.Call _
     | ActionView.Require _
-    | ActionView.Leaf _ -> Some ProvedBudget.ALeaf
-    | ActionView.Choose _
-    | ActionView.Repeat _
-    | ActionView.Each _ -> None
+    | ActionView.Leaf _ -> ProvedBudget.ALeaf
+
+/// The cost function under comparison for the cascade. Production is one; the
+/// go-red case below is another, and it is deliberately wrong.
+type private CascadeCost = ToyAction -> int
+
+let private productionCascade: CascadeCost =
+    ShippedBudget.actionCascadeCost toyWitness
+
+let private oracleCascade (a: ToyAction) : int =
+    int (ProvedBudget.action_cascade_cost satBound (modelCascade a))
+
+let private cascadeDivergence (cost: CascadeCost) (name: string) (action: ToyAction) : string option =
+    let prod = cost action
+    let oracle = oracleCascade action
+
+    if prod <> oracle then
+        Some(sprintf "%s\n  production: %d\n  oracle:     %d" name prod oracle)
+    else
+        None
 
 let private ring =
     Ring("/x", false, fun () -> failwith "a carried closure was invoked")
@@ -265,7 +302,8 @@ let rec private nest (depth: int) : ToyAction =
     else
         Seq [ nest (depth - 1); Hush ]
 
-/// Every shape the model can express, nested.
+/// Every non-flow shape, nested — the corpus the model could express before
+/// fuaran#2018, kept as it was.
 let private cascadeCases: (string * ToyAction) list =
     [ "a leaf", Beep 3
       "a declined leaf", Hush
@@ -280,17 +318,67 @@ let private cascadeCases: (string * ToyAction) list =
       "a sequence nested twenty deep", nest 20
       "a wide flat sequence", Seq(List.replicate 70 Hush) ]
 
-/// The shapes production prices and the model cannot express — each priced by
-/// production at something OTHER than what the model would answer if it were
-/// mapped to a leaf (or a sequence of them), which is what makes this a gap
-/// rather than a difference of notation.
-let private unexpressible: (string * ToyAction * int) list =
-    [ "a branch", Pick(Const(JBool true), Beep 1, Seq [ Beep 1; Beep 2 ], None), 3
+/// The three flow shapes, each with several trees and each nested inside the
+/// others (fuaran#2018). The price the core computes is stated beside each —
+/// a selection is one plus its dearer arm, a repeat is one plus its body times
+/// its bound (a parameter bound at the top of its range), an iteration is its
+/// body once per element — so the case says what the number IS, and the
+/// oracle's agreement is with a figure a reader can check by hand rather than
+/// with whatever production answered.
+let private flowCases: (string * ToyAction * int) list =
+    [ // Choose: one plus the dearer arm; the condition and the exit cost nothing.
+      "a branch between a leaf and a pair", Pick(Const(JBool true), Beep 1, Seq [ Beep 1; Beep 2 ], None), 3
+      "a branch with an exit, arms of equal price", Pick(Missing, Beep 1, Hush, Some(Read "k")), 2
+      "a branch whose arms are empty", Pick(Const(JBool false), Seq [], Seq [], None), 1
+      "a branch nesting a branch in each arm",
+      Pick(Missing, Pick(Missing, Beep 1, Seq [ Beep 1; Beep 2 ], None), Pick(Missing, Hush, Hush, None), None),
+      4
+      // Repeat: one plus the body times the bound.
       "a literal repeat", Times(Bound.Literal 3, Beep 1), 4
+      "a literal repeat of a pair", Times(Bound.Literal 5, Seq [ Beep 1; Hush ]), 11
+      "a repeat of nothing", Times(Bound.Literal 0, Beep 1), 1
+      "a negative literal repeat, priced as nothing but its step", Times(Bound.Literal -4, Seq [ Beep 1; Beep 2 ]), 1
       "a parameter repeat, priced at the top of its range", Times(Bound.Parameter(Read "k", 0, 5), Beep 1), 6
+      "a parameter repeat whose range is a point", Times(Bound.Parameter(Missing, 2, 2), Seq [ Beep 1; Hush ]), 5
+      "a repeat nesting a repeat", Times(Bound.Literal 2, Times(Bound.Literal 3, Beep 1)), 9
+      // Each: the body once per element, no step for a bound.
       "an iteration over two elements", ForEach([ JInt 1; JInt 2 ], "x", Seq [ Beep 1; Hush ]), 4
       "an iteration over nothing", ForEach([], "x", Beep 1), 0
-      "a sequence carrying a branch", Seq [ Hush; Pick(Missing, Beep 1, Times(Bound.Literal 2, Beep 1), None) ], 5 ]
+      "an iteration whose body reads the element",
+      ForEach([ JStr "a"; JStr "b"; JStr "c" ], "x", Put("last", None, Some(Hole "x"))),
+      3
+      "an iteration nesting an iteration",
+      ForEach([ JInt 1; JInt 2 ], "x", ForEach([ JInt 3; JInt 4; JInt 5 ], "y", Beep 1)),
+      6
+      // Every shape inside every other.
+      "a sequence carrying a branch", Seq [ Hush; Pick(Missing, Beep 1, Times(Bound.Literal 2, Beep 1), None) ], 5
+      "a branch whose arms are a repeat and an iteration",
+      Pick(Missing, Times(Bound.Literal 4, Beep 1), ForEach([ JInt 1; JInt 2; JInt 3 ], "x", Beep 1), None),
+      6
+      "a repeat of a branch over an iteration",
+      Times(Bound.Parameter(Read "n", 1, 3), Pick(Missing, ForEach([ JInt 1; JInt 2 ], "x", Beep 1), Hush, None)),
+      10
+      "an iteration whose body is a repeat of a branch",
+      ForEach([ JInt 1; JInt 2 ], "x", Times(Bound.Literal 2, Pick(Hole "x", Seq [ Beep 1; Beep 2 ], Beep 3, None))),
+      14 ]
+
+/// Trees whose cascade price reaches the saturation bound — where the model's
+/// saturating adds and multiplies are priced, which the pre-2018 cascade (a
+/// chain of leaves) could never reach.
+let private saturatingCascades: (string * ToyAction) list =
+    [ "a repeat whose multiply saturates", Times(Bound.Literal 2_000_000_000, Seq [ Beep 1; Beep 2 ])
+      "a repeat whose bound is the whole range", Times(Bound.Literal System.Int32.MaxValue, Beep 1)
+      "a parameter repeat whose top saturates",
+      Times(Bound.Parameter(Missing, 0, System.Int32.MaxValue), Seq [ Hush; Hush ])
+      "nested repeats whose product saturates", Times(Bound.Literal 100_000, Times(Bound.Literal 100_000, Beep 1))
+      "a branch between a saturated arm and a cheap one",
+      Pick(Missing, Times(Bound.Literal System.Int32.MaxValue, Beep 1), Hush, None)
+      "a sequence of two repeats whose sum saturates",
+      Seq
+          [ Times(Bound.Literal 1_500_000_000, Beep 1)
+            Times(Bound.Literal 1_500_000_000, Beep 1) ]
+      "an iteration over saturated bodies",
+      ForEach([ JInt 1; JInt 2 ], "x", Times(Bound.Literal System.Int32.MaxValue, Beep 1)) ]
 
 // ─── The go-red case ────────────────────────────────────────────────────────
 
@@ -327,6 +415,25 @@ let private overflowingTree: ToyNode =
     |> snd
 
 let private overflowCeiling = 2_000_000_000
+
+/// The proved cascade with ONE arm changed: a selection priced by its CHEAPER
+/// arm. The sequence, the repeat, the iteration and the leaves are the
+/// oracle's own, called by name. A gate pricing this way would admit a branch
+/// whose dearer arm the run then takes — the defect `choose_covers_either_arm`
+/// excludes.
+let rec private cheaperArmCascade (a: ProvedBudget.act) : int =
+    match a with
+    | ProvedBudget.AChoose(whenTrue, whenFalse) ->
+        int (ProvedBudget.sat_add satBound 1I (bigint (min (cheaperArmCascade whenTrue) (cheaperArmCascade whenFalse))))
+    | other -> int (ProvedBudget.action_cascade_cost satBound other)
+
+let private cheaperArmCost: CascadeCost =
+    fun action -> cheaperArmCascade (modelCascade action)
+
+/// A branch whose arms differ in price, so the cheaper-arm pricing answers a
+/// different number.
+let private unequalBranch: ToyAction =
+    Pick(Missing, Beep 1, Seq [ Beep 1; Beep 2; Beep 3 ], None)
 
 // ─── The tests ──────────────────────────────────────────────────────────────
 
@@ -425,56 +532,118 @@ let tests =
                       first
           }
 
-          test "the oracle agrees with production on the action cascade cost of every shape it can express" {
+          test "the oracle agrees with production on the action cascade cost of every non-flow shape, nested" {
               Expect.isGreaterThanOrEqual (List.length cascadeCases) 11 "the cascade corpus is the one declared above"
 
               let divergences =
                   cascadeCases
-                  |> List.choose (fun (name, action) ->
-                      match modelCascade action with
-                      | None -> Some(sprintf "%s: the model was expected to express this case and does not" name)
-                      | Some modelled ->
-                          let prod = ShippedBudget.actionCascadeCost toyWitness action
-                          let oracle = int (ProvedBudget.action_cascade_cost modelled)
-
-                          if prod <> oracle then
-                              Some(sprintf "%s\n  production: %d\n  oracle:     %d" name prod oracle)
-                          else
-                              None)
+                  |> List.choose (fun (name, action) -> cascadeDivergence productionCascade name action)
 
               match divergences with
               | [] -> ()
               | first :: _ -> failtestf "the extracted model and production disagree on a cascade cost:\n%s" first
           }
 
-          test "FINDING: the budget model has no Choose, Repeat or Each, which production prices - recorded, not mapped" {
-              // Production's `actionCascadeCost` gained the flow shapes in
-              // Phase 1976 and the iteration in Phase 1990; the budget model's
-              // `act` is still a chain of leaves. At the UI witness that is no
-              // gap, because no UI action views as either; at the generic core
-              // it is one, and this case keeps it visible. When the model
-              // gains the shapes, this case goes red and is replaced by a
-              // comparison.
-              for name, action, expected in unexpressible do
-                  Expect.isNone (modelCascade action) (sprintf "%s has no shape in the budget model" name)
+          test
+              "the oracle agrees with production on every flow shape - Choose, Repeat and Each - nested, at the price stated" {
+              // Each shape with several trees, and each nested inside the
+              // others; the corpus is asserted to hold all three.
+              Expect.isGreaterThanOrEqual (List.length flowCases) 19 "the flow corpus is the one declared above"
 
-                  let prod = ShippedBudget.actionCascadeCost toyWitness action
-
-                  Expect.equal prod expected (sprintf "%s is priced by production at %d" name expected)
-
-                  // What the model would answer if the shape were flattened
-                  // into leaves: one per non-sequence node met at the top
-                  // level. Production answers otherwise, so flattening would
-                  // be a false agreement, not a translation.
-                  let rec flattened (a: ToyAction) : int =
+              let shapesOf (action: ToyAction) : Set<string> =
+                  let rec go (a: ToyAction) : string list =
                       match toyWitness.Dispatch.Action.View a with
-                      | ActionView.Sequence members -> members |> List.sumBy flattened
-                      | _ -> 1
+                      | ActionView.Sequence members -> members |> List.collect go
+                      | ActionView.Choose(_, t, f, _) -> "Choose" :: go t @ go f
+                      | ActionView.Repeat(_, body) -> "Repeat" :: go body
+                      | ActionView.Each(_, _, body) -> "Each" :: go body
+                      | _ -> []
 
-                  Expect.notEqual
-                      prod
-                      (flattened action)
-                      (sprintf "%s: production's price differs from the leaf the model would read it as" name)
+                  go action |> Set.ofList
+
+              for shape in [ "Choose"; "Repeat"; "Each" ] do
+                  let carrying =
+                      flowCases
+                      |> List.filter (fun (_, action, _) -> Set.contains shape (shapesOf action))
+
+                  Expect.isGreaterThanOrEqual
+                      (List.length carrying)
+                      2
+                      (sprintf "the flow corpus carries at least two trees with a %s" shape)
+
+              Expect.isTrue
+                  (flowCases
+                   |> List.exists (fun (_, action, _) -> shapesOf action = Set.ofList [ "Choose"; "Repeat"; "Each" ]))
+                  "the flow corpus nests all three shapes in one tree"
+
+              // The number production answers is the one stated beside the
+              // case, so the agreement below is with a figure checked by
+              // hand rather than with whatever production said.
+              for name, action, stated in flowCases do
+                  Expect.equal (productionCascade action) stated (sprintf "%s is priced by the core at %d" name stated)
+
+              let divergences =
+                  flowCases
+                  |> List.choose (fun (name, action, _) -> cascadeDivergence productionCascade name action)
+
+              match divergences with
+              | [] -> ()
+              | first :: rest ->
+                  failtestf
+                      "the extracted model and production disagree on %d of %d flow-shape cascade(s). First divergence:\n%s"
+                      (List.length rest + 1)
+                      flowCases.Length
+                      first
+          }
+
+          test "the oracle agrees with production on cascades whose price saturates" {
+              Expect.isGreaterThanOrEqual
+                  (List.length saturatingCascades)
+                  7
+                  "the saturating corpus is the one declared above"
+
+              // The corpus must actually reach the bound, or the saturating
+              // arithmetic inside the cascade is never priced.
+              for name, action in saturatingCascades do
+                  Expect.equal
+                      (productionCascade action)
+                      System.Int32.MaxValue
+                      (sprintf "%s reaches the saturation bound" name)
+
+              let divergences =
+                  saturatingCascades
+                  |> List.choose (fun (name, action) -> cascadeDivergence productionCascade name action)
+
+              match divergences with
+              | [] -> ()
+              | first :: _ -> failtestf "the extracted model and production disagree on a saturating cascade:\n%s" first
+          }
+
+          test "GO RED: a cascade pricing a selection by its cheaper arm is reported at the toy witness" {
+              // The honest run first: production and the oracle agree on the
+              // very branch the defect is committed against.
+              Expect.isNone
+                  (cascadeDivergence productionCascade "the unequal branch" unequalBranch)
+                  "production disagrees with the oracle on the very branch the defect is committed against"
+
+              // Then the defect, through the SAME comparison, so what is
+              // shown is that the harness REPORTS it.
+              Expect.isSome
+                  (cascadeDivergence cheaperArmCost "the unequal branch" unequalBranch)
+                  "the comparison harness did not report a cascade that prices a selection by its cheaper arm - a harness that cannot lose is not evidence"
+
+              // And the divergence is the one that matters: the cheaper-arm
+              // price is BELOW the dearer arm's own price, so a gate capped
+              // between the two admits a branch whose run it cannot afford.
+              let dearerArm =
+                  match unequalBranch with
+                  | Pick(_, _, whenFalse, _) -> productionCascade whenFalse
+                  | _ -> failwith "the unequal branch is a Pick"
+
+              Expect.isLessThan
+                  (cheaperArmCost unequalBranch)
+                  dearerArm
+                  "the cheaper-arm price should be below the dearer arm's own price - that is the whole defect"
           }
 
           test "GO RED: an accumulator that wraps loses the ceiling comparison at the toy witness" {

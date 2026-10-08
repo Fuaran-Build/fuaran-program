@@ -516,7 +516,89 @@
           "budget_message",
           "action_cascade_cost"
         ],
-        "note": "quantified over EVERY admitted branch, which is what makes it a statement about the gate rather than about one driver: whatever the driver would have done to the session had the budget admitted the event, a breach does none of it"
+        "note": "quantified over EVERY admitted branch, which is what makes it a statement about the gate rather than about one driver: whatever the driver would have done to the session had the budget admitted the event, a breach does none of it; fuaran#2018: the gate's step and breached now take the saturation bound the cascade price is computed under, since the price saturates"
+      }
+    },
+    {
+      "id": "cascade-saturates-exact",
+      "level": "proved",
+      "phase": "fuaran#2018",
+      "claim": "The cascade cost of EVERY action shape the core accepts — a sequence, a selection, a bounded repeat with a literal or a parameter bound, a per-element iteration over its lowered elements, and the assignment, call, guard and leaf arms — is the exact price clipped at the saturation bound: a sequence sums its members, a selection is one plus its dearer arm, a repeat is one plus its body times its bound (a parameter bound at the top of its range), an iteration is its lowered elements summed, everything else is one. So the gate's figure never reads below the exact price, and a figure under the bound IS the exact price; a price is never negative and never above the bound.",
+      "evidence": {
+        "theorem": "cascade_saturates_exact",
+        "model": "proofs/Budget.fst",
+        "prover": "proofs/fstar-pin.json",
+        "supporting": [
+          "cascade_fold_saturates_exact",
+          "sat_mul_clip",
+          "exact_nonneg",
+          "exact_sum_nonneg",
+          "cascade_cost_bounds"
+        ],
+        "definitions": [
+          "act",
+          "bound",
+          "action_cascade_cost",
+          "cascade_fold",
+          "max_int",
+          "clamp_nat",
+          "exact_cascade_cost",
+          "exact_sum",
+          "clip"
+        ],
+        "note": "exact_cascade_cost is BoundedFold.fst's view_cost rule restated over this model's act, because the two models share no type (resource-bounds); fold_steps_within_cost bounds a run by the exact figure and this theorem says the gate compares that figure or the bound, never less. The model's act carries what the pricing reads of each shape and nothing else — a selection its two arms (not its condition or exit), a repeat its bound and body with a parameter's count expression dropped, an iteration its LOWERED elements exactly as VEach carries them — so it is exact over every tree the core accepts by construction, and the host's translation is what the differential checks. The fold over a sequence is kept as production's LEFT fold with an accumulator rather than a right recursion, so the oracle performs production's adds in production's order. The one non-linear step, a body whose own price already saturated multiplied by a positive bound, is sat_mul_clip, with the multiplication facts supplied"
+      }
+    },
+    {
+      "id": "cascade-choose-covers-either-arm",
+      "level": "proved",
+      "phase": "fuaran#2018",
+      "claim": "A selection admitted under a cap below the saturation bound has EITHER arm admitted under the cap less the selection's own step. The run takes one arm and the price covered both, so whichever the condition picks was paid for before the condition was read.",
+      "evidence": {
+        "theorem": "choose_covers_either_arm",
+        "model": "proofs/Budget.fst",
+        "prover": "proofs/fstar-pin.json",
+        "supporting": [
+          "cascade_saturates_exact"
+        ],
+        "note": "cap < mx is the side condition on every per-shape law and it is not a technicality: a price AT the bound says only 'at least this much', which is InteractionBudget.unlimited's case and nobody's gate"
+      }
+    },
+    {
+      "id": "cascade-repeat-is-unrolling",
+      "level": "proved",
+      "phase": "fuaran#2018",
+      "claim": "A literal repeat is priced as its bound's one step plus the SEQUENCE of its body that many times — the unrolling repeat-is-unrolling says the run is — and a negative count unrolls to nothing and still costs its step. A parameter repeat is priced at or above the literal repeat of EVERY count up to the top of its range, so whatever the store answers within the range at run time, the run was paid for by a price read without consulting it.",
+      "evidence": {
+        "theorem": "repeat_literal_is_unrolling",
+        "model": "proofs/Budget.fst",
+        "prover": "proofs/fstar-pin.json",
+        "supporting": [
+          "repeat_parameter_covers_every_count",
+          "exact_sum_replicate",
+          "cascade_saturates_exact"
+        ],
+        "definitions": [
+          "replicate"
+        ],
+        "note": "a count ABOVE the range is the fold's refusal and not the price's business: BoundedFold.fst's fold halts on it in its VRepeat arm, 'the repeat's bound is outside its declared range'"
+      }
+    },
+    {
+      "id": "cascade-each-is-elements",
+      "level": "proved",
+      "phase": "fuaran#2018",
+      "claim": "An iteration is priced EXACTLY as the sequence of its lowered elements — the price's half of each-is-lowering — with no step for a bound, because a literal collection is not read. And a sequence or an iteration admitted under a cap below the saturation bound has its first member admitted under the cap and the rest admitted under it too: by a caller's induction, every member. This is the law the driver's refusal 'before its first element' rests on — an Each whose lowered size exceeds the cap is refused whole, and one admitted has every element paid for.",
+      "evidence": {
+        "theorem": "each_is_elements",
+        "model": "proofs/Budget.fst",
+        "prover": "proofs/fstar-pin.json",
+        "supporting": [
+          "each_member_within",
+          "chain_member_within",
+          "cascade_saturates_exact"
+        ],
+        "note": "the elements reach the model lowered, as BoundedFold.fst's VEach carries them: what the lowering IS belongs to the witness's Substitute and is each-is-lowering's subject, and the toy host states it independently (the body once per element) rather than reading it off production"
       }
     },
     {
@@ -537,7 +619,7 @@
           "GO RED: an accumulator that wraps loses the ceiling comparison"
         ],
         "runner": "that repository's proofs/check.ps1 -Leg program, which re-checks a byte copy of this repository's model, byte-diffs its extraction against a copy of this repository's oracle, and runs this family",
-        "note": "the G2 stage compared is BoundedDriver.step in the UI adapter package, src/Fuaran.Program.UI (the UI transport loop, promoted there by Phase 1897); the pricing functions are the core's Budget. The comparison is of the INTEGER and not the verdict, which is what says the model kept production's explicit stack in production's push order — above the ceiling the answer depends on which nodes were visited first. The go-red case commits a walk that accumulates with .NET's wrapping add and asserts BOTH that the harness reports it and that its ceiling comparison comes out the wrong way, the tree being admitted rather than refused; a divergence that was merely a different number would not demonstrate the defect the law excludes; fuaran#2017: the generic pricing (Budget.treeCost and Budget.actionCascadeCost over a witness) is also compared at the toy witness, budget-generic-model-agrees-at-the-toy-witness; what stays here is the UI witness's data-bearing weighing and the BoundedDriver's G2 gate, which Phase 2012 moves with the UI adapters; fuaran#2012: MOVED with the UI adapters to the UI tier's repository, which hosts this family beside the adapter it is about (DECISIONS.md D32). This row is kept as the pointer: `repo` names where the evidence lives, and the paths above are that repository's. The model and the extraction it runs are byte copies of this repository's proofs/Budget.fst and its oracle, declared in that repository's copies.json with these files as canonical; this repository's proof leg still checks the model and byte-diffs the extraction, and no longer runs this host",
+        "note": "the G2 stage compared is BoundedDriver.step in the UI adapter package, src/Fuaran.Program.UI (the UI transport loop, promoted there by Phase 1897); the pricing functions are the core's Budget. The comparison is of the INTEGER and not the verdict, which is what says the model kept production's explicit stack in production's push order — above the ceiling the answer depends on which nodes were visited first. The go-red case commits a walk that accumulates with .NET's wrapping add and asserts BOTH that the harness reports it and that its ceiling comparison comes out the wrong way, the tree being admitted rather than refused; a divergence that was merely a different number would not demonstrate the defect the law excludes; fuaran#2017: the generic pricing (Budget.treeCost and Budget.actionCascadeCost over a witness) is also compared at the toy witness, budget-generic-model-agrees-at-the-toy-witness; what stays here is the UI witness's data-bearing weighing and the BoundedDriver's G2 gate, which Phase 2012 moves with the UI adapters; fuaran#2012: MOVED with the UI adapters to the UI tier's repository, which hosts this family beside the adapter it is about (DECISIONS.md D32). This row is kept as the pointer: `repo` names where the evidence lives, and the paths above are that repository's. The model and the extraction it runs are byte copies of this repository's proofs/Budget.fst and its oracle, declared in that repository's copies.json with these files as canonical; this repository's proof leg still checks the model and byte-diffs the extraction, and no longer runs this host; fuaran#2018: the canonical model's act gained the three flow shapes and its cascade saturates, so step and breached take the saturation bound as their first argument — the next re-copy of the two files into that repository carries that signature, and its host passes the bound it already supplies for the walk",
         "model": "proofs/program/Budget.fst"
       }
     },
@@ -545,7 +627,7 @@
       "id": "budget-generic-model-agrees-at-the-toy-witness",
       "level": "tested",
       "phase": "fuaran#2017",
-      "claim": "The extracted tree_cost and the core's Budget.treeCost return the same integer at the toy witness for fans, chains, unequal siblings and nodes past the counting cap, at every ceiling around each tree's exact cost and at the saturation bound; the extracted action_cascade_cost equals Budget.actionCascadeCost on every action shape the model can express (sequences of assignments, calls, guards and leaves, nested); and a wrapping accumulator loses the ceiling comparison. The G2 gate is not compared here: the toy has no driver.",
+      "claim": "The extracted tree_cost and the core's Budget.treeCost return the same integer at the toy witness for fans, chains, unequal siblings and nodes past the counting cap, at every ceiling around each tree's exact cost and at the saturation bound; the extracted action_cascade_cost equals Budget.actionCascadeCost on EVERY action shape the core accepts — the non-flow shapes nested, and since fuaran#2018 each of Choose, Repeat and Each in several trees and nested in the others, with the core's price stated beside each case, and on a corpus whose prices reach the saturation bound; a wrapping accumulator loses the ceiling comparison; and a cascade pricing a selection by its cheaper arm is reported. The G2 gate is not compared here: the toy has no driver.",
       "evidence": {
         "family": "Phase 1716 - the proved budget as oracle at the toy witness",
         "host": "tests/Fuaran.Program.Tests/ToyBudgetOracleTests.fs",
@@ -553,12 +635,14 @@
           "the toy corpus straddles the ceiling in both directions",
           "the oracle agrees with production over toy trees at every ceiling around their exact cost",
           "the oracle agrees with production at the saturation bound, under a heavier toy weighing",
-          "the oracle agrees with production on the action cascade cost of every shape it can express",
-          "FINDING: the budget model has no Choose, Repeat or Each, which production prices - recorded, not mapped",
+          "the oracle agrees with production on the action cascade cost of every non-flow shape, nested",
+          "the oracle agrees with production on every flow shape - Choose, Repeat and Each - nested, at the price stated",
+          "the oracle agrees with production on cascades whose price saturates",
+          "GO RED: a cascade pricing a selection by its cheaper arm is reported at the toy witness",
           "GO RED: an accumulator that wraps loses the ceiling comparison at the toy witness"
         ],
         "runner": "run.ps1 (the Fuaran.Program.Tests project, which reaches no UI type) and proofs/check.ps1 step 6, which asserts a CASE COUNT because a filter matching nothing reports success",
-        "note": "a toy node with h handlers maps to SPlain when h = 0 and otherwise to SWeighted(PRows [()], h), which is 1 + satMul 1 h, production's satAdd 1 h at every h; SRows would be wrong, because it caps at max_counted_rows and the toy's Cost does not (a probe mapping through SRows lost on a node past the cap: 150003 against 100003). FINDING, held by the case that names it: Budget.fst's act is ALeaf | AChain, so the model prices a Choose, a Repeat or an Each as a leaf, while the core prices a Choose at one plus its dearer arm, a Repeat at one plus bound times body and an Each at its lowered elements (BoundedFold.fst's view_cost states the full pricing but is noextract). At the UI witness no action views as a flow shape (ui_view_no_flow), so the gap is invisible there; at the generic core the budget model and its G2 theorems describe a cascade cost that is not production's for flow shapes. Closing it is a model change, outside fuaran#2017, and the case goes red if the model gains the shapes"
+        "note": "a toy node with h handlers maps to SPlain when h = 0 and otherwise to SWeighted(PRows [()], h), which is 1 + satMul 1 h, production's satAdd 1 h at every h; SRows would be wrong, because it caps at max_counted_rows and the toy's Cost does not (a probe mapping through SRows lost on a node past the cap: 150003 against 100003). fuaran#2017's FINDING — that Budget.fst's act was ALeaf | AChain, so the model priced a Choose, a Repeat or an Each as a leaf while the core prices a Choose at one plus its dearer arm, a Repeat at one plus bound times body and an Each at its lowered elements — is CLOSED by fuaran#2018 (cascade-saturates-exact): the model carries the three shapes, the case that held the gap open is replaced by the flow-shape comparison, and the translation is TOTAL. The translation states what the pricing reads of each shape and nothing it does not: a Choose its two arms (never its condition or exit), a Repeat its bound and body with a parameter's count expression dropped, and an Each as the body once per element — stated independently of the witness's lowered, which would hand the oracle production's answer to the one question the arm asks; at the toy, substitute writes the element over the placeholder in expressions only and leaves the action's shape untouched, so a toy whose substitution ever changed a shape shows as a divergence. Every flow case carries the core's price as a literal, so the agreement is with a figure checked by hand rather than with whatever production said; a saturating corpus asserts each of its prices reaches Int32.MaxValue before comparing, so the saturating arithmetic inside the cascade is priced rather than assumed"
       }
     },
     {
@@ -576,12 +660,12 @@
       "id": "int32-bound-assumed",
       "level": "assumed",
       "phase": "Phase 1716",
-      "claim": "The model is over unbounded integers; production is over Int32, with the ceiling's upper limit at Int32.MaxValue. The two coincide on every input production can be handed — an int64 sum and an int64 product of two Int32s both fit with room to spare, which is exactly what production computes before narrowing — so the model is over a WIDER domain than production rather than a different one. Budget.actionCascadeCost is the one function with no saturation at all, in the model or in production: what bounds it there is the Int32 range, and that is this rung rather than the proved one.",
+      "claim": "The model is over unbounded integers; production is over Int32, with the ceiling's upper limit at Int32.MaxValue. The two coincide on every input production can be handed — an int64 sum and an int64 product of two Int32s both fit with room to spare, which is exactly what production computes before narrowing — so the model is over a WIDER domain than production rather than a different one. (Until Phase 1976 Budget.actionCascadeCost was the one function with no saturation at all; it saturates now, and since fuaran#2018 so does the model's, under the same parameter — nothing in either is unsaturated.)",
       "class": "model-bridge",
       "evidence": {
         "assumption": "the model's unbounded integers agree with production's Int32 arithmetic on every input production can be handed"
       },
-      "mitigation": "the saturation bound is a parameter, so every proved law is quantified over it and holds at Int32.MaxValue as a special case; the differential supplies Int32.MaxValue and includes a tree whose cost saturates and one whose node cost saturates inside the multiply"
+      "mitigation": "the saturation bound is a parameter, so every proved law is quantified over it and holds at Int32.MaxValue as a special case; the differential supplies Int32.MaxValue and includes a tree whose cost saturates and one whose node cost saturates inside the multiply, and since fuaran#2018 a cascade corpus whose every price reaches the bound — a repeat whose multiply saturates, nested repeats whose product does, a sequence of two repeats whose sum does, a selection with a saturated arm, an iteration over saturated bodies"
     },
     {
       "id": "node-classification-sampled",
@@ -1184,7 +1268,7 @@
           "trace_steps",
           "times"
         ],
-        "note": "Budget.actionCascadeCost computes view_cost in saturating arithmetic; the model's figure is the exact one it saturates"
+        "note": "Budget.actionCascadeCost computes view_cost in saturating arithmetic; the model's figure is the exact one it saturates — and that the saturated figure is this one clipped at the bound, never below it, is Budget.fst's cascade_saturates_exact (fuaran#2018), proved over the budget model's own act since the two models share no type"
       }
     },
     {

@@ -19,9 +19,11 @@ with the leg that checks them and the seam that ties each model back to the code
   the halting guard — before the port that added it (Phase 1967; D19), with a fifth theorem saying
   only a guard halts. Bounded CODE: a generated tree running through this fold has no arbitrary-code
   surface.
-- **[The interaction budget](#the-budget-theorem)** — `Budget.fst`, five theorems (Phase 1716).
-  Bounded COST: a generated tree cannot be priced cheaper than it is, and a breach changes
-  nothing.
+- **[The interaction budget](#the-budget-theorem)** — `Budget.fst`, five theorems (Phase 1716),
+  and since Phase 2018 a cascade priced over every action shape the core accepts — the three flow
+  shapes concretely, in saturating arithmetic — with the saturation theorem and one law per flow
+  shape beside the five. Bounded COST: a generated tree cannot be priced cheaper than it is, and a
+  breach changes nothing.
 - **[Two-phase staging](#the-staging-theorem)** — `Staging.fst`, four theorems (Phase 1717),
   re-proved over a staged list that holds ops as well as host calls since a placement can register
   an op performer (Phase 1967), and restated over an `ApplyOps` arm that carries the op-channel
@@ -63,6 +65,7 @@ anything about that witness.
 | `Budget.fst` | `sat_monotone` | none — the saturating arithmetic | none |
 | `Budget.fst` | `treecost_exact_below_ceiling`, `treecost_strict_above_ceiling`, `treecost_terminates` | `kids` → `Nodes.Children`; `cost_shape` → `Cost` (the host's projection of it) | **walk** |
 | `Budget.fst` | `breach_pure` | the UI driver's `step` over `action_cascade_cost` → `Action.View` and the walk above | **walk + dispatch** (the UI adapter's driver) |
+| `Budget.fst` | `cascade_saturates_exact`, `choose_covers_either_arm`, `repeat_literal_is_unrolling`, `repeat_parameter_covers_every_count`, `each_is_elements`, `chain_member_within`, `each_member_within` (Phase 2018) | `act` → `Action.View` (the host's projection of it); an `AEach`'s elements → `ActionWitness.lowered` | **dispatch** only |
 | `Staging.fst` | `plan_pure`, `residual_is_prefix`, `performed_in_order`, `commit_is_total_prefix`, `plan_halt_performs_nothing` | `w_apply` → `Stream.Apply`, `w_op_view` → `View` (**state**); `w_compute` → the fold over `Action` / `Expr` / `Store`, `w_query` → `Store.LandQuery`, `w_assign` → `Store.Assign`, `w_slot_refused` → `Store.IsReserved` / `ReservedPrefix` (**dispatch**) | **state**, with the dispatch members as hypotheses a dispatch-less witness discharges (below) |
 | `Staging.fst` | `guard_holds_moves_nothing`, `guard_refusal_halts` (the op-channel guard, F-GUARD) | `w_apply`, `w_op_view` | **state** only |
 | `Staging.fst` | `performer_handed_the_plan` (F-PERFORM) | `w_apply`, `w_op_view`, and the registry's `r_op_perform` | **state** only |
@@ -287,7 +290,9 @@ The steps a run takes, read off its trace (one per non-composition step), never 
 MORE EXPENSIVE arm, a repeat is one step and its body times its bound (a parameter bound at the top
 of its range, so the price needs no store). So the budget's price, computed from the tree before the
 run, bounds the work the run does. Unconditional. The arithmetic is written over the count (`times`)
-so nothing non-linear reaches the solver.
+so nothing non-linear reaches the solver. That the SATURATED figure production computes is this exact
+one clipped at the bound — never below it — is `Budget.fst`'s `cascade_saturates_exact` (Phase 2018),
+proved over the budget model's own `act`, since the two models share no type.
 
 ### 8. `repeat_is_unrolling` — a repeat is the sequence of its body (Phase 1976)
 
@@ -534,9 +539,9 @@ theorem above proves the no-closure half. `Budget.fst` proves the budget half, o
 arithmetic that decides whether a tree is admitted at all.
 
 The subject is `Budget.satAdd` / `satMul`, `Budget.actionCascadeCost`, `Budget.treeCost`, and
-the G2 stage of `BoundedDriver.step` (`src/Fuaran.Program.UI/BoundedDriver.fs:203-242`,
-the UI transport loop, in the UI adapter package since Phase 1897) that consumes them. Five
-headline lemmas.
+the G2 stage of `BoundedDriver.step` (the UI transport loop, in the UI tier's repository since
+Phase 2012) that consumes them. Five headline lemmas, and since Phase 2018 the cascade laws
+below them.
 
 ### 1. `sat_monotone` — the saturating arithmetic cannot make a tree look cheap
 
@@ -598,6 +603,48 @@ admitted branch, which is what makes it a statement about the gate rather than a
 driver: whatever the driver would have done to the session had the budget admitted the event, a
 breach does none of it.
 
+### 6. `cascade_saturates_exact` — the cascade price is the exact price, clipped (Phase 2018)
+
+Until Phase 2018 the model's `act` was a chain of leaves, which was `actionCascadeCost` when the
+model was written and stopped being it when Phase 1976 added `Choose` and `Repeat` and Phase 1990
+added `Each` — the shipped function prices a selection at one plus its DEARER arm, a repeat at one
+plus its body times its bound (a parameter bound at the TOP of its range), an iteration at its
+lowered elements summed, and all of it in saturating arithmetic. The toy host held that gap open
+with a named case (fuaran#2017). The model now carries the five shapes concretely — a selection
+its two arms, a repeat its bound and body, an iteration its lowered elements, exactly as
+`BoundedFold.fst`'s `VEach` carries them — and the one theorem that matters about the figure:
+
+> `action_cascade_cost mx a == clip mx (exact_cascade_cost a)`
+
+where `exact_cascade_cost` is the unbounded price — `view_cost`'s rule, restated over this
+model's `act` because the two models share no type. Two things follow for a caller. The gate's
+figure never reads BELOW the exact price, so the bound `fold_steps_within_cost` puts on a run
+carries across to the number the gate compares; and a figure under the bound IS the exact price,
+usable as a number. The non-linear step — a body whose own price already saturated, multiplied
+by a positive bound — is `sat_mul_clip`, with the multiplication facts supplied.
+
+### 7. One law per flow shape, in a caller's terms (Phase 2018)
+
+The caller is the G2 gate, which admits or refuses on the price alone before the run. Each law
+says what an ADMITTED price says of the parts that will run, and each carries `cap < mx` — a
+price AT the bound says only "at least this much", which is `InteractionBudget.unlimited`'s case
+and nobody's gate.
+
+- **`choose_covers_either_arm`** — a selection admitted under a cap has EITHER arm admitted
+  under the cap less the selection's own step. The run takes one arm; the price covered both.
+- **`repeat_literal_is_unrolling`** — a literal repeat is priced as its bound step plus the
+  SEQUENCE of its body that many times, the unrolling `repeat_is_unrolling` says the run is; a
+  negative count unrolls to nothing and still costs its step. **`repeat_parameter_covers_every_count`**
+  — a parameter repeat is priced at or above the literal repeat of every count up to the top of
+  its range, so whatever the store answers within the range, the run was paid for.
+- **`each_is_elements`** — an iteration is priced exactly as the sequence of its lowered
+  elements, the price's half of `each_is_lowering`; and **`each_member_within`** /
+  **`chain_member_within`** — a sequence or an iteration admitted under a cap has its first
+  member, and the rest, admitted under the cap: by a caller's induction, every member.
+
+The shipped rules were examined shape by shape before any of this was proved and all three were
+TAKEN rather than corrected — the decision per shape is `DECISIONS.md` D35.
+
 ### What the budget model does NOT own
 
 Three things, and they are different in kind.
@@ -627,6 +674,11 @@ wrapping add prices wrong only on the trees nobody tries.
 4. **The walk terminates, bounded by the tree AND by the ceiling** — `treecost_terminates`,
    with the `Tot` effect and the `decreases` clause carrying termination itself.
 5. **A breach mutates nothing** — `breach_pure`.
+6. **The cascade price, over every action shape the core accepts, is the exact price clipped at
+   the bound** — `cascade_saturates_exact` (Phase 2018), with `cascade_cost_bounds`.
+7. **One law per flow shape** — `choose_covers_either_arm`, `repeat_literal_is_unrolling`,
+   `repeat_parameter_covers_every_count`, `each_is_elements`, `each_member_within` and
+   `chain_member_within` (Phase 2018).
 
 No `admit`, no `assume`; `--report_assumes error` is on for this module exactly as it is for
 the fold.
@@ -643,13 +695,23 @@ The extracted model agrees with production over three corpora:
   production's explicit stack in production's push order: above the ceiling the answer depends
   on which nodes were visited first;
 - **the G2 gate itself** — `BoundedDriver.step` against the model's `step`, comparing the
-  refusal's reason verbatim and requiring the session to come back by reference.
+  refusal's reason verbatim and requiring the session to come back by reference;
+- **every action shape the core accepts**, at the toy witness (fuaran#2017, extended by Phase
+  2018): the non-flow shapes nested, each of `Choose`, `Repeat` and `Each` in several trees and
+  nested in the others, with the core's price STATED beside each case so the agreement is with a
+  figure checked by hand, and a corpus whose prices reach the saturation bound. The translation
+  states an `Each`'s elements as the body once per element rather than taking them from the
+  witness's own `lowered`, so the oracle is not handed production's answer to the question the
+  arm asks.
 
 And a **go-red case**: a walk that accumulates with .NET's ordinary wrapping `+` instead of the
 saturating add, committed deliberately, which the comparison is asserted to report AND whose
 ceiling comparison is asserted to come out the wrong way — the tree admitted rather than
 refused. That second assertion is the point: a divergence that was merely a different number
-would not demonstrate the defect this law exists to exclude.
+would not demonstrate the defect this law exists to exclude. A second go-red case (Phase 2018)
+commits a cascade that prices a selection by its CHEAPER arm and asserts the harness reports it
+and that the figure falls below the dearer arm's own price — the admission `choose_covers_either_arm`
+excludes.
 
 #### Assumed, and stated
 
@@ -662,9 +724,9 @@ would not demonstrate the defect this law exists to exclude.
   with the ceiling's upper limit at `Int32.MaxValue`. The two coincide on every input
   production can be handed — an `int64` sum and an `int64` product of two `Int32`s both fit
   with room to spare, which is exactly what production computes before narrowing — so the model
-  is over a WIDER domain than production rather than a different one. `actionCascadeCost` is
-  the one function with no saturation at all, in the model or in production: what bounds it
-  there is the `Int32` range, and that is this rung and not the proved one.
+  is over a WIDER domain than production rather than a different one. (Until Phase 1976
+  `actionCascadeCost` was the one function with no saturation at all; it saturates now, and since
+  Phase 2018 so does the model's, under the same parameter — nothing in either is unsaturated.)
 - **The toolchain**, on the same terms as the fold theorem's.
 
 #### Not claimed
