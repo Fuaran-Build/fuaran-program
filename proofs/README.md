@@ -643,7 +643,7 @@ and nobody's gate.
   member, and the rest, admitted under the cap: by a caller's induction, every member.
 
 The shipped rules were examined shape by shape before any of this was proved and all three were
-TAKEN rather than corrected — the decision per shape is `DECISIONS.md` D34.
+TAKEN rather than corrected — the decision per shape is `DECISIONS.md` D35.
 
 ### What the budget model does NOT own
 

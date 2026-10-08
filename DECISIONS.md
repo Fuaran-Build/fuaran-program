@@ -2171,7 +2171,7 @@ bootstrap-era instruction file and pack-script header that `607515f` removed at 
 the citations this entry rewords. This repository is already public, so its history is not rewritten
 here: the finding is recorded, and any remedy is the maintainers' act, not this repository's.
 
-## D34 — The budget model prices the three flow shapes as the shipped code does — a selection by its dearer arm, a repeat by the top of its bound, an iteration by its lowered elements, all saturating — and the code's rule is taken for every shape, none corrected (2026-10-08)
+## D35 — The budget model prices the three flow shapes as the shipped code does — a selection by its dearer arm, a repeat by the top of its bound, an iteration by its lowered elements, all saturating — and the code's rule is taken for every shape, none corrected (2026-10-08)
 
 **2026-10-08. fuaran#2018.** `proofs/Budget.fst` was written against an `actionCascadeCost` that made
 one distinction — is this a chain, and what does it hold — and summed with an unsaturated `+`. Phase
