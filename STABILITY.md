@@ -20,6 +20,49 @@ what a consumer pays to adopt it and why.
 This document starts at `0.6.0`. The slots before it are recorded where they were cut, in the
 comments beside `<Version>` in `Directory.Build.props`, and are not restated here.
 
+## 0.8.0 — DRAFT (untagged) — the query evaluator seam on `RunQuery` (Phase 1905)
+
+**Class: breaking**, by this file's own rule, for a consumer that constructs a
+`ServerEffectRegistry` or a `PerformerFacets` as a full record literal (FS0764 names the missing
+member). Additive for everyone else. `v0.7.1` is tagged, so this cannot ride it. `DECISIONS.md` D34
+records what was decided; this entry records what a consumer pays.
+
+### What changed shape
+
+- **`ServerEffectRegistry` gains `QueryEvaluator: QueryEvaluator option`.** `None` is the in-memory
+  fold, exactly as before, and it is what `ServerEffectRegistry.denyAll` carries. A registry built
+  from `denyAll` and the `with`-style functions needs nothing. A full literal adds
+  `QueryEvaluator = None`.
+- **`PerformerFacets` gains `QueryEvaluator: IdempotencyFacet option`**, which declares what
+  repeating a staged query evaluator does. `PerformerFacets.none` carries `None`, and a full literal
+  adds `QueryEvaluator = None`. With `None`, the facets derive `RunQuery` exactly as before.
+
+### What was added
+
+- **The seam:** `QueryEvaluator` (the source, the pipeline and the named-source resolver, answered as
+  a table), `QueryFault`, `QueryPosture`, and the `QueryEvaluator` module: `inMemory` (the fold, the
+  reference), `reaching`, `pureRead`, `checkedAgainst` and `through`.
+  `ServerEffectRegistry.withQueryEvaluator`, `ServerEffectRegistry.checkingQueries`,
+  `ServerServices.withQueryEvaluator`, `ServerServices.effects`.
+- **The law family:** `QueryFixture`, `QueryLawFinding`, `QueryEvaluatorLaws.certify`. A host runs
+  these to hold its evaluator to the fold.
+- **The durable and facet half:** `DurableServices.declaringQueryEvaluator`,
+  `PerformerFacets.declareQueryEvaluator`, `isQueryEvaluatorDeclared`, `queryEvaluatorFacet`,
+  `Facets.undeclaredQueryEvaluator`, and `Durable.QueryStageCapability`.
+
+### What did not move
+
+- **With no evaluator registered, behaviour is byte-identical**: the same fold, the same halt
+  reasons, the same `Performed` order. The program wire specification and its corpus do not change,
+  and no codec was touched.
+- **What a host pays only if it opts in.** Under a staged evaluator, `RunQuery` is performed after the
+  plan, like a `HostCall`. Its table lands then, so a `Compute` stage after it in the same handler
+  does not see it; the existing `HostCall`-with-`into` arm already behaves this way. It is journaled at
+  its own ordinal, and it is one-way for undo. A declared pure read keeps today's placement.
+- **What the server placement now checks, only for a registered evaluator:** the answer's schema
+  against the statically derived one. That check runs through `ServerServices.effects`, which is the
+  registry every interpreter behind the placement's call actions now takes.
+
 ## After 0.7.1 — the UI adapters leave this repository (fuaran#2012, DECISIONS.md D32) — BREAKING for the package set
 
 **The package set loses two packages; the four that remain do not move.** `Fuaran.Program.UI` and
