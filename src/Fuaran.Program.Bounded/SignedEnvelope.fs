@@ -251,6 +251,7 @@ module SignedEnvelope =
           HostCalls = except a.HostCalls b.HostCalls
           StateNamespaces = except a.StateNamespaces b.StateNamespaces
           OpaqueHandlers = except a.OpaqueHandlers b.OpaqueHandlers
+          Iterations = except a.Iterations b.Iterations
           Server =
             match a.Server, b.Server with
             | None, _ -> None

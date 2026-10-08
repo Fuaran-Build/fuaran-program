@@ -34,6 +34,8 @@
     <Compile Include="FlowDecisionTests.fs" />
     <!-- Phase 1990: Each over a literal collection, on both axes. -->
     <Compile Include="EachTests.fs" />
+    <!-- Phase 1991: Each over a collection the store holds, the dispatch axis -->
+    <Compile Include="StoredEachTests.fs" />
     <!-- Phase 1992: the FOURTH witness — a grid of cells by identity, at the
          state axis, exercising Each against a spreadsheet's loops. -->
     <Compile Include="GridDomain.fs" />

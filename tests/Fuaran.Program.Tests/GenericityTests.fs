@@ -75,7 +75,8 @@ let tests =
 
           test "an answered call splices in place: it sees the write before it and is seen by the write after" {
               let arm: HandlerArm<ToyStore, ToyEffect, string list> =
-                  { Answer =
+                  { ReadExtent = ExtentReader.live
+                    Answer =
                       fun nodeId endpoint store seen ->
                           let before = Map.tryFind "x" store
 

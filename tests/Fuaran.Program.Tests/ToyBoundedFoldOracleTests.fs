@@ -70,33 +70,56 @@ let private modelBound (bound: Bound<ToyExpr>) : BoundedFold.bound<ToyExpr> =
     | Bound.Literal count -> BoundedFold.BLiteral(bigint count)
     | Bound.Parameter(count, lo, hi) -> BoundedFold.BParameter(count, bigint lo, bigint hi)
 
-/// The production `View`, taken to exhaustion — the model's `w_view`. Eight
-/// shapes since Phase 1990, named without a wildcard, as the model names them.
+/// The production `View`, taken to exhaustion — the model's `w_view`. Nine
+/// shapes since Phase 1991, named without a wildcard, as the model names them.
 /// An `Each` reaches the model LOWERED (`VEach` carries its elements): the
 /// production `Substitute` is applied here, once per element, and the
 /// elements viewed — so the differential below compares production, which
 /// substitutes as it folds, against a model handed the substituted bodies,
 /// and a `Substitute` that did not preserve the body's shape would show as a
-/// divergence.
-let rec private toyModelView (a: ToyAction) : BoundedFold.action_view<ToyAction, ToyExpr, JVal> =
+/// divergence. A STORE-BOUND `Each` (Phase 1991) reaches the model as
+/// `VEachOf`, lowered over the extent `entry` — the store the case STARTS
+/// from — answers for its source; the model reads the source itself and
+/// checks the ceiling, so what the host hands it is the obligation D36 item
+/// 7 states: the elements of the extent the same store holds at entry. No
+/// corpus case writes a source before entering the loop that reads it.
+let rec private toyModelViewIn (entry: ToyStore) (a: ToyAction) : BoundedFold.action_view<ToyAction, ToyExpr, JVal> =
+    let view = toyModelViewIn entry
+
     match toyWitness.Dispatch.Action.View a with
-    | ActionView.Sequence items -> BoundedFold.VSequence(a, items |> List.map toyModelView)
+    | ActionView.Sequence items -> BoundedFold.VSequence(a, items |> List.map view)
     | ActionView.Assign(key, value, from) -> BoundedFold.VAssign(a, key, modelOpt value, modelOpt from)
     | ActionView.Call(endpoint, declaresTarget) -> BoundedFold.VCall(a, endpoint, declaresTarget)
     | ActionView.Require condition -> BoundedFold.VRequire(a, condition)
-    | ActionView.Choose(entry, whenTrue, whenFalse, exit) ->
-        BoundedFold.VChoose(a, entry, toyModelView whenTrue, toyModelView whenFalse, modelOpt exit)
-    | ActionView.Repeat(bound, body) -> BoundedFold.VRepeat(a, modelBound bound, toyModelView body)
-    | ActionView.Each(collection, placeholder, body) ->
+    | ActionView.Choose(entry', whenTrue, whenFalse, exit) ->
+        BoundedFold.VChoose(a, entry', view whenTrue, view whenFalse, modelOpt exit)
+    | ActionView.Repeat(bound, body) -> BoundedFold.VRepeat(a, modelBound bound, view body)
+    | ActionView.Each(Collection.Literal elements, placeholder, body) ->
         BoundedFold.VEach(
             a,
-            ActionWitness.lowered toyWitness.Dispatch.Action collection placeholder body
-            |> List.map toyModelView
+            ActionWitness.lowered toyWitness.Dispatch.Action elements placeholder body
+            |> List.map view
+        )
+    | ActionView.Each(Collection.Stored(source, ceiling), placeholder, body) ->
+        let extent =
+            match resolveWith (fun k -> Map.tryFind k entry) source with
+            | ExprResolution.Resolved(JArr xs) -> xs
+            | _ -> []
+
+        BoundedFold.VEachOf(
+            a,
+            source,
+            bigint (max ceiling 0),
+            extent,
+            ActionWitness.lowered toyWitness.Dispatch.Action extent placeholder body
+            |> List.map view
         )
     | ActionView.Leaf _ -> BoundedFold.VLeaf a
 
-let private toyModelWitness: BoundedFold.witness<ToyAction, ToyExpr, JVal, ToyEffect> =
-    { w_view = toyModelView
+/// The model witness, lowering a store-bound `Each` over the extent `entry`
+/// holds (the production store the case starts from).
+let private toyModelWitnessIn (entry: ToyStore) : BoundedFold.witness<ToyAction, ToyExpr, JVal, ToyEffect> =
+    { w_view = toyModelViewIn entry
       w_lower =
         fun nodeId action s ->
             match lowerWith (toyLookup s) nodeId action with
@@ -120,7 +143,18 @@ let private toyModelWitness: BoundedFold.witness<ToyAction, ToyExpr, JVal, ToyEf
         fun jv ->
             match jv with
             | JInt n when n >= 0 -> BoundedFold.OSome(bigint n)
+            | _ -> BoundedFold.ONone
+      // The core reads `JArr xs` itself (Phase 1991); the model's arrow, wired
+      // to that.
+      w_as_elements =
+        fun jv ->
+            match jv with
+            | JArr xs -> BoundedFold.OSome xs
             | _ -> BoundedFold.ONone }
+
+/// The model witness at the empty store — for the walks that read no store.
+let private toyModelWitness: BoundedFold.witness<ToyAction, ToyExpr, JVal, ToyEffect> =
+    toyModelWitnessIn Map.empty
 
 let private toyNoCall = fun () -> failwith "a carried closure was invoked"
 
@@ -157,6 +191,17 @@ let private eachCases: string list =
       "each halts at the element whose guard fails"
       "each nested in each, distinct placeholders"
       "each inside a branch inside a repeat" ]
+
+/// The store-bound cases (Phase 1991), by label: each loop case reads a
+/// collection the case BEFORE it wrote, so the host lowers over the extent the
+/// case's entry store holds, as the model's hypothesis requires.
+let private storedEachCases: string list =
+    [ "stored each writes the element, element by element"
+      "stored each over the ceiling halts before the first element"
+      "stored each over a source that is not a list halts"
+      "stored each over a source that does not resolve halts"
+      "stored each whose body grows its own collection runs the entry extent"
+      "stored each over nothing runs nothing" ]
 
 /// Every view shape, every refusal the fold owns and every leaf outcome: a
 /// literal and a derived write, a write reading a key an earlier step wrote,
@@ -269,7 +314,28 @@ let private toyCorpus: (string * ToyAction) list =
               Hush,
               Some(Const(JBool true))
           )
-      ) ]
+      )
+      // Phase 1991: the collection is written by one case and read at entry
+      // by the next.
+      "rows for the stored each", Put("rows", Some(JArr [ JStr "r1"; JInt 2; JBool false ]), None)
+      "stored each writes the element, element by element",
+      ForEachOf(Read "rows", 3, "x", Seq [ Put("last", None, Some(Hole "x")); Beep 1 ])
+      "stored each over the ceiling halts before the first element",
+      ForEachOf(Read "rows", 2, "x", Seq [ Put("never", Some(JStr "ran"), None); Beep 9 ])
+      "stored each over a source that is not a list halts", ForEachOf(Read "a", 3, "x", Beep 9)
+      "stored each over a source that does not resolve halts", ForEachOf(Read "absent", 3, "x", Beep 9)
+      "stored each whose body grows its own collection runs the entry extent",
+      ForEachOf(
+          Read "rows",
+          9,
+          "x",
+          Seq
+              [ Put("last", None, Some(Hole "x"))
+                Put("rows", Some(JArr [ JStr "p"; JStr "q"; JStr "r"; JStr "s"; JStr "t" ]), None)
+                Beep 2 ]
+      )
+      "empty rows for the stored each", Put("rows", Some(JArr []), None)
+      "stored each over nothing runs nothing", ForEachOf(Read "rows", 0, "x", Beep 9) ]
 
 // ─── The comparison ─────────────────────────────────────────────────────────
 
@@ -289,7 +355,8 @@ let private production: ToyFold =
 /// A placement that answers `/answer` — writing the store, emitting an effect,
 /// reporting a diagnostic and counting — and declines everything else.
 let private toyArm: HandlerArm<ToyStore, ToyEffect, int> =
-    { Answer =
+    { ReadExtent = ExtentReader.live
+      Answer =
         fun nodeId endpoint s count ->
             if endpoint = "/answer" then
                 Some
@@ -329,7 +396,7 @@ let private toyDivergences
             let prod, prodCount' = fold prodArm "n1" action prodStore prodCount
 
             let model, modelCount' =
-                BoundedFold.run_action toyModelWitness modelArm "n1" action modelStore modelCount
+                BoundedFold.run_action (toyModelWitnessIn prodStore) modelArm "n1" action modelStore modelCount
 
             let prodState = prod.Store |> Map.toList
             let modelState = model.o_store |> List.sortBy fst
@@ -417,7 +484,13 @@ let private toyFamilyDivergence (scenario: ToyFamily.ToyScenario) : string optio
                     BoundedActions.run toyWitness HandlerArm.inert nodeId action prodStore ()
 
                 let model, _ =
-                    BoundedFold.run_action toyModelWitness (BoundedFold.inert_arm ()) nodeId action modelStore ()
+                    BoundedFold.run_action
+                        (toyModelWitnessIn prodStore)
+                        (BoundedFold.inert_arm ())
+                        nodeId
+                        action
+                        modelStore
+                        ()
 
                 let agree =
                     (prod.Store |> Map.toList) = (model.o_store |> List.sortBy fst)
@@ -551,7 +624,7 @@ let tests =
 
               Expect.equal (List.distinct labels) labels "every corpus label is distinct"
 
-              for label in flowShapeCases @ eachCases do
+              for label in flowShapeCases @ eachCases @ storedEachCases do
                   Expect.contains labels label (sprintf "the corpus carries %s" label)
 
               let shapeOfLabel label =
@@ -585,6 +658,11 @@ let tests =
 
               Expect.equal (List.length flowShapeCases) 18 "eighteen flow-shape cases"
               Expect.equal (List.length eachCases) 6 "six each cases"
+
+              for label in storedEachCases do
+                  Expect.isTrue (toyCorpus |> List.exists (fun (l, _) -> l = label)) label
+
+              Expect.equal (List.length storedEachCases) 6 "six stored-each cases (Phase 1991)"
           }
 
           test "the extracted generic fold agrees with the ported core at the toy witness" {

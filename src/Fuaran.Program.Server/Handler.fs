@@ -208,7 +208,8 @@ module FlowDecision =
         | Trace.Repeat iterations ->
             FlowDecision.Repeated(List.length iterations)
             :: (iterations |> List.collect ofTrace)
-        | Trace.Each elements ->
+        | Trace.Each elements
+        | Trace.EachOf(_, elements) ->
             FlowDecision.Iterated(List.length elements)
             :: (elements |> List.collect ofTrace)
 
@@ -466,6 +467,7 @@ module Handler =
     let private planOps
         (state: StateWitness<'Node, 'Op>)
         (performance: OpPerformance<'Node, 'Op>)
+        (readExtent: ExtentReader)
         (capability: string)
         (ops: 'Op list)
         (tree: 'Node)
@@ -576,7 +578,26 @@ module Handler =
                         | Error code -> Error code
                         | Ok(tree', staged', trail', flow') -> elements rest tree' staged' trail' flow'
 
-                elements collection tree staged trail (FlowDecision.Iterated(List.length collection) :: flow)
+                let over (extent: Fuaran.Core.JVal list) =
+                    elements extent tree staged trail (FlowDecision.Iterated(List.length extent) :: flow)
+
+                match collection with
+                | Collection.Literal extent -> over extent
+                // A collection the STATE holds (Phase 1991, D36): read ONCE,
+                // here, from the state as of this position — through the
+                // placement's reader, so a durable placement journals the
+                // read and serves the record on replay — and refused before
+                // the first element when its extent is over the ceiling.
+                // Past the check the extent is the collection.
+                | Collection.Stored(stored, ceiling) ->
+                    if ceiling < 0 then
+                        Error "the collection's ceiling is negative"
+                    else
+                        match readExtent stored.Name (fun () -> Ok(stored.Read tree)) with
+                        | Error reason -> Error reason
+                        | Ok extent when List.length extent > ceiling ->
+                            Error "the collection's extent is over its declared ceiling"
+                        | Ok extent -> over extent
 
         // Validation first (Phase 1990): a placeholder read where no `Each`
         // binds it is a defect of the FORM, refused with the placeholder named
@@ -714,7 +735,16 @@ module Handler =
                     // claim above true of the tree and not merely of the store. A
                     // guard on the op channel halts here, on its own reason.
                     match
-                        planOps state performance capability ops performed.Store.Tree acc.Staged acc.Trail acc.Flow
+                        planOps
+                            state
+                            performance
+                            registry.ReadExtent
+                            capability
+                            ops
+                            performed.Store.Tree
+                            acc.Staged
+                            acc.Trail
+                            acc.Flow
                     with
                     | Error code -> halt capability code acc
                     | Ok(tree, staged, trail, flow) ->
@@ -936,9 +966,17 @@ module Handler =
 
         // The ONE fold, traced: the outcome `runInert` answers (the model's
         // `traced_agrees`), and the trace the undo reverses the stage by.
+        // The arm declines every call (a compute stage answers none) and
+        // reads a store-bound collection's extent through the registry's
+        // reader (Phase 1991), so a durable placement journals that read
+        // exactly as it journals an op stage's.
+        let computeArm: HandlerArm<'Store, 'Effect, unit> =
+            { HandlerArm.inert with
+                ReadExtent = registry.ReadExtent }
+
         let compute (nodeId: string) (action: 'Action) (bindings: 'Store) =
             let outcome, (), trace =
-                BoundedActions.runTraced witness HandlerArm.inert nodeId action bindings ()
+                BoundedActions.runTraced witness computeArm nodeId action bindings ()
 
             outcome, trace
 

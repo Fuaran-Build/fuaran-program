@@ -61,7 +61,10 @@ open Fuaran.Core
 //      element substituted for the placeholder through the witness's
 //      `Substitute`, composed as a sequence — vocabulary that lowers to the
 //      core by substitution (D1). An ill-scoped placeholder is refused at the
-//      fold's entry, before anything runs.
+//      fold's entry, before anything runs. The collection may be one the
+//      STORE holds (Phase 1991): resolved once at entry under a ceiling the
+//      tree declares, refused before the first element when over it,
+//      recorded in the trace and replayed from the record.
 //    - `Choose(entry, whenTrue, whenFalse, exit)` → SELECTION (Phase 1976):
 //      resolve the entry condition as a guard's; the boolean true takes the
 //      true arm, anything else the false arm, unresolved or errored halts;
@@ -159,6 +162,29 @@ type HandlerAnswer<'Store, 'Effect, 'Placement> =
       Diagnostics: BoundedDiagnostic list
       Placement: 'Placement }
 
+/// How a placement READS the extent of a collection the store holds (Phase
+/// 1991, DECISIONS.md D36): `reader subject read` is handed the read's
+/// SUBJECT — the collection's name on the state axis, the binding keys the
+/// source expression reads on the dispatch axis — and the LIVE read, and
+/// answers the extent the run lowers over. The one seam both axes read a
+/// store-bound collection through, so the durable interpreter can journal
+/// the read at its ordinal, under the capability `ReadExtent`, exactly as it
+/// journals a host call: a replay is then SERVED the recorded extent, the
+/// live store is not consulted, and a journal written before this seam
+/// existed replays unchanged because a handler with no store-bound `Each`
+/// never reaches it. `ExtentReader.live` performs the read; it is what every
+/// placement that journals nothing carries.
+type ExtentReader = string -> (unit -> Result<JVal list, string>) -> Result<JVal list, string>
+
+module ExtentReader =
+    /// The reader that performs the live read — every non-durable placement.
+    let live: ExtentReader = fun _ read -> read ()
+
+    /// The capability an extent read is journaled under (the durable
+    /// interpreter's `wrapAt`), in the ordinal sequence host calls share.
+    [<Literal>]
+    let Capability = "ReadExtent"
+
 /// The shared fold's **handler-effect arm** — what a call action means at this
 /// placement (DECISIONS.md D7).
 ///
@@ -174,16 +200,27 @@ type HandlerAnswer<'Store, 'Effect, 'Placement> =
 /// to know what a handler is would put the server placement's vocabulary in the
 /// package the browser placement also consumes.
 type HandlerArm<'Store, 'Effect, 'Placement> =
-    { Answer: string -> string -> 'Store -> 'Placement -> HandlerAnswer<'Store, 'Effect, 'Placement> option }
+    {
+        Answer: string -> string -> 'Store -> 'Placement -> HandlerAnswer<'Store, 'Effect, 'Placement> option
+        /// How this placement READS the extent of a collection the store holds
+        /// (Phase 1991, D36): handed the read's SUBJECT and the live read, it
+        /// answers the extent the run uses. `HandlerArm.inert` performs the
+        /// live read; the durable placement journals the read at its ordinal
+        /// and SERVES the recorded extent on replay, so a replay never
+        /// consults the live store for it. Reached only when a store-bound
+        /// `Each` is met.
+        ReadExtent: ExtentReader
+    }
 
 module HandlerArm =
 
     /// The arm that declines every call — the default, and the only arm a
     /// placement with no handler registry can honestly offer. Named rather than
     /// implied, so "this placement runs no handlers" is a statement in the code
-    /// rather than an absence.
+    /// rather than an absence. It reads a collection's extent LIVE.
     let inert<'Store, 'Effect, 'Placement> : HandlerArm<'Store, 'Effect, 'Placement> =
-        { Answer = fun _ _ _ _ -> None }
+        { Answer = fun _ _ _ _ -> None
+          ReadExtent = ExtentReader.live }
 
 module BoundedActions =
 
@@ -282,6 +319,14 @@ module BoundedActions =
     /// budget's cascade cost and the demanded-effect projection. Neither
     /// performs, mutates or resolves anything, which is exactly the distinction
     /// D1 draws.)
+    /// The journal SUBJECT of a dispatch-axis extent read (Phase 1991): the
+    /// binding keys the source expression reads, through the expression
+    /// witness's `Uses` — a name, never a payload, so it is log-safe, and
+    /// distinct per collection so a replay that reaches another collection at
+    /// the same ordinal diverges rather than being served the wrong extent.
+    let private extentSubject (fold: DispatchFold<'Action, 'Expr, 'Store, 'Effect>) (source: 'Expr) : string =
+        ExprWitness.collectionName fold.Expr source
+
     let rec private runFold
         (fold: DispatchFold<'Action, 'Expr, 'Store, 'Effect>)
         (arm: HandlerArm<'Store, 'Effect, 'Placement>)
@@ -602,11 +647,52 @@ module BoundedActions =
         // entry, before this arm could be reached. An empty collection runs
         // nothing. A reversible run records the elements that ran, under the
         // trace's own constructor, so a reader sees how many.
-        | ActionView.Each(collection, placeholder, body) ->
+        | ActionView.Each(Collection.Literal elements, placeholder, body) ->
             let outcome, p, traces =
-                many (ActionWitness.lowered fold.Action collection placeholder body)
+                many (ActionWitness.lowered fold.Action elements placeholder body)
 
             outcome, p, (if tracing then Trace.Each traces else Trace.Nothing)
+
+        // PER-ELEMENT ITERATION over a collection the STORE holds (Phase 1991,
+        // D36). The source is resolved against the store ONCE, at entry — as
+        // a parameter bound is — through the placement's extent reader, so a
+        // durable placement journals the read and serves the record on
+        // replay; it must be a list of at most `ceiling` elements, else the
+        // fold halts HERE, before the first element, which is what lets the
+        // budget price the loop at the ceiling without the store. Past the
+        // check the extent IS the collection: lowered and run exactly as a
+        // literal is, and recorded beside the elements that ran
+        // (`Trace.EachOf`), so the inverse lowers the body over the RECORDED
+        // extent and never asks the store again. The model's `VEachOf` and
+        // `each_of_is_each_over_extent`.
+        | ActionView.Each(Collection.Stored(source, ceiling), placeholder, body) ->
+            let halt (reason: string) =
+                halted nodeId (fold.Action.Describe action) reason s, placement, Trace.Nothing
+
+            if ceiling < 0 then
+                halt "the collection's ceiling is negative"
+            else
+                let read () =
+                    match fold.Expr.Resolve s source with
+                    | ExprResolution.Resolved(JArr extent) -> Ok extent
+                    | ExprResolution.Resolved _ -> Error "the collection did not resolve to a list"
+                    | ExprResolution.NotResolved -> Error "the collection did not resolve to a value"
+                    | ExprResolution.Errored m -> Error m
+
+                match arm.ReadExtent (extentSubject fold source) read with
+                | Error reason -> halt reason
+                | Ok extent when List.length extent > ceiling ->
+                    halt "the collection's extent is over its declared ceiling"
+                | Ok extent ->
+                    let outcome, p, traces =
+                        many (ActionWitness.lowered fold.Action extent placeholder body)
+
+                    outcome,
+                    p,
+                    (if tracing then
+                         Trace.EachOf(extent, traces)
+                     else
+                         Trace.Nothing)
 
     /// The SCOPE check at the fold's entry (Phase 1990): a program whose body
     /// reads a placeholder no enclosing `Each` binds, or rebinds one an
@@ -732,8 +818,15 @@ module BoundedActions =
             | ActionView.Require _ -> true
             | ActionView.Choose(_, whenTrue, whenFalse, exit) -> Option.isSome exit && go whenTrue && go whenFalse
             | ActionView.Repeat(Bound.Literal _, body) -> go body
-            | ActionView.Each(collection, placeholder, body) ->
-                ActionWitness.lowered fold.Action collection placeholder body |> List.forall go
+            | ActionView.Each(Collection.Literal elements, placeholder, body) ->
+                ActionWitness.lowered fold.Action elements placeholder body |> List.forall go
+            // A store-bound collection (Phase 1991) is IN the fragment where a
+            // parameter bound is not: its extent is recorded, not re-read, so
+            // the inverse runs exactly the recorded elements. Its elements
+            // are not in the tree, so the body is read once, unsubstituted —
+            // the witness's `Substitute` preserves the shape, and the shape
+            // is what the fragment is decided from.
+            | ActionView.Each(Collection.Stored _, _, body) -> go body
             | ActionView.Repeat(Bound.Parameter _, _)
             | ActionView.Call _
             | ActionView.Leaf _ -> false
@@ -830,8 +923,12 @@ module BoundedActions =
                 Reversed.Choose(d, exit, Reversed.Sequence(d, []), go whenFalse arm, entry)
             | ActionView.Repeat(Bound.Literal count, body), Trace.Repeat iterations ->
                 Reversed.Sequence(d, many (List.replicate (max count 0) body) iterations)
-            | ActionView.Each(collection, placeholder, body), Trace.Each steps ->
-                Reversed.Sequence(d, many (ActionWitness.lowered fold.Action collection placeholder body) steps)
+            | ActionView.Each(Collection.Literal elements, placeholder, body), Trace.Each steps ->
+                Reversed.Sequence(d, many (ActionWitness.lowered fold.Action elements placeholder body) steps)
+            // The RECORDED extent (Phase 1991): the body is lowered over what
+            // the run read, never over what the store holds now.
+            | ActionView.Each(Collection.Stored _, placeholder, body), Trace.EachOf(extent, steps) ->
+                Reversed.Sequence(d, many (ActionWitness.lowered fold.Action extent placeholder body) steps)
             | _ -> Reversed.Sequence(d, [])
 
         // The members' inverses in REVERSE order: the last member that ran is

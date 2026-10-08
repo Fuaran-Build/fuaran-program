@@ -39,6 +39,9 @@ type ToyAction =
     | Pick of entry: ToyExpr * whenTrue: ToyAction * whenFalse: ToyAction * exit: ToyExpr option
     | Times of bound: Bound<ToyExpr> * body: ToyAction
     | ForEach of collection: JVal list * placeholder: string * body: ToyAction
+    /// Per-element iteration over a collection the BINDING STORE holds (Phase
+    /// 1991): `source` resolves at entry to the elements, under `ceiling`.
+    | ForEachOf of source: ToyExpr * ceiling: int * placeholder: string * body: ToyAction
     | Beep of volume: int
     | Hush
 
@@ -113,6 +116,7 @@ let rec substitute (placeholder: string) (element: JVal) (action: ToyAction) : T
     | Times(Bound.Parameter(count, lo, hi), body) -> Times(Bound.Parameter(expr count, lo, hi), sub body)
     | Times(Bound.Literal count, body) -> Times(Bound.Literal count, sub body)
     | ForEach(collection, name, body) -> ForEach(collection, name, sub body)
+    | ForEachOf(source, ceiling, name, body) -> ForEachOf(expr source, ceiling, name, sub body)
     | Beep _
     | Hush -> action
 
@@ -126,6 +130,7 @@ let placeholders (action: ToyAction) : string list =
     | Need condition -> holesOf condition
     | Pick(entry, _, _, exit) -> holesOf entry @ (exit |> Option.toList |> List.collect holesOf)
     | Times(Bound.Parameter(count, _, _), _) -> holesOf count
+    | ForEachOf(source, _, _, _) -> holesOf source
     | Put(_, _, None)
     | Times(Bound.Literal _, _)
     | ForEach _
@@ -152,7 +157,8 @@ let lowerWith (lookup: string -> JVal option) (nodeId: string) (action: ToyActio
     | Need _
     | Pick _
     | Times _
-    | ForEach _ -> LeafOutcome.Decline
+    | ForEach _
+    | ForEachOf _ -> LeafOutcome.Decline
 
 let describe (action: ToyAction) : string =
     match action with
@@ -163,6 +169,7 @@ let describe (action: ToyAction) : string =
     | Pick _ -> "Pick"
     | Times _ -> "Times"
     | ForEach(_, placeholder, _) -> sprintf "ForEach(%s)" placeholder
+    | ForEachOf(_, ceiling, placeholder, _) -> sprintf "ForEachOf(%s, at most %d)" placeholder ceiling
     | Beep volume -> sprintf "Beep(%d)" volume
     | Hush -> "Hush"
 
@@ -174,7 +181,9 @@ let view (action: ToyAction) : ActionView<ToyAction, ToyExpr> =
     | Need condition -> ActionView.Require condition
     | Pick(entry, whenTrue, whenFalse, exit) -> ActionView.Choose(entry, whenTrue, whenFalse, exit)
     | Times(bound, body) -> ActionView.Repeat(bound, body)
-    | ForEach(collection, placeholder, body) -> ActionView.Each(collection, placeholder, body)
+    | ForEach(collection, placeholder, body) -> ActionView.Each(Collection.Literal collection, placeholder, body)
+    | ForEachOf(source, ceiling, placeholder, body) ->
+        ActionView.Each(Collection.Stored(source, ceiling), placeholder, body)
     | Beep _ ->
         ActionView.Leaf
             { EffectKinds = [ "Sound" ]
@@ -209,6 +218,17 @@ let rec private encodeAction (action: ToyAction) : JVal =
             [ "body", encodeAction body
               "collection", JArr collection
               "placeholder", JStr placeholder ]
+    | ForEachOf(source, ceiling, placeholder, body) ->
+        Canon.typed
+            "ForEachOf"
+            [ "body", encodeAction body
+              "ceiling", JInt ceiling
+              "placeholder", JStr placeholder
+              // The source as a parameter bound is encoded: by what it reads.
+              "source",
+              (match source with
+               | Read key -> JStr key
+               | _ -> JStr "") ]
     | Beep volume -> Canon.typed "Beep" [ "volume", JInt volume ]
     | Hush -> Canon.typed "Hush" []
 

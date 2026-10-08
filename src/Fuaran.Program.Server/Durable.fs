@@ -400,10 +400,34 @@ module Durable =
                 performer
                 (Fuaran.Core.JObj [])
 
+        // A store-bound collection's EXTENT READ (Phase 1991, D36) through
+        // the same wrapper: journaled at its ordinal under `ReadExtent`, the
+        // subject the collection's name (or the binding keys a compute
+        // stage's source reads), the recorded value the extent as a list —
+        // so a replay is SERVED the extent the recorded run read and the live
+        // state is not consulted, which is the operator's third condition. A
+        // read is idempotent by its own shape, so an indeterminate window
+        // over it closes by re-reading, with no override to record. A
+        // recomputation that reaches another collection at this ordinal is
+        // the divergence the wrapper already refuses.
+        let journalExtent (subject: string) (read: unit -> Result<Fuaran.Core.JVal list, string>) =
+            wrapAt
+                ExtentReader.Capability
+                (Some subject)
+                IdempotencyFacet.Idempotent
+                (fun () -> None)
+                (fun _ -> read () |> Result.map Fuaran.Core.JArr)
+                (Fuaran.Core.JObj [])
+            |> Result.bind (fun recorded ->
+                match recorded with
+                | Fuaran.Core.JArr extent -> Ok extent
+                | _ -> Error "the journal's recorded extent is not a list")
+
         let journalling =
             { registry with
                 HostFunctions = registry.HostFunctions |> Map.map wrap
-                QueryEvaluator = registry.QueryEvaluator |> Option.map (QueryEvaluator.through journalQuery) }
+                QueryEvaluator = registry.QueryEvaluator |> Option.map (QueryEvaluator.through journalQuery)
+                ReadExtent = journalExtent }
 
         // The op performer, through the same wrapper. The plan phase stages
         // `fun _ -> perform state op` per edit (`Handler.stagedOp`), so this
@@ -506,7 +530,8 @@ module Durable =
         : HandlerArm<'Store, 'Effect, HandlerTally<'Node, 'Op>> =
         let mutable index = 0
 
-        { Answer =
+        { ReadExtent = ExtentReader.live
+          Answer =
             fun nodeId endpoint bindings tally ->
                 match Map.tryFind endpoint host.Handlers with
                 | None ->

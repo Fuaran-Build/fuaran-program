@@ -459,7 +459,8 @@ module ServerSession =
     let directArm
         (services: ServerServices<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
         : HandlerArm<'Store, 'Effect, HandlerTally<'Node, 'Op>> =
-        { Answer =
+        { ReadExtent = ExtentReader.live
+          Answer =
             fun nodeId endpoint bindings tally ->
                 match Map.tryFind endpoint services.Handlers with
                 | None ->

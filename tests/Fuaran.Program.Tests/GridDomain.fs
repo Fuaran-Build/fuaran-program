@@ -59,6 +59,10 @@ type CellOp =
     /// first exceeds its last runs no iteration. Viewed as an `Each` over the
     /// integers `first .. last`.
     | ForRange of first: int * last: int * placeholder: string * body: CellOp list
+    /// `For Each r In Range("orders")` resolved at RUN time (Phase 1991, class
+    /// B): the region the grid holds when the loop is entered, read once,
+    /// under a ceiling the automation declares.
+    | ForRegion of region: string * ceiling: int * placeholder: string * body: CellOp list
 
 /// The collection a range stands for: its integers, in order, as the elements
 /// an `Each` substitutes.
@@ -103,6 +107,7 @@ let rec substituteOp (placeholder: string) (element: JVal) (op: CellOp) : CellOp
     | WhenFilled(cell, body) -> WhenFilled(fill cell, body |> List.map sub)
     | ForEach(collection, name, body) -> ForEach(collection, name, body |> List.map sub)
     | ForRange(first, last, name, body) -> ForRange(first, last, name, body |> List.map sub)
+    | ForRegion(region, ceiling, name, body) -> ForRegion(region, ceiling, name, body |> List.map sub)
 
 /// The grid's `Placeholders`: the names an op's OWN operands read. A
 /// `WhenFilled`'s condition is an op the core asks on its own (it is the
@@ -118,7 +123,8 @@ let placeholdersOf (op: CellOp) : string list =
     | DropRow region -> Placeholder.names region
     | WhenFilled _
     | ForEach _
-    | ForRange _ -> []
+    | ForRange _
+    | ForRegion _ -> []
 
 // ─── the codec ──────────────────────────────────────────────────────────────
 
@@ -150,6 +156,15 @@ let rec encodeOp (op: CellOp) : string =
                   "first", JInt first
                   "last", JInt last
                   "placeholder", JStr placeholder ]
+        )
+    | ForRegion(region, ceiling, placeholder, body) ->
+        Canon.render (
+            Canon.typed
+                "ForRegion"
+                [ "body", ops body
+                  "ceiling", JInt ceiling
+                  "placeholder", JStr placeholder
+                  "region", JStr region ]
         )
 
 /// `encodeOp`'s inverse. Total: anything `encodeOp` did not produce is a
@@ -214,6 +229,15 @@ let rec decodeOp (text: string) : Result<CellOp, string> =
                     |> Result.bind (fun placeholder ->
                         ops "body" members
                         |> Result.map (fun body -> ForRange(first, last, placeholder, body)))))
+        | Some(JStr "ForRegion") ->
+            str "region" members
+            |> Result.bind (fun region ->
+                integer "ceiling" members
+                |> Result.bind (fun ceiling ->
+                    str "placeholder" members
+                    |> Result.bind (fun placeholder ->
+                        ops "body" members
+                        |> Result.map (fun body -> ForRegion(region, ceiling, placeholder, body)))))
         | Some(JStr other) -> Error(sprintf "'%s' is not a grid op" other)
         | _ -> Error "the op carries no '$type'"
     | _ -> Error "the op is not a JSON object"
@@ -263,7 +287,8 @@ let apply (op: CellOp) (grid: Grid) : Result<Grid, string> =
             Error(sprintf "cell %s is empty" cell)
     | WhenFilled _
     | ForEach _
-    | ForRange _ -> Error "a flow op is planned through its view and never applied"
+    | ForRange _
+    | ForRegion _ -> Error "a flow op is planned through its view and never applied"
 
 /// What an op REACHES: the cells it reads or writes under `cell` — BOTH of a
 /// copy's, so an allow-list over cells bounds what a copy reads as well as
@@ -287,7 +312,8 @@ let reach (op: CellOp) : OpReach =
     // LOWERED body beneath it, so a placeholder cannot hide a cell.
     | WhenFilled _
     | ForEach _
-    | ForRange _ -> OpReach.nothing
+    | ForRange _
+    | ForRegion _ -> OpReach.nothing
 
 let canonical (grid: Grid) : string =
     Canon.render (
@@ -362,14 +388,35 @@ let undo (op: CellOp) : UndoClass<Grid, CellOp> =
     | Filled _
     | WhenFilled _
     | ForEach _
-    | ForRange _ -> UndoClass.OneWay "a guard or a flow op is not an edit"
+    | ForRange _
+    | ForRegion _ -> UndoClass.OneWay "a guard or a flow op is not an edit"
 
-let view (op: CellOp) : OpView<CellOp> =
+/// The region a loop iterates, read as a collection: what an importer resolving
+/// `For Each r In Range("orders")` at IMPORT time writes into a literal `Each`
+/// (class A), and what `ForRegion` reads at RUN time through the state axis
+/// (Phase 1991, class B).
+let regionCollection (region: string) (grid: Grid) : JVal list =
+    Map.tryFind region grid.Regions |> Option.defaultValue [] |> List.map JStr
+
+let view (op: CellOp) : OpView<Grid, CellOp> =
     match op with
     | Filled _ -> OpView.Require
     | WhenFilled(cell, body) -> OpView.Choose(Filled cell, body, [], None)
-    | ForEach(collection, placeholder, body) -> OpView.Each(collection, placeholder, body)
-    | ForRange(first, last, placeholder, body) -> OpView.Each(rangeElements first last, placeholder, body)
+    | ForEach(collection, placeholder, body) -> OpView.Each(Collection.Literal collection, placeholder, body)
+    | ForRange(first, last, placeholder, body) ->
+        OpView.Each(Collection.Literal(rangeElements first last), placeholder, body)
+    // The region as the grid holds it WHEN THE LOOP IS ENTERED (Phase 1991):
+    // the read is the domain's own, through the state axis.
+    | ForRegion(region, ceiling, placeholder, body) ->
+        OpView.Each(
+            Collection.Stored(
+                { Name = region
+                  Read = regionCollection region },
+                ceiling
+            ),
+            placeholder,
+            body
+        )
     | Set _
     | Clear _
     | Copy _
@@ -395,7 +442,8 @@ let witness: ProgramWitness<Grid, CellOp, Unfilled, Unfilled> =
                 | DropRow region -> Some region
                 | WhenFilled _
                 | ForEach _
-                | ForRange _ -> None
+                | ForRange _
+                | ForRegion _ -> None
           Canonical = canonical
           Diff = diff
           View = view
@@ -404,13 +452,6 @@ let witness: ProgramWitness<Grid, CellOp, Unfilled, Unfilled> =
           Placeholders = placeholdersOf }
       Walk = Unfilled
       Dispatch = Unfilled }
-
-/// The region a class-B loop iterates, read as a collection — what an importer
-/// resolving `For Each r In Range("orders")` at IMPORT time writes into a
-/// literal `Each`. Phase 1991's store-bound collection is the construct that
-/// reads it at RUN time instead.
-let regionCollection (region: string) (grid: Grid) : JVal list =
-    Map.tryFind region grid.Regions |> Option.defaultValue [] |> List.map JStr
 
 // ─── the workbook, and the performer over it ────────────────────────────────
 

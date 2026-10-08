@@ -443,7 +443,8 @@ let witness: ProgramWitness<FileMap, FileOp, Unfilled, Unfilled> =
                 | Branch(entry, whenTrue, whenFalse, exit) ->
                     OpView.Choose(Check entry, whenTrue, whenFalse, exit |> Option.map Check)
                 | Times(count, body) -> OpView.Repeat(count, body)
-                | ForEach(collection, placeholder, body) -> OpView.Each(collection, placeholder, body)
+                | ForEach(collection, placeholder, body) ->
+                    OpView.Each(Collection.Literal collection, placeholder, body)
                 | Read _
                 | Write _
                 | Delete _

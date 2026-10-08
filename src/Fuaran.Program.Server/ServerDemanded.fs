@@ -182,19 +182,24 @@ module ServerDemanded =
         // terms: a guard is an op the handler carries, and an allow-list on
         // the arm decides which guards a handler may name as surely as which
         // edits.
+        // A store-bound `Each` beneath them (Phase 1991, D36) demands the
+        // ITERATION as well: the state collection it reads at run time, by
+        // name, and its ceiling — the operator's fourth condition, so the
+        // signed envelope reads "iterates this collection, at most N".
         | ServerEffect.ApplyOps ops
         | ServerEffect.EmitPatch ops ->
-            tier
-                { noDemand with
-                    Effects = [ kind ]
-                    Capabilities = [ capability ]
-                    Reach =
-                        ops
-                        |> List.collect (ServerArgumentPolicy.reachOfOp state)
-                        |> List.map (fun (argument, name) ->
-                            { Capability = capability
-                              Argument = argument
-                              Name = name }) }
+            { tier
+                  { noDemand with
+                      Effects = [ kind ]
+                      Capabilities = [ capability ]
+                      Reach =
+                          ops
+                          |> List.collect (ServerArgumentPolicy.reachOfOp state)
+                          |> List.map (fun (argument, name) ->
+                              { Capability = capability
+                                Argument = argument
+                                Name = name }) } with
+                Iterations = StateWitness.iterations state ops }
 
     /// What one stage demands.
     let private ofStage

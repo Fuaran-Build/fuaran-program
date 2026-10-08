@@ -299,7 +299,8 @@ let witnessTests =
                     Filled "r2c3"
                     WhenFilled("r{i}c3", [ Copy("r{i}c3", "r{i}c4") ])
                     ForEach([ JStr "a"; JInt 2 ], "p", [ Set("{p}", "x") ])
-                    ForRange(2, 100, "i", [ ForEach([ JStr "a" ], "j", [ Clear "r{i}c{j}" ]) ]) ]
+                    ForRange(2, 100, "i", [ ForEach([ JStr "a" ], "j", [ Clear "r{i}c{j}" ]) ])
+                    ForRegion("orders", 10, "r", [ Set("{r}.seen", "yes") ]) ]
 
               for op in every do
                   Expect.equal (decodeOp (encodeOp op)) (Ok op) (encodeOp op)
@@ -355,28 +356,48 @@ let witnessTests =
 [<Tests>]
 let classBTests =
     testList
-        "Phase 1992 — the grid witness, class B: the gap Phase 1991 closes, pinned"
+        "Phase 1992 — the grid witness, class B (Phase 1991): a region iterated at RUN time"
         [ test
-              "a region resolved at import time is a literal: a row appended after it is seen by no later run, and a replay of the earlier run serves the earlier rows" {
-              // The importer reads `For Each r In Range("orders")` once, at
-              // import, into a literal Each.
-              let imported =
-                  handler "mark-orders" [ ForEach(regionCollection "orders" seeded, "r", [ Set("{r}.seen", "yes") ]) ]
+              "a region is read when the loop is entered: a row appended after one run is seen by the next, and a replay of the earlier run is served the two it recorded" {
+              // `For Each r In Range("orders")`, resolved at RUN time: the
+              // region as the grid holds it when the loop is entered, at most
+              // ten rows.
+              let marking =
+                  handler "mark-orders" [ ForRegion("orders", 10, "r", [ Set("{r}.seen", "yes") ]) ]
 
               let book = Workbook seeded
 
-              let run () =
-                  Handler.runWith
+              let services =
+                  DurableServices.withJournal (Journal.declaringDurable (Journal.inMemory ())) DurableServices.create
+
+              let durable (invocation: string) (grid: Grid) =
+                  Durable.runWith
                       witness
+                      services
+                      invocation
                       registry
                       (OpPerformance.performedBy book.Performer)
                       DataFrame.noResolve
                       "grid"
-                      imported
-                      (storeOf book.Grid)
+                      marking
+                      (storeOf grid)
 
-              let first = run ()
-              Expect.isTrue first.Committed "the first run commits"
+              let first = durable "inv-1" book.Grid
+              Expect.isTrue first.Outcome.Committed "the first run commits"
+              Expect.equal first.Outcome.Flow [ FlowDecision.Iterated 2 ] "the region held two rows"
+              Expect.equal (Map.tryFind "o1.seen" book.Grid.Cells) (Some "yes") "o1 marked"
+              Expect.equal (Map.tryFind "o2.seen" book.Grid.Cells) (Some "yes") "o2 marked"
+
+              Expect.exists
+                  (services.Journal.Read "inv-1")
+                  (fun e ->
+                      e.Step = 0
+                      && e.Capability = ExtentReader.Capability
+                      && e.Subject = Some "orders"
+                      && e.Phase = JournalPhase.Completed(JArr [ JStr "o1"; JStr "o2" ]))
+                  "the extent read is the first journaled step, under ReadExtent, subject the region, the rows its value"
+
+              Expect.equal first.Invoked [ 0; 1; 2 ] "the read, then the two performed edits, in one ordinal sequence"
 
               // A later handler appends a row to the region.
               let appended =
@@ -392,21 +413,153 @@ let classBTests =
               Expect.isTrue appended.Committed "the append commits"
               Expect.equal (Map.tryFind "orders" book.Grid.Regions) (Some [ "o1"; "o2"; "o3" ]) "the region grew"
 
-              let next = run ()
-              Expect.isTrue next.Committed "the next run commits"
+              // A REPLAY of the earlier run does NOT see it: it is served the
+              // extent the record holds, over the grid as it is NOW — three
+              // rows, the third unmarked.
+              let performedBefore = book.Invocations
+              let replay = durable "inv-1" book.Grid
+              Expect.isTrue replay.Outcome.Committed "the replay commits"
 
               Expect.equal
-                  next.Flow
+                  replay.Outcome.Flow
                   [ FlowDecision.Iterated 2 ]
-                  "the next run still iterates the two rows the import froze: the appended row is invisible to it"
+                  "the replay iterates the RECORDED two, not the live three"
 
-              Expect.isFalse (Map.containsKey "o3.seen" book.Grid.Cells) "the new row was never marked"
+              Expect.equal replay.Replayed [ 0; 1; 2 ] "every step served from the journal, the extent read first"
+              Expect.isEmpty replay.Invoked "nothing read or performed live"
+              Expect.equal book.Invocations performedBefore "the performer saw nothing new"
 
-              // The replay half of the class-B claim holds trivially at a
-              // literal — every run of the frozen handler IS the earlier run —
-              // which is exactly why the claim needs Phase 1991 to mean
-              // anything: there, the next run reads three rows and a replay of
-              // the earlier one must still read two.
-              let _, replayed, _, _ = runAndReplay imported
-              Expect.equal replayed.Outcome.Flow [ FlowDecision.Iterated 2 ] "the replay reads the two rows"
+              Expect.equal
+                  (replay.Outcome.Store.Tree.Cells
+                   |> Map.filter (fun k _ -> k.EndsWith ".seen")
+                   |> Map.toList)
+                  [ "o1.seen", "yes"; "o2.seen", "yes" ]
+                  "the replay planned the two marks the record names and left the appended row unmarked"
+
+              Expect.isFalse
+                  (Map.containsKey "o3.seen" book.Grid.Cells)
+                  "the workbook's new row is unmarked: the replay performed nothing"
+
+              // The NEXT run sees it.
+              let next = durable "inv-2" book.Grid
+              Expect.isTrue next.Outcome.Committed "the next run commits"
+
+              Expect.equal
+                  next.Outcome.Flow
+                  [ FlowDecision.Iterated 3 ]
+                  "the next run iterates three rows: the appended row is seen"
+
+              Expect.equal (Map.tryFind "o3.seen" book.Grid.Cells) (Some "yes") "and marked"
+          }
+
+          test "an extent over the ceiling is refused before anything performs" {
+              let tight =
+                  handler "mark-one" [ ForRegion("orders", 1, "r", [ Set("{r}.seen", "yes") ]) ]
+
+              let book = Workbook seeded
+
+              let outcome =
+                  Handler.runWith
+                      witness
+                      registry
+                      (OpPerformance.performedBy book.Performer)
+                      DataFrame.noResolve
+                      "grid"
+                      tight
+                      (storeOf book.Grid)
+
+              Expect.isFalse outcome.Committed "refused: two rows, a ceiling of one"
+              Expect.isEmpty book.Invocations "the performer was never reached"
+              Expect.isEmpty outcome.Flow "no decision: the loop was refused whole, before its first element"
+              Expect.equal (canonical book.Grid) (canonical seeded) "the workbook untouched"
+
+              Expect.isTrue
+                  (outcome.Diagnostics
+                   |> List.exists (fun d -> (string d).Contains "over its declared ceiling"))
+                  "named"
+          }
+
+          test
+              "the demanded document names the region and its ceiling, so the envelope reads: iterates orders, at most ten" {
+              let marking =
+                  handler "mark-orders" [ ForRegion("orders", 10, "r", [ Set("{r}.seen", "yes") ]) ]
+
+              let projection = ServerDemanded.ofHandler witness marking
+
+              Expect.equal projection.Iterations [ { Collection = "orders"; Ceiling = 10 } ] "the iteration demand"
+
+              Expect.stringContains
+                  (Demanded.encode projection)
+                  "\"iterations\":[{\"collection\":\"orders\",\"ceiling\":10}]"
+                  "on the wire"
+
+              Expect.isEmpty
+                  (ServerDemanded.ofHandler
+                      witness
+                      (handler "frozen" [ ForEach(regionCollection "orders" seeded, "r", [ Set("{r}.seen", "yes") ]) ]))
+                      .Iterations
+                  "a region frozen at import demands no iteration: its rows are in the tree"
+          }
+
+          test
+              "reversal runs the recorded number of iterations, from the record; an undo over a state the region grew under is refused as drift, never re-read" {
+              let marking =
+                  handler "mark-orders" [ ForRegion("orders", 10, "r", [ Set("{r}.seen", "yes") ]) ]
+
+              Expect.equal (Undo.posture witness marking) UndoVerdict.Reversible "every edit is exactly inverted"
+
+              // From the record: two rows marked, two inverses performed.
+              let outcome, afterRun, afterUndo = runAndReverse marking
+              Expect.isTrue outcome.Committed "the run commits"
+              Expect.equal (Map.tryFind "o1.seen" afterRun.Cells) (Some "yes") "o1 marked"
+              Expect.equal (Map.tryFind "o2.seen" afterRun.Cells) (Some "yes") "o2 marked"
+
+              Expect.equal
+                  (canonical afterUndo)
+                  (canonical seeded)
+                  "two inverses, one per recorded row, back to the seed"
+
+              // The region grows between the run and its undo. The undo reads
+              // the RECORD — every lowered edit with its pre-state — and the
+              // record's inverses do not fold the moved state back to the
+              // recorded entry, so the undo is refused as drift before it
+              // performs anything; it does not re-read the region and undo a
+              // third row the run never marked.
+              let book = Workbook seeded
+              let outcome, plan = planned book marking
+              Expect.isTrue outcome.Committed "the run commits"
+
+              let appended =
+                  Handler.runWith
+                      witness
+                      registry
+                      (OpPerformance.performedBy book.Performer)
+                      DataFrame.noResolve
+                      "grid"
+                      (handler "new-order" [ AppendRow("orders", "o3") ])
+                      outcome.Store
+
+              Expect.isTrue appended.Committed "the append commits"
+              let performedBefore = book.Invocations
+
+              match
+                  Undo.run
+                      witness
+                      registry
+                      (OpPerformance.performedBy book.Performer)
+                      DataFrame.noResolve
+                      "grid"
+                      plan
+                      appended.Store
+              with
+              | Ok _ -> failtest "an undo over a state that moved under the record was performed"
+              | Error refusal ->
+                  Expect.stringContains (Undo.describe refusal) "undo-inverse-drift" "refused as drift, by name"
+                  Expect.equal book.Invocations performedBefore "and nothing performed"
+                  Expect.equal (Map.tryFind "o1.seen" book.Grid.Cells) (Some "yes") "the marks stand"
+
+                  Expect.equal
+                      (Map.tryFind "orders" book.Grid.Regions)
+                      (Some [ "o1"; "o2"; "o3" ])
+                      "as does the grown region"
           } ]

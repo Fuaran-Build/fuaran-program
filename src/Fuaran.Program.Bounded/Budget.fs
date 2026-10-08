@@ -78,7 +78,9 @@ module Budget =
     /// store; an `Each` is its LOWERED form — the body's cost once per element
     /// of its literal collection, each element substituted, summed, with no
     /// step for a bound because a literal collection is not read (Phase
-    /// 1990) — so an `Each` whose lowered size exceeds the ceiling is refused
+    /// 1990), or — over a collection the STORE holds (Phase 1991) — one step
+    /// for the read plus the body at its declared CEILING, the parameter
+    /// bound's rule — so an `Each` whose lowered size exceeds the ceiling is refused
     /// by the driver's gate before its first element, exactly as an
     /// over-bound repeat is; every other shape costs 1. Read through the
     /// witness's view, so what counts as composition is the fold's own notion
@@ -103,9 +105,14 @@ module Budget =
             | ActionView.Choose(_, whenTrue, whenFalse, _) -> satAdd 1 (max (cost whenTrue) (cost whenFalse))
             | ActionView.Repeat(Bound.Literal count, body) -> satAdd 1 (satMul (max count 0) (cost body))
             | ActionView.Repeat(Bound.Parameter(_, _, hi), body) -> satAdd 1 (satMul (max hi 0) (cost body))
-            | ActionView.Each(collection, placeholder, body) ->
-                ActionWitness.lowered fold.Action collection placeholder body
+            | ActionView.Each(Collection.Literal elements, placeholder, body) ->
+                ActionWitness.lowered fold.Action elements placeholder body
                 |> List.fold (fun acc x -> satAdd acc (cost x)) 0
+            // A collection the store holds (Phase 1991, D36) is priced at its
+            // CEILING without the store: one step for the read, plus the body
+            // at the ceiling — the parameter-bound repeat's rule at the top of
+            // its range (D35), which is the law the budget oracle maps it to.
+            | ActionView.Each(Collection.Stored(_, ceiling), _, body) -> satAdd 1 (satMul (max ceiling 0) (cost body))
             | ActionView.Assign _
             | ActionView.Call _
             | ActionView.Require _

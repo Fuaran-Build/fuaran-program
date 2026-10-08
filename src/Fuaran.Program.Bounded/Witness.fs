@@ -169,6 +169,11 @@ type Trace =
     /// constructor, so a reader of the trace sees how many elements ran
     /// (`FlowDecision.Iterated`); inverted exactly as a sequence is.
     | Each of elements: Trace list
+    /// The elements that RAN of an `Each` over a collection the STORE holds
+    /// (Phase 1991, D36), beside the EXTENT the run READ at entry — the one
+    /// record of it, which the inverse lowers the body over again; the store
+    /// is never consulted for it a second time. The model's `TEachOf`.
+    | EachOf of extent: JVal list * elements: Trace list
 
 module Trace =
     /// Whether every write the trace recorded overwrote a PRESENT key, so
@@ -185,6 +190,63 @@ module Trace =
         | Trace.Choose(_, arm) -> restorable arm
         | Trace.Repeat iterations -> iterations |> List.forall restorable
         | Trace.Each elements -> elements |> List.forall restorable
+        | Trace.EachOf(_, elements) -> elements |> List.forall restorable
+
+/// A collection the STATE holds (Phase 1991, DECISIONS.md D36): the op-axis
+/// source of a store-bound `Each`. `Name` is what the demanded projection
+/// states ("iterates THIS collection") and what the durable journal subjects
+/// the extent read under; `Read` is the domain's own enumeration of the state
+/// the plan holds at the op's position — the state axis (D20) — so a domain
+/// that cannot enumerate a collection never constructs one, and no member of
+/// the state witness was added for it. Two collections are the SAME
+/// collection when they are the same name: the name is the identity the
+/// projection states and the journal keys on, and a domain that gives two
+/// reads one name has misnamed one of them.
+[<CustomEquality; NoComparison>]
+type StateCollection<'Node> =
+    { Name: string
+      Read: 'Node -> JVal list }
+
+    override this.Equals(other: obj) : bool =
+        match other with
+        | :? StateCollection<'Node> as that -> this.Name = that.Name
+        | _ -> false
+
+    override this.GetHashCode() : int = hash this.Name
+
+/// The SOURCE of an `Each`'s collection (Phase 1991, D36): a LITERAL list in
+/// the tree (Phase 1990, D29 — its length is the bound, fixed by the tree,
+/// and no store is consulted) or one the STORE holds, read ONCE when the
+/// loop is entered under a `ceiling` the tree declares. What the source IS
+/// differs per axis, as what a placeholder stands in does: on the dispatch
+/// axis an expression resolved against the binding store (`'Source` =
+/// `'Expr`, so a domain with no dispatch axis has nothing to put there); on
+/// the state axis a `StateCollection` read from the planned state. The
+/// ceiling is the operator's second condition: the budget prices at it, an
+/// extent over it is refused BEFORE the first element, and the worst-case
+/// cost stays a function of the tree (D2). The extent is recorded
+/// (`Trace.EachOf`, the journal) and is the only extent ever used again —
+/// the third condition, which is what keeps a store-bound loop total: a row
+/// the body appends does not extend the running loop.
+[<RequireQualifiedAccess>]
+type Collection<'Source> =
+    | Literal of elements: JVal list
+    | Stored of source: 'Source * ceiling: int
+
+/// What a store-bound `Each` DEMANDS (Phase 1991, D36, the operator's fourth
+/// condition): the collection it iterates, by name, and the ceiling the tree
+/// declares — so the demanded projection, and the signed effect envelope
+/// over it (D15), read "iterates THIS collection, at most N". On the state
+/// axis the name is the `StateCollection`'s; on the dispatch axis it is the
+/// binding keys the source expression reads, under the same spelling the
+/// durable journal subjects the read with.
+type IterationDemand =
+    {
+        /// The collection, by the name the projection states.
+        Collection: string
+        /// The most elements the loop will ever walk.
+        Ceiling: int
+    }
 
 /// A PLACEHOLDER read where no `Each` binds it (Phase 1990, DECISIONS.md
 /// D29): the one defect of the construct that is decided from the tree
@@ -251,7 +313,7 @@ module OpReach =
 /// the obligation that `View` unfolds a FINITE tree sits on the witness, as
 /// it does for the action view.
 [<RequireQualifiedAccess>]
-type OpView<'Op> =
+type OpView<'Node, 'Op> =
     /// An op that moves the state. Applied while planning, so a later op and
     /// a later stage read the state it produced; under a registered op
     /// performer it is staged, with that state, and performed after the plan
@@ -304,12 +366,20 @@ type OpView<'Op> =
     /// empty collection plans nothing. The argument policy and the demanded
     /// projection read the reach of the SUBSTITUTED ops (`beneath`), so a
     /// deployer's allow-list binds every element's address.
-    | Each of collection: JVal list * placeholder: string * body: 'Op list
+    ///
+    /// The collection may instead be one the STATE holds (Phase 1991, D36):
+    /// `Collection.Stored (collection, ceiling)`, read ONCE from the planned
+    /// state at the op's position, refused before the first element when its
+    /// extent is over the ceiling, and journaled so a replay serves the
+    /// recorded extent. Its lowered elements are not in the tree, so the
+    /// policy and the projection read the body with the placeholder
+    /// STANDING, and the projection names the collection and its ceiling.
+    | Each of collection: Collection<StateCollection<'Node>> * placeholder: string * body: 'Op list
 
 module OpView =
     /// A state witness whose ops are all edits — a domain with no op-channel
     /// guard, branch, repeat or per-element iteration fills `View` with this.
-    let edits (_: 'Op) : OpView<'Op> = OpView.Edit
+    let edits (_: 'Op) : OpView<'Node, 'Op> = OpView.Edit
 
     /// The LOWERED form of an `Each` over ops (Phase 1990): its body once per
     /// element of the collection, in collection order, with that element
@@ -334,7 +404,7 @@ module OpView =
     /// sequence that reaches an off-list path in an UNTAKEN arm has reached
     /// it: an untaken arm's reach is still reach. A condition is applied,
     /// never viewed, so entry and exit are listed once and not opened.
-    let rec beneath (view: 'Op -> OpView<'Op>) (substitute: string -> JVal -> 'Op -> 'Op) (op: 'Op) : 'Op list =
+    let rec beneath (view: 'Op -> OpView<'Node, 'Op>) (substitute: string -> JVal -> 'Op -> 'Op) (op: 'Op) : 'Op list =
         match view op with
         | OpView.Edit
         | OpView.Require -> []
@@ -345,9 +415,14 @@ module OpView =
             @ Option.toList exit
             @ (arms |> List.collect (beneath view substitute))
         | OpView.Repeat(_, body) -> body @ (body |> List.collect (beneath view substitute))
-        | OpView.Each(collection, placeholder, body) ->
-            let elements = lowered substitute collection placeholder body
+        | OpView.Each(Collection.Literal elements, placeholder, body) ->
+            let elements = lowered substitute elements placeholder body
             elements @ (elements |> List.collect (beneath view substitute))
+        // A collection the state holds (Phase 1991) has no elements in the
+        // tree, so the ops beneath it are the body with the placeholder
+        // STANDING: the policy sees the shape of every address the loop will
+        // write, and the demanded projection names the collection beside it.
+        | OpView.Each(Collection.Stored _, _, body) -> body @ (body |> List.collect (beneath view substitute))
 
     /// The SCOPE defects of an op sequence (Phase 1990), decided from the
     /// tree alone: every placeholder an op's own operands read that no
@@ -356,10 +431,15 @@ module OpView =
     /// `Placeholders` — the names an op's OWN operands read, not those of the
     /// ops beneath it, which this walk reaches through the view. A branch's
     /// conditions are ops and are asked like any other; an `Each`'s own
-    /// collection is literal and reads nothing. Distinct, in walk order; the
+    /// collection is a literal or a named read and binds nothing. Distinct,
+    /// in walk order; the
     /// handler refuses an `ApplyOps` effect that has any, before its first op
     /// plans, naming the first.
-    let scopeDefects (view: 'Op -> OpView<'Op>) (placeholders: 'Op -> string list) (ops: 'Op list) : ScopeDefect list =
+    let scopeDefects
+        (view: 'Op -> OpView<'Node, 'Op>)
+        (placeholders: 'Op -> string list)
+        (ops: 'Op list)
+        : ScopeDefect list =
         let rec go (bound: Set<string>) (op: 'Op) : ScopeDefect list =
             let own =
                 placeholders op
@@ -385,6 +465,27 @@ module OpView =
             own @ within
 
         ops |> List.collect (go Set.empty) |> List.distinct
+
+    /// The ITERATION demands of an op sequence (Phase 1991, D36): every
+    /// collection the state holds that an `Each` beneath these ops reads at
+    /// run time, with its ceiling — decided from the tree alone, walked to
+    /// exhaustion through the view as `beneath` walks it. A literal
+    /// collection demands nothing: its elements are in the tree. Distinct, in
+    /// walk order; the demanded projection states them.
+    let iterations (view: 'Op -> OpView<'Node, 'Op>) (ops: 'Op list) : IterationDemand list =
+        let rec go (op: 'Op) : IterationDemand list =
+            match view op with
+            | OpView.Edit
+            | OpView.Require -> []
+            | OpView.Choose(_, whenTrue, whenFalse, _) -> (whenTrue @ whenFalse) |> List.collect go
+            | OpView.Repeat(_, body) -> body |> List.collect go
+            | OpView.Each(Collection.Literal _, _, body) -> body |> List.collect go
+            | OpView.Each(Collection.Stored(collection, ceiling), _, body) ->
+                { Collection = collection.Name
+                  Ceiling = ceiling }
+                :: (body |> List.collect go)
+
+        ops |> List.collect go |> List.distinct
 
 /// What one op IS to an UNDO (Phase 1977, DECISIONS.md D22): its exact
 /// inverse, a declared compensation, or neither. The CLASS is a function of
@@ -447,7 +548,7 @@ type StateWitness<'Node, 'Op> =
         Diff: 'Node -> 'Node -> 'Op list
         /// Which ops are guards (Phase 1974), branches or repeats (Phase
         /// 1976). `OpView.edits` for a domain with none.
-        View: 'Op -> OpView<'Op>
+        View: 'Op -> OpView<'Node, 'Op>
         /// What undoes an EDIT (Phase 1977): its exact inverse computed from
         /// the pre-state, a declared compensation, or neither with the reason.
         /// Read by the undo posture before a handler runs and by the undo run
@@ -485,6 +586,10 @@ module StateWitness =
     /// `OpView.scopeDefects` through the state witness.
     let scopeDefects (state: StateWitness<'Node, 'Op>) (ops: 'Op list) : ScopeDefect list =
         OpView.scopeDefects state.View state.Placeholders ops
+
+    /// `OpView.iterations` through the state witness.
+    let iterations (state: StateWitness<'Node, 'Op>) (ops: 'Op list) : IterationDemand list =
+        OpView.iterations state.View ops
 
 // ═══ THE WALK AXIS — optional (§3.2) ════════════════════════════════════════
 
@@ -602,7 +707,17 @@ type ActionView<'Action, 'Expr> =
     /// `Each` binds is refused at validation (`BoundedActions.scopeDefects`),
     /// never mid-run. An empty collection runs nothing. The model's `VEach`,
     /// which carries the elements already lowered.
-    | Each of collection: JVal list * placeholder: string * body: 'Action
+    ///
+    /// The collection may instead be one the STORE holds (Phase 1991, D36):
+    /// `Collection.Stored (source, ceiling)`, an expression resolved against
+    /// the binding store ONCE at entry — as a parameter bound is — that must
+    /// resolve to a list of at most `ceiling` elements, else the fold HALTS
+    /// before the first element; the extent read is recorded in the trace
+    /// (`Trace.EachOf`) and the inverse lowers the body over the RECORDED
+    /// extent, never the live store, which is what keeps the shape in the
+    /// reversible fragment where a parameter-bound repeat is not. The
+    /// model's `VEachOf`.
+    | Each of collection: Collection<'Expr> * placeholder: string * body: 'Action
     /// Every other domain act.
     | Leaf of LeafDeclaration
 
@@ -702,6 +817,22 @@ type ExprWitness<'Expr, 'Store> =
         /// What the expression reads — for the demanded projection.
         Uses: 'Expr -> BindingUse list
     }
+
+module ExprWitness =
+    /// The NAME of a dispatch-axis store-bound collection (Phase 1991, D36):
+    /// the binding keys its source expression reads, through `Uses`, under
+    /// one spelling — what the demanded projection states as the collection
+    /// and what the durable journal subjects the extent read with, so the
+    /// document and the record name one thing. A name, never a payload.
+    let collectionName (expr: ExprWitness<'Expr, 'Store>) (source: 'Expr) : string =
+        let keys =
+            expr.Uses source
+            |> List.choose (fun u ->
+                match u with
+                | BindingUse.State key -> Some key
+                | BindingUse.Query _ -> None)
+
+        "bindings:" + String.concat "," keys
 
 /// The binding store the fold writes: the STATE CHANNEL of K4, which since
 /// Phase 1974 is a dispatch-axis fact — a domain whose state is its tree, or

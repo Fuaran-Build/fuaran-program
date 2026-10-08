@@ -363,6 +363,14 @@ type DemandedProjection =
         /// would read "not asked" as "asked, and the answer was nothing", which
         /// is the reading a coverage check must never make.
         Server: ServerDemand option
+        /// The collections the store holds that a store-bound `Each` iterates
+        /// at run time, each with its ceiling (Phase 1991, D36) — on both
+        /// tiers: a compute stage's or a handler's dispatch-axis loop names the
+        /// binding keys its source reads, an op-channel loop names the state
+        /// collection. "Iterates THIS collection, at most N" is what the
+        /// signed envelope then says. Empty for every program with none,
+        /// which is every program before this phase.
+        Iterations: IterationDemand list
     }
 
 /// What a host offers, against which a projection is checked.
@@ -615,15 +623,15 @@ module Demanded =
     let rec private demandsOfAction
         (fold: DispatchFold<'Action, 'Expr, 'Store, 'Effect>)
         (action: 'Action)
-        : string list * HostCallDemand list * (string * bool) list =
+        : string list * HostCallDemand list * (string * bool) list * IterationDemand list =
         match fold.Action.View action with
         | ActionView.Sequence actions ->
             actions
             |> List.fold
-                (fun (accE, accH, accN) a ->
-                    let e, h, n = demandsOfAction fold a
-                    accE @ e, accH @ h, accN @ n)
-                ([], [], [])
+                (fun (accE, accH, accN, accI) a ->
+                    let e, h, n, i = demandsOfAction fold a
+                    accE @ e, accH @ h, accN @ n, accI @ i)
+                ([], [], [], [])
 
         | ActionView.Assign(key, _, from) ->
             let uses =
@@ -645,19 +653,20 @@ module Demanded =
                     | BindingUse.Query name -> Some { Channel = "Query"; Name = name }
                     | BindingUse.State _ -> None)
 
-            [], calls, (namespaceOf key, true) :: reads
+            [], calls, (namespaceOf key, true) :: reads, []
 
         | ActionView.Call(endpoint, _) ->
             [],
             [ { Channel = CallChannel
                 Name = endpoint } ],
+            [],
             []
 
         // A guard READS what its condition reads, exactly as an assignment's
         // `from` does, and writes nothing (Phase 1967).
         | ActionView.Require condition ->
             let calls, reads = usesOf fold condition
-            [], calls, reads
+            [], calls, reads, []
 
         // A branch demands the UNION of its parts (Phase 1976): what its entry
         // condition reads, what BOTH arms demand — an untaken arm's reach is
@@ -666,15 +675,15 @@ module Demanded =
         // reads. In order: entry, true arm, false arm, exit.
         | ActionView.Choose(entry, whenTrue, whenFalse, exit) ->
             let entryCalls, entryReads = usesOf fold entry
-            let tE, tH, tN = demandsOfAction fold whenTrue
-            let fE, fH, fN = demandsOfAction fold whenFalse
+            let tE, tH, tN, tI = demandsOfAction fold whenTrue
+            let fE, fH, fN, fI = demandsOfAction fold whenFalse
 
             let exitCalls, exitReads =
                 match exit with
                 | Some assertion -> usesOf fold assertion
                 | None -> [], []
 
-            tE @ fE, entryCalls @ tH @ fH @ exitCalls, entryReads @ tN @ fN @ exitReads
+            tE @ fE, entryCalls @ tH @ fH @ exitCalls, entryReads @ tN @ fN @ exitReads, tI @ fI
 
         // A repeat demands what its bound reads — a parameter bound is an
         // expression resolved at dispatch, a literal reads nothing — and what
@@ -686,23 +695,39 @@ module Demanded =
                 | Bound.Parameter(count, _, _) -> usesOf fold count
                 | Bound.Literal _ -> [], []
 
-            let bE, bH, bN = demandsOfAction fold body
-            bE, boundCalls @ bH, boundReads @ bN
+            let bE, bH, bN, bI = demandsOfAction fold body
+            bE, boundCalls @ bH, boundReads @ bN, bI
 
         // An `Each` demands what its LOWERED form demands (Phase 1990): the
         // union, in collection order, over its body with each element
         // substituted — read exactly as a sequence of those bodies is, so a
         // name an element's substitution makes reachable is reached. A literal
         // collection reads nothing of its own; an empty one demands nothing.
-        | ActionView.Each(collection, placeholder, body) ->
-            ActionWitness.lowered fold.Action collection placeholder body
+        | ActionView.Each(Collection.Literal elements, placeholder, body) ->
+            ActionWitness.lowered fold.Action elements placeholder body
             |> List.fold
-                (fun (accE, accH, accN) a ->
-                    let e, h, n = demandsOfAction fold a
-                    accE @ e, accH @ h, accN @ n)
-                ([], [], [])
+                (fun (accE, accH, accN, accI) a ->
+                    let e, h, n, i = demandsOfAction fold a
+                    accE @ e, accH @ h, accN @ n, accI @ i)
+                ([], [], [], [])
 
-        | ActionView.Leaf declaration -> declaration.EffectKinds, declaration.HostCalls, []
+        // A store-bound `Each` (Phase 1991, D36) demands what its SOURCE reads
+        // — an expression resolved at entry, as a parameter bound is — what
+        // its body demands ONCE, with the placeholder standing (its elements
+        // are not in the tree), and the ITERATION itself: the collection by
+        // the name the source's binding keys give it, and the ceiling.
+        | ActionView.Each(Collection.Stored(source, ceiling), _, body) ->
+            let sourceCalls, sourceReads = usesOf fold source
+            let bE, bH, bN, bI = demandsOfAction fold body
+
+            bE,
+            sourceCalls @ bH,
+            sourceReads @ bN,
+            { Collection = ExprWitness.collectionName fold.Expr source
+              Ceiling = ceiling }
+            :: bI
+
+        | ActionView.Leaf declaration -> declaration.EffectKinds, declaration.HostCalls, [], []
 
     /// What an expression demands, through the witness's `Expr.Uses`: a state
     /// key is a namespace read, a query slot a `Query` host call.
@@ -781,6 +806,10 @@ module Demanded =
             |> List.sortBy (fun c -> c.Channel, c.Name)
           StateNamespaces = mergeNamespaces projection.StateNamespaces
           OpaqueHandlers = projection.OpaqueHandlers |> List.distinct |> List.sort
+          Iterations =
+            projection.Iterations
+            |> List.distinct
+            |> List.sortBy (fun i -> i.Collection, i.Ceiling)
           Server =
             projection.Server
             |> Option.map (fun s ->
@@ -836,6 +865,7 @@ module Demanded =
           HostCalls = []
           StateNamespaces = []
           OpaqueHandlers = []
+          Iterations = []
           Server = None }
 
     /// What ONE action can ever ask for, as a projection — the client tier only,
@@ -854,7 +884,7 @@ module Demanded =
         (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (action: 'Action)
         : DemandedProjection =
-        let effects, hostCalls, namespaces =
+        let effects, hostCalls, namespaces, iterations =
             demandsOfAction (DispatchPosition.fold witness.Dispatch) action
 
         normalise
@@ -866,7 +896,8 @@ module Demanded =
                     |> List.map (fun (ns, written) ->
                         { Namespace = ns
                           Written = written
-                          Read = not written }) }
+                          Read = not written })
+                Iterations = iterations }
 
     /// Combine projections into one, re-normalised. Order-independent and
     /// idempotent: `union` of the same documents in any order is the same
@@ -912,6 +943,7 @@ module Demanded =
               HostCalls = projections |> List.collect _.HostCalls
               StateNamespaces = projections |> List.collect _.StateNamespaces
               OpaqueHandlers = projections |> List.collect _.OpaqueHandlers
+              Iterations = projections |> List.collect _.Iterations
               Server = server }
 
     /// Attach (or replace) the server tier, re-normalised.
@@ -954,12 +986,12 @@ module Demanded =
                 witness.Dispatch.Handlers node
                 |> List.map snd
                 |> List.fold
-                    (fun (accE, accH, accN) a ->
-                        let e, h, n = demandsOfAction fold a
-                        accE @ e, accH @ h, accN @ n)
-                    ([], [], [])
+                    (fun (accE, accH, accN, accI) a ->
+                        let e, h, n, i = demandsOfAction fold a
+                        accE @ e, accH @ h, accN @ n, accI @ i)
+                    ([], [], [], [])
 
-            let ownE, ownH, ownN = own
+            let ownE, ownH, ownN, ownI = own
 
             let ownO =
                 if opaqueHandler witness.Dispatch node then
@@ -969,12 +1001,12 @@ module Demanded =
 
             witness.Walk.Traverse node
             |> List.fold
-                (fun (accE, accH, accN, accO) child ->
-                    let e, h, n, o = walk child
-                    accE @ e, accH @ h, accN @ n, accO @ o)
-                (ownE, ownH, ownN, ownO)
+                (fun (accE, accH, accN, accO, accI) child ->
+                    let e, h, n, o, i = walk child
+                    accE @ e, accH @ h, accN @ n, accO @ o, accI @ i)
+                (ownE, ownH, ownN, ownO, ownI)
 
-        let effects, hostCalls, namespaces, opaque = walk root
+        let effects, hostCalls, namespaces, opaque, iterations = walk root
 
         normalise
             { Effects = effects
@@ -986,6 +1018,7 @@ module Demanded =
                       Written = written
                       Read = not written })
               OpaqueHandlers = opaque
+              Iterations = iterations
               Server = None }
 
     // ─── the projection as a wire document ───────────────────────────────────
@@ -1000,7 +1033,7 @@ module Demanded =
     /// The version this encoder emits, and — see `decodableVersions` — the only
     /// one this reader reads.
     [<Literal>]
-    let Version = 6
+    let Version = 7
 
     // The policy clause's discriminator, written once and read once. A literal
     // spelled at the encoder and again at the reader is the drift this document
@@ -1151,6 +1184,11 @@ module Demanded =
 
         let opaque = projection.OpaqueHandlers |> List.map q |> arr
 
+        let iterations =
+            projection.Iterations
+            |> List.map (fun i -> $"""{{"collection":{q i.Collection},"ceiling":{i.Ceiling}}}""")
+            |> arr
+
         let server =
             match projection.Server with
             | None -> "null"
@@ -1224,7 +1262,7 @@ module Demanded =
 
                 $"""{{"effects":{se},"capabilities":{sc},"functions":{fns},"channels":{channels},"reach":{reach},"replay":{replay},"undo":{undo},"constraints":{constraints}}}"""
 
-        $"""{{"kind":{q Kind},"version":{Version},"effects":{effects},"hostCalls":{hostCalls},"stateNamespaces":{namespaces},"opaqueHandlers":{opaque},"server":{server}}}"""
+        $"""{{"kind":{q Kind},"version":{Version},"effects":{effects},"hostCalls":{hostCalls},"stateNamespaces":{namespaces},"opaqueHandlers":{opaque},"iterations":{iterations},"server":{server}}}"""
 
     // ─── the projection as a wire document: reading one back ─────────────────
     //
@@ -1564,6 +1602,17 @@ module Demanded =
             requireString version (child path "name") "name" value
             |> Result.map (fun name -> { Channel = channel; Name = name }))
 
+    /// An iteration demand (Phase 1991): the collection, and the ceiling as an
+    /// integer — read as the replay reasons' `stage` is.
+    let private decodeIteration version path value : Result<IterationDemand, DemandedDecodeFailure> =
+        declaredOnly version path [ "collection"; "ceiling" ] value
+        |> Result.bind (fun () -> requireString version (child path "collection") "collection" value)
+        |> Result.bind (fun collection ->
+            requireInt version (child path "ceiling") "ceiling" value
+            |> Result.map (fun ceiling ->
+                { Collection = collection
+                  Ceiling = ceiling }))
+
     let private decodeNamespace version path value : Result<StateNamespaceDemand, DemandedDecodeFailure> =
         declaredOnly version path [ "namespace"; "written"; "read" ] value
         |> Result.bind (fun () -> requireString version (child path "namespace") "namespace" value)
@@ -1743,7 +1792,8 @@ module Demanded =
                                           Undo = undo
                                           Constraints = constraints }))))))))
 
-    /// The four members every version of this document has carried.
+    /// The four members every version of this document has carried, and the
+    /// fifth version 7 added (`iterations`, Phase 1991).
     let private decodeClientTier version root : Result<DemandedProjection, DemandedDecodeFailure> =
         requireStrings version "effects" "effects" root
         |> Result.bind (fun effects ->
@@ -1752,12 +1802,15 @@ module Demanded =
                 requireObjects version "stateNamespaces" "stateNamespaces" root decodeNamespace
                 |> Result.bind (fun namespaces ->
                     requireStrings version "opaqueHandlers" "opaqueHandlers" root
-                    |> Result.map (fun opaque ->
-                        { Effects = effects
-                          HostCalls = hostCalls
-                          StateNamespaces = namespaces
-                          OpaqueHandlers = opaque
-                          Server = None }))))
+                    |> Result.bind (fun opaque ->
+                        requireObjects version "iterations" "iterations" root decodeIteration
+                        |> Result.map (fun iterations ->
+                            { Effects = effects
+                              HostCalls = hostCalls
+                              StateNamespaces = namespaces
+                              OpaqueHandlers = opaque
+                              Iterations = iterations
+                              Server = None })))))
 
     /// The first member whose read value is not in the canonical order the
     /// document promises. Compared against `normalise` rather than against a
@@ -1774,6 +1827,8 @@ module Demanded =
             Some "stateNamespaces"
         elif n.OpaqueHandlers <> projection.OpaqueHandlers then
             Some "opaqueHandlers"
+        elif n.Iterations <> projection.Iterations then
+            Some "iterations"
         elif n.Server <> projection.Server then
             Some "server"
         else
@@ -1831,6 +1886,7 @@ module Demanded =
                       "hostCalls"
                       "stateNamespaces"
                       "opaqueHandlers"
+                      "iterations"
                       "server" ]
                     root
                 |> Result.bind (fun () -> decodeClientTier v root)

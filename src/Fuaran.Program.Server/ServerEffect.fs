@@ -501,6 +501,16 @@ type ServerEffectRegistry =
         /// registered, behind the gate. `None` is the in-memory fold — the
         /// default and the reference, byte for byte as before the seam.
         QueryEvaluator: QueryEvaluator option
+        /// How this placement READS the extent of a collection the store
+        /// holds (Phase 1991, D36): the one seam a store-bound `Each` on
+        /// either axis reads through — the op plan hands it the state
+        /// collection's name and its live read, a compute stage's fold the
+        /// binding keys its source reads and the resolution. `denyAll`
+        /// reads LIVE; the durable interpreter replaces it with a reader
+        /// that journals the read at its ordinal and serves the record on
+        /// replay. Reached only when a store-bound `Each` is met, so a
+        /// handler with none never asks it.
+        ReadExtent: Fuaran.Program.Bounded.ExtentReader
     }
 
 module ServerEffectRegistry =
@@ -520,7 +530,9 @@ module ServerEffectRegistry =
           Constraints = Map.empty
           OnDenied = ignore
           // The in-memory fold: an evaluator is a host act nobody performed.
-          QueryEvaluator = None }
+          QueryEvaluator = None
+          // The live read: journaling it is the durable interpreter's act.
+          ReadExtent = Fuaran.Program.Bounded.ExtentReader.live }
 
     /// Register a `HostCall` performer under a function name. Registering does
     /// NOT permit: the gate still decides, and it is asked about `host:<fn>`.
@@ -567,6 +579,17 @@ module ServerEffectRegistry =
     let withQueryEvaluator (evaluator: QueryEvaluator) (registry: ServerEffectRegistry) : ServerEffectRegistry =
         { registry with
             QueryEvaluator = Some evaluator }
+
+    /// Replace how a store-bound collection's extent is read (Phase 1991).
+    /// What the durable interpreter does to journal the read; a host has no
+    /// reason to, and a reader that answered anything but the live read or
+    /// its own record of one would make the loop iterate a collection the
+    /// store never held.
+    let withExtentReader
+        (reader: Fuaran.Program.Bounded.ExtentReader)
+        (registry: ServerEffectRegistry)
+        : ServerEffectRegistry =
+        { registry with ReadExtent = reader }
 
     /// The registry with the static query-schema check composed onto its
     /// evaluator against `schemas` (`QueryEvaluator.checkedAgainst`) — what the

@@ -179,20 +179,30 @@ let private modelWitness
       // composition that viewed a relabel as a branch, a repeat or an `Each`
       // would reach the model translated rather than refused.
       w_op_view =
-        let rec view (op: ToyOp) : Staging.op_view<ToyOp> =
+        let rec view (op: ToyOp) : Staging.op_view<JVal, ToyOp> =
             match witness.State.View op with
             | OpView.Edit -> Staging.OEdit op
             | OpView.Require -> Staging.ORequire op
             | OpView.Choose(entry, whenTrue, whenFalse, exit) ->
                 Staging.OChoose(entry, whenTrue |> List.map view, whenFalse |> List.map view, modelOpt exit)
             | OpView.Repeat(count, body) -> Staging.ORepeat(bigint count, body |> List.map view)
-            | OpView.Each(collection, placeholder, body) ->
+            | OpView.Each(Collection.Literal elements, placeholder, body) ->
                 Staging.OEach(
-                    collection
+                    elements
                     |> List.map (fun element -> body |> List.map (witness.State.Substitute placeholder element >> view))
                 )
+            // A collection the state holds (Phase 1991): the toy's state holds
+            // none and no toy op views as one, so the translation is total
+            // over an extent the toy never answers — `w_read_extent` below
+            // answers none, and the model refuses the shape exactly as the
+            // plan would refuse a collection the state does not hold. The
+            // shape is exercised at the grid witness (`GridWitnessTests`).
+            | OpView.Each(Collection.Stored(collection, ceiling), _, _) ->
+                Staging.OEachOf(collection.Name, bigint (max ceiling 0), [], [])
 
         view
+      // The toy's state holds no collection.
+      w_read_extent = fun _ _ -> Staging.ONone
       w_assign = witness.Dispatch.Store.Assign
       // The landing-slot refusal as production renders it: the
       // reserved-namespace text over this witness's predicate and prefix.

@@ -177,8 +177,14 @@ module Undo =
             | OpView.Require -> []
             | OpView.Choose(_, whenTrue, whenFalse, _) -> defectsOfOps state whenTrue @ defectsOfOps state whenFalse
             | OpView.Repeat(_, body) -> defectsOfOps state body
-            | OpView.Each(collection, placeholder, body) ->
-                defectsOfOps state (StateWitness.lowered state collection placeholder body))
+            | OpView.Each(Collection.Literal elements, placeholder, body) ->
+                defectsOfOps state (StateWitness.lowered state elements placeholder body)
+            // A store-bound collection's elements are not in the tree (Phase
+            // 1991): its body is read once, with the placeholder standing —
+            // the class of an op whose address is a placeholder is the
+            // domain's answer for that shape, and the undo trail records every
+            // lowered edit the run actually planned.
+            | OpView.Each(Collection.Stored _, _, body) -> defectsOfOps state body)
 
     /// The defects of one stage. A compute stage is read through Phase 1976's
     /// reversible fragment; a read lands a table and reaches nothing; the op

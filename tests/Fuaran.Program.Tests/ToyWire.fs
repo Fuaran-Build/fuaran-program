@@ -67,6 +67,13 @@ let rec encodeAction (action: ToyAction) : JVal =
             [ "body", encodeAction body
               "collection", JArr collection
               "placeholder", JStr placeholder ]
+    | ForEachOf(source, ceiling, placeholder, body) ->
+        Canon.typed
+            "ForEachOf"
+            [ "body", encodeAction body
+              "ceiling", JInt ceiling
+              "placeholder", JStr placeholder
+              "source", encodeExpr source ]
     | Beep volume -> Canon.typed "Beep" [ "volume", JInt volume ]
     | Hush -> Canon.typed "Hush" []
 
@@ -266,6 +273,17 @@ let rec decodeAction (value: JVal) : R<ToyAction> =
                     ProgramWire.requireMember "body" value
                     |> Result.bind decodeAction
                     |> Result.map (fun body -> ForEach(collection, placeholder, body))))
+        | "ForEachOf" ->
+            only [ "body"; "ceiling"; "placeholder"; "source" ]
+            |> Result.bind (fun () -> ProgramWire.requireMember "source" value |> Result.bind decodeExpr)
+            |> Result.bind (fun source ->
+                requireCount "ceiling" value
+                |> Result.bind (fun ceiling ->
+                    nonEmpty "placeholder" value
+                    |> Result.bind (fun placeholder ->
+                        ProgramWire.requireMember "body" value
+                        |> Result.bind decodeAction
+                        |> Result.map (fun body -> ForEachOf(source, ceiling, placeholder, body)))))
         | "Beep" ->
             only [ "volume" ]
             |> Result.bind (fun () -> requireCount "volume" value)

@@ -267,8 +267,13 @@ let rec private modelCascade (a: ToyAction) : ProvedBudget.act =
         ProvedBudget.ARepeat(ProvedBudget.BLiteral(bigint count), modelCascade body)
     | ActionView.Repeat(Bound.Parameter(_, lo, hi), body) ->
         ProvedBudget.ARepeat(ProvedBudget.BParameter(bigint lo, bigint hi), modelCascade body)
-    | ActionView.Each(collection, _, body) ->
-        ProvedBudget.AEach(List.replicate (List.length collection) (modelCascade body))
+    | ActionView.Each(Collection.Literal elements, _, body) ->
+        ProvedBudget.AEach(List.replicate (List.length elements) (modelCascade body))
+    // A store-bound collection (Phase 1991, D36) is priced as the parameter-
+    // bound repeat whose top is its ceiling: one step for the read, the body
+    // at the ceiling — the law `repeat_priced_at_top` already covers it.
+    | ActionView.Each(Collection.Stored(_, ceiling), _, body) ->
+        ProvedBudget.ARepeat(ProvedBudget.BParameter(bigint 0, bigint ceiling), modelCascade body)
     | ActionView.Assign _
     | ActionView.Call _
     | ActionView.Require _

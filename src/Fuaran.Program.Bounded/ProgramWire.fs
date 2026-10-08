@@ -420,7 +420,9 @@ module ProgramWire =
     ///               body's (Phase 1976).
     ///   Each      — a literal collection re-runs the same lowered elements,
     ///               so its defects are the distinct union of theirs — the
-    ///               body with each element substituted (Phase 1990).
+    ///               body with each element substituted (Phase 1990); a
+    ///               store-bound collection is resolved at dispatch, which is
+    ///               undecidable, beside the body's (Phase 1991).
     ///   Leaf      — undecidable, and reported as such.
     ///
     /// `replayDefectsOfActionIn` is the same walk over the action witness alone
@@ -444,9 +446,15 @@ module ProgramWire =
         | ActionView.Repeat(Bound.Parameter _, body) ->
             ReplayDefect.UndecidableAction :: replayDefectsOfActionIn witness body
             |> List.distinct
-        | ActionView.Each(collection, placeholder, body) ->
-            ActionWitness.lowered witness collection placeholder body
+        | ActionView.Each(Collection.Literal elements, placeholder, body) ->
+            ActionWitness.lowered witness elements placeholder body
             |> List.collect (replayDefectsOfActionIn witness)
+            |> List.distinct
+        // A store-bound collection (Phase 1991) is resolved at dispatch, as a
+        // parameter bound is — undecidable from the declared form — beside
+        // the body's own defects, read once with the placeholder standing.
+        | ActionView.Each(Collection.Stored _, _, body) ->
+            ReplayDefect.UndecidableAction :: replayDefectsOfActionIn witness body
             |> List.distinct
         | ActionView.Leaf _ -> [ ReplayDefect.UndecidableAction ]
 
