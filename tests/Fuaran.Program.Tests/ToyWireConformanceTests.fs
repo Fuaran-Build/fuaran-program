@@ -606,3 +606,99 @@ let tests =
               Expect.equal mine.Length (atToy + shared) "the toy subject's run is its own vectors plus the shared ones"
               Expect.isGreaterThan shared 0 "…and the shared ones are some"
           } ]
+
+/// A toy handler document whose one compute stage holds `action`.
+let private handlerWith (action: string) : string =
+    """{"$type":"Handler","name":"title.relabel","stages":[{"$type":"Compute","action":"""
+    + action
+    + "}]}"
+
+let private targetedRing =
+    """{"$type":"Ring","endpoint":"/handlers/relabel","targeted":true}"""
+
+let private untargetedRing =
+    """{"$type":"Ring","endpoint":"/handlers/relabel","targeted":false}"""
+
+/// The placements a call can sit at inside one compute stage: on its own, and
+/// one level inside each composition shape the toy has.
+let private placements (ring: string) : (string * string) list =
+    [ "the stage's own action", ring
+      "a sequence member",
+      """{"$type":"Seq","actions":[{"$type":"Put","key":"mode","value":"on"},"""
+      + ring
+      + "]}"
+      "a selection's true arm",
+      """{"$type":"Pick","entry":{"$type":"Read","key":"ready"},"whenFalse":{"$type":"Hush"},"whenTrue":"""
+      + ring
+      + "}"
+      "a selection's false arm",
+      """{"$type":"Pick","entry":{"$type":"Read","key":"ready"},"whenFalse":"""
+      + ring
+      + ""","whenTrue":{"$type":"Hush"}}"""
+      "a repeat's body", """{"$type":"Times","body":""" + ring + ""","bound":2}"""
+      "an iteration's body",
+      """{"$type":"ForEach","body":"""
+      + ring
+      + ""","collection":["a"],"placeholder":"item"}""" ]
+
+[<Tests>]
+let resultTargetTests =
+    testList
+        "fuaran#2019 - a declared result target is refused at the codec at the toy subject"
+        [ test "a targeted Ring is refused as tree-declared-result-target at every placement in a handler document" {
+              for where, action in placements targetedRing do
+                  match decodeHandler (handlerWith action) with
+                  | Ok _ -> failtestf "a targeted Ring at %s was ACCEPTED" where
+                  | Error refusal ->
+                      Expect.equal
+                          refusal.Class
+                          RefusalClass.TreeDeclaredResultTarget
+                          $"a targeted Ring at {where} is refused for the declared result target"
+          }
+
+          test "the same placements with an untargeted Ring decode" {
+              for where, action in placements untargetedRing do
+                  match decodeHandler (handlerWith action) with
+                  | Ok _ -> ()
+                  | Error refusal ->
+                      failtestf "an untargeted Ring at %s was refused (%s: %s)" where refusal.Class refusal.Detail
+          }
+
+          test "a Ring carrying a landing slot as an extra member is refused for the member, not the target" {
+              let action =
+                  """{"$type":"Ring","endpoint":"/handlers/relabel","into":{"$type":"State","key":"result"},"targeted":true}"""
+
+              match decodeHandler (handlerWith action) with
+              | Ok _ -> failtest "a Ring with an undeclared member was ACCEPTED"
+              | Error refusal ->
+                  Expect.equal
+                      refusal.Class
+                      RefusalClass.UndeclaredMember
+                      "§2.9 refuses the undeclared member before any reading of the action"
+          }
+
+          test "the refusal is read through the witness's view, so a view that declares no target accepts" {
+              // The falsifier: the rule must come from the subject's declared
+              // reading and from nothing the codec spells. A witness whose view
+              // says the targeted Ring declares no target makes the same bytes
+              // decode, which a rule keyed on the document's spelling would not.
+              let view = wireWitness.Dispatch.Action.View
+
+              let blind =
+                  { wireWitness with
+                      Dispatch =
+                          { wireWitness.Dispatch with
+                              Action =
+                                  { wireWitness.Dispatch.Action with
+                                      View =
+                                          fun action ->
+                                              match view action with
+                                              | ActionView.Call(endpoint, _) -> ActionView.Call(endpoint, false)
+                                              | other -> other } } }
+
+              let decoded =
+                  ProgramWire.parseDocument (handlerWith targetedRing)
+                  |> Result.bind (HandlerWire.decodeHandlerJson blind)
+
+              Expect.isOk decoded "with no declared reading, nothing is refused for a target"
+          } ]

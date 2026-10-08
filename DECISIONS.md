@@ -2501,3 +2501,54 @@ elements are VALUES; what an op does with an element it reads is still the op's 
 nothing here fixes what an operand may be, only what the collection is). A store-bound `Each` on the
 dispatch axis reads the BINDING store; a collection in the tree a dispatch-axis fold cannot see stays
 an op-axis construct, which is where a grid's regions live.
+
+## D38 — A declared result target is refused by the CODEC at every subject, read through the subject's own call in the witness's view; a program's stays the fold's; amends D9 and closes D31's second finding (2026-10-08)
+
+D9 refused a call that declares its own result target, and the specification's §9.5 says a host MUST
+refuse it at every placement. The codec kept that promise at one subject only. `ProgramWire`'s check
+reads the DOCUMENT for a `Call` carrying `into`, which is the referenced subject's spelling; a toy
+handler document whose `Ring` is `targeted` decoded, and only the fold refused it, later and as a
+diagnostic rather than a refusal of the document. So the refusal a host met depended on the subject's
+vocabulary, which §9.5 does not allow. D31 recorded this as a finding.
+
+**The choice.** Two routes were open: the generic codec recognises a target through the subject's
+witness, or §9.5 is restated so the refusal point is the fold wherever a subject declares no such
+reading. The first is taken, because the reading already exists. `ActionView.Call` carries
+`declaresTarget`, every witness fills it, and the fold refuses through it today. Nothing new is asked
+of a domain, and the codec and the fold now read one declaration of what a target is, so they cannot
+disagree about it. The second route would have made §9.5 weaker for every subject other than the one
+the codec happens to spell, and would have left a handler document that names a target accepted by
+the codec of a host whose fold never runs it.
+
+**The mechanism.** `decodeActionIn` decodes through the witness as before, then walks the DECODED
+action through `View`: a `Call` whose `declaresTarget` is true, at any depth the composition shapes
+reach (a sequence's members, a selection's arms, a repeat's body, an iteration's body), is refused as
+`tree-declared-result-target`, with the same log-safe detail. Nothing past the decoder is constructed
+and nothing runs. `HandlerWire` needs no change: its compute stage already decodes through
+`decodeActionIn`.
+
+**The document check stays, beside the view walk.** The view does not decompose a leaf, and the
+referenced subject views some actions that hold continuations as leaves (its confirm round trip), so a
+`Call` with `into` inside one of those is reachable by the document check and not by the view. Removing
+the document check would have weakened the referenced subject's refusal to buy tidiness. It is the
+referenced subject's spelling in the generic codec, and that is now stated beside it. Moving it into
+that subject's own decoder is the clean end state, and it is that subject's repository's act, not
+this one's.
+
+**What the specification says now.** §9.5 states that the rule is read through the subject's own call.
+In a handler document the codec refuses, at every subject. In a program the tree's own codec belongs
+to another specification and may admit the shape, so the fold refuses, at every subject, as before.
+§10.7 lists the toy's refusal as its fourth owned-subject refusal. The corpus gains
+`toy-handler/reject-result-target`, a targeted `Ring` inside a sequence, refused for the referenced
+vector's class. `toy-handler/reject-ring-into` keeps `undeclared-member`, and the text now says why:
+`into` is not the toy's spelling of a target, and §2.9 refuses the member before any reading of the
+action is made. No referenced vector's bytes or class moved.
+
+**Version.** No public signature moves: the new walk is private, and `decodeActionIn` keeps its type.
+A toy-subject handler document that decoded before is refused now, which is the conformance
+correction §9.5 already required; the `0.8.0` draft carries no entry for it.
+
+**What this forecloses, and what it leaves.** A domain cannot make its call's target invisible to the
+codec while the fold refuses it: the two read one view. A domain that hides a call inside a leaf hides
+it from both, as it always did. The document check's referenced spelling remains in the generic codec
+until that subject's decoder carries it.
