@@ -162,6 +162,307 @@ module ReturnContract =
                 else
                     Error(describe contract)
 
+// ============================================================================
+//  The query evaluator seam (Phase 1905, DECISIONS.md D34).
+//
+//  `RunQuery` carries a source and a pipeline. Until this seam the handler
+//  resolved the source BY NAME into a whole table and folded the pipeline in
+//  memory, so a host that could answer the pipeline more cheaply — from a
+//  database, a file with predicate pushdown, a remote service — had nothing to
+//  work with. A registered evaluator receives the source, the pipeline and the
+//  bound environment (the host's named-source resolver) TOGETHER and answers a
+//  table.
+//
+//  Nothing in the seam says what the host does with them; that is what keeps
+//  this domain general. What it does say:
+//    * ABSENT is the in-memory fold, byte for byte — the default and the
+//      reference (`QueryEvaluator.inMemory`).
+//    * The gate and the argument policy decide before any evaluator is asked.
+//    * The answer's schema is checked against the statically derived one when
+//      the placement knows the host's source schemas
+//      (`ServerEffectRegistry.checkingQueries`); a disagreement is a halt that
+//      names both.
+//    * A host that declares its evaluator a PURE READ keeps `RunQuery`
+//      unstaged and idempotent. One that cannot say so is STAGED like a
+//      `HostCall` (D8): asked only after the plan completed, journaled by the
+//      durable interpreter, and one-way for undo. Staged is the default.
+//    * `QueryEvaluatorLaws.certify` is what a host runs to hold its evaluator
+//      to the fold, on the fixtures it declares.
+// ============================================================================
+
+/// Why a query produced no table.
+[<RequireQualifiedAccess>]
+type QueryFault =
+    /// The evaluator's refusal in the in-memory fold's own vocabulary. The halt
+    /// reports its DISCRIMINATOR only — see `ServerDiagnostic.Failed`.
+    | Eval of Fuaran.Compute.EvalError
+    /// A host evaluator's own failure. The text is the HOST's, so, as a host
+    /// performer's reason is, it is safe to surface verbatim.
+    | Host of reason: string
+    /// The host answered a table the statically derived schema refutes. Both
+    /// renderings name only columns and types — the host's declared vocabulary
+    /// and the host's own answer — never a row.
+    | SchemaMismatch of expected: string * answered: string
+
+/// Whether answering a query reaches outside. A host DECLARES this; it is not
+/// inferred, because nothing here can see what an evaluator does.
+[<RequireQualifiedAccess>]
+type QueryPosture =
+    /// Answering reads and changes nothing, so repeating it is free. The query
+    /// stays unstaged and `Idempotent`, exactly as the in-memory fold is.
+    | PureRead
+    /// The host cannot say the evaluator is a pure read. The query is staged
+    /// like a `HostCall` (D8). The default for a registered evaluator.
+    | Reaching
+
+/// A host's query evaluator: the source, the pipeline and the bound
+/// environment (the named-source resolver the in-memory fold would use)
+/// together, answered as a table.
+///
+/// Synchronous, as every host seam of this placement is (`HostFunctions`, the
+/// op performer, the named-source resolver): the handler is a two-phase fold
+/// that decides before it performs, and it has no point at which a pending
+/// answer could be awaited (D34).
+type QueryEvaluator =
+    { Evaluate:
+        Fuaran.Core.DataSource
+            -> Fuaran.Compute.Transform list
+            -> (string -> Result<Fuaran.Core.Table, Fuaran.Compute.EvalError>)
+            -> Result<Fuaran.Core.Table, QueryFault>
+      Posture: QueryPosture }
+
+module QueryFault =
+
+    /// The halt-reason prefix of a schema disagreement.
+    [<Literal>]
+    let SchemaMismatchCode = "query-schema-mismatch"
+
+    /// The discriminator of a pipeline-evaluation failure. Deliberately not the
+    /// full error: see `ServerDiagnostic.Failed`.
+    let evalErrorKind (error: Fuaran.Compute.EvalError) : string =
+        match error with
+        | Fuaran.Compute.UnknownColumn _ -> "UnknownColumn"
+        | Fuaran.Compute.TypeError _ -> "TypeError"
+        | Fuaran.Compute.AggError _ -> "AggError"
+        | Fuaran.Compute.JoinError _ -> "JoinError"
+        | Fuaran.Compute.ArityError _ -> "ArityError"
+        | Fuaran.Compute.UnresolvedSource _ -> "UnresolvedSource"
+        | Fuaran.Compute.OverflowError _ -> "OverflowError"
+        | Fuaran.Compute.UnboundParam _ -> "UnboundParam"
+        // The evaluator's clock read with no pinned evaluation instant
+        // (Core-Compute 0.34.0).
+        | Fuaran.Compute.UnpinnedClock _ -> "UnpinnedClock"
+
+    /// The halt reason a fault becomes. An `Eval` fault reads exactly as the
+    /// in-memory fold's halt always has.
+    let describe (fault: QueryFault) : string =
+        match fault with
+        | QueryFault.Eval error -> evalErrorKind error
+        | QueryFault.Host reason -> reason
+        | QueryFault.SchemaMismatch(expected, answered) ->
+            sprintf "%s: expected %s, answered %s" SchemaMismatchCode expected answered
+
+module QueryEvaluator =
+
+    /// The in-memory fold: resolve the source through the environment, then
+    /// fold the pipeline. The REFERENCE every host evaluator is held to.
+    let fold
+        (source: Fuaran.Core.DataSource)
+        (pipeline: Fuaran.Compute.Transform list)
+        (resolve: string -> Result<Fuaran.Core.Table, Fuaran.Compute.EvalError>)
+        : Result<Fuaran.Core.Table, QueryFault> =
+        Fuaran.Compute.DataFrame.evalSource resolve source
+        |> Result.bind (Fuaran.Compute.DataFrame.evalPipelineWith resolve pipeline)
+        |> Result.mapError QueryFault.Eval
+
+    /// The fold as an evaluator: a pure read. What an absent evaluator means.
+    let inMemory: QueryEvaluator =
+        { Evaluate = fold
+          Posture = QueryPosture.PureRead }
+
+    /// A host evaluator that cannot say it is a pure read: staged like a
+    /// `HostCall`. The constructor to reach for when in doubt.
+    let reaching evaluate : QueryEvaluator =
+        { Evaluate = evaluate
+          Posture = QueryPosture.Reaching }
+
+    /// A host evaluator the host DECLARES a pure read: unstaged and idempotent.
+    /// The declaration is the host's and is not checked — see D34.
+    let pureRead evaluate : QueryEvaluator =
+        { Evaluate = evaluate
+          Posture = QueryPosture.PureRead }
+
+    /// Whether a query answered by this evaluator is staged (D8).
+    let isStaged (evaluator: QueryEvaluator) : bool =
+        evaluator.Posture = QueryPosture.Reaching
+
+    let private renderType (ty: Fuaran.Core.ColumnType) : string = Fuaran.Core.ColumnType.tag ty
+
+    /// A statically derived schema, rendered: `[a:int, b]` for a closed set (a
+    /// column with an undecidable type has no tag), `[a:int, …]` for an open one.
+    let renderKnowledge (knowledge: Fuaran.Program.Bounded.SchemaKnowledge) : string =
+        let columns =
+            Fuaran.Program.Bounded.Schema.columns knowledge
+            |> List.map (fun column ->
+                match column.Type with
+                | Some ty -> column.Name + ":" + renderType ty
+                | None -> column.Name)
+
+        match knowledge with
+        | Fuaran.Program.Bounded.SchemaKnowledge.Closed _ -> "[" + String.concat ", " columns + "]"
+        | Fuaran.Program.Bounded.SchemaKnowledge.AtLeast _ -> "[" + String.concat ", " (columns @ [ "…" ]) + "]"
+
+    /// An answered table's schema, rendered on `renderKnowledge`'s terms.
+    let renderSchema (schema: Fuaran.Core.Schema) : string =
+        "["
+        + (schema
+           |> List.map (fun (name, ty) -> name + ":" + renderType ty)
+           |> String.concat ", ")
+        + "]"
+
+    /// Whether an answered schema agrees with the statically derived one.
+    ///
+    /// A column the derivation names must be answered, with the derived type
+    /// where the derivation states one; a CLOSED derivation also admits no
+    /// column it does not name. Column ORDER is not compared: a reader addresses
+    /// a column by name, so order is not part of the shape the seam promises.
+    let conforms (expected: Fuaran.Program.Bounded.SchemaKnowledge) (answered: Fuaran.Core.Schema) : bool =
+        let present (column: Fuaran.Program.Bounded.ColumnKnowledge) =
+            answered
+            |> List.exists (fun (name, ty) ->
+                name = column.Name
+                && (match column.Type with
+                    | Some derived -> derived = ty
+                    | None -> true))
+
+        let named = Fuaran.Program.Bounded.Schema.columns expected
+        let allPresent = named |> List.forall present
+
+        match expected with
+        | Fuaran.Program.Bounded.SchemaKnowledge.Closed _ ->
+            allPresent
+            && answered
+               |> List.forall (fun (name, _) -> named |> List.exists (fun column -> column.Name = name))
+        | Fuaran.Program.Bounded.SchemaKnowledge.AtLeast _ -> allPresent
+
+    /// The evaluator with the static query-schema check composed onto its
+    /// answer: the schema `Schema.ofPipeline` derives from `schemas`, the
+    /// source and the pipeline — the walk the pre-execution check runs,
+    /// unchanged — is what the answer is held to, and a disagreement is a
+    /// `SchemaMismatch` naming both. The posture is unchanged.
+    let checkedAgainst (schemas: Fuaran.Program.Bounded.SourceSchemas) (evaluator: QueryEvaluator) : QueryEvaluator =
+        { evaluator with
+            Evaluate =
+                fun source pipeline resolve ->
+                    evaluator.Evaluate source pipeline resolve
+                    |> Result.bind (fun table ->
+                        let expected = Fuaran.Program.Bounded.Schema.ofPipeline schemas source pipeline
+
+                        if conforms expected table.Schema then
+                            Ok table
+                        else
+                            Error(QueryFault.SchemaMismatch(renderKnowledge expected, renderSchema table.Schema))) }
+
+    /// The refusal a journaled answer that no longer decodes as a table meets.
+    [<Literal>]
+    let AnswerUndecodable = "query-answer-undecodable"
+
+    /// An answer as the value a performer returns: the table as an embedded
+    /// source in the column codec's canonical form, or the fault's halt reason.
+    let encodeAnswer (answer: Result<Fuaran.Core.Table, QueryFault>) : Result<Fuaran.Core.JVal, string> =
+        answer
+        |> Result.map (fun table -> Fuaran.Core.ColumnCodec.encodeJson (Fuaran.Core.DataSource.Embedded table))
+        |> Result.mapError QueryFault.describe
+
+    /// `encodeAnswer` reversed. A reason comes back as a `Host` fault, whose
+    /// halt reason is the same text.
+    let decodeAnswer (answer: Result<Fuaran.Core.JVal, string>) : Result<Fuaran.Core.Table, QueryFault> =
+        match answer with
+        | Error reason -> Error(QueryFault.Host reason)
+        | Ok value ->
+            match Fuaran.Core.ColumnCodec.decodeJson value with
+            | Ok(Fuaran.Core.DataSource.Embedded table) -> Ok table
+            | Ok _
+            | Error _ -> Error(QueryFault.Host AnswerUndecodable)
+
+    /// A STAGED evaluator's answers routed through a performer wrapper — the
+    /// durable interpreter's journal, which records a performer's value. A pure
+    /// read is returned unchanged: it is not staged, so there is nothing for a
+    /// journal to record.
+    let through
+        (perform: (Fuaran.Core.JVal -> Result<Fuaran.Core.JVal, string>) -> Result<Fuaran.Core.JVal, string>)
+        (evaluator: QueryEvaluator)
+        : QueryEvaluator =
+        match evaluator.Posture with
+        | QueryPosture.PureRead -> evaluator
+        | QueryPosture.Reaching ->
+            { evaluator with
+                Evaluate =
+                    fun source pipeline resolve ->
+                        perform (fun _ -> encodeAnswer (evaluator.Evaluate source pipeline resolve))
+                        |> decodeAnswer }
+
+/// One fixture a host certifies its evaluator on: a source, a pipeline, and
+/// the bound environment — the named tables both evaluators resolve against.
+type QueryFixture =
+    { Name: string
+      Source: Fuaran.Core.DataSource
+      Pipeline: Fuaran.Compute.Transform list
+      Sources: Map<string, Fuaran.Core.Table> }
+
+/// A fixture on which a host evaluator did not answer what the fold answered.
+type QueryLawFinding =
+    {
+        Fixture: string
+        /// The fold's answer, rendered: `table <canonical column-codec form>`
+        /// or `fault <halt reason>`.
+        Reference: string
+        /// The host evaluator's answer, rendered the same way.
+        Answered: string
+    }
+
+/// The law family a host runs to certify its own evaluator: on every fixture
+/// it declares, the evaluator answers exactly what the in-memory fold answers —
+/// the same table, byte for byte in the column codec's canonical form (rows in
+/// the fold's order, since a reader may depend on it), or a fault with the same
+/// halt reason. The fold itself passes trivially.
+module QueryEvaluatorLaws =
+
+    /// The bound environment a fixture declares, as the resolver the fold uses.
+    let resolverOf
+        (sources: Map<string, Fuaran.Core.Table>)
+        : string -> Result<Fuaran.Core.Table, Fuaran.Compute.EvalError> =
+        fun name ->
+            match Map.tryFind name sources with
+            | Some table -> Ok table
+            | None -> Error(Fuaran.Compute.UnresolvedSource name)
+
+    let private render (answer: Result<Fuaran.Core.Table, QueryFault>) : string =
+        match answer with
+        | Ok table ->
+            "table "
+            + Fuaran.Core.ColumnCodec.encode (Fuaran.Core.DataSource.Embedded table)
+        | Error fault -> "fault " + QueryFault.describe fault
+
+    /// The finding for one fixture, or `None` where the evaluator agrees.
+    let check (evaluator: QueryEvaluator) (fixture: QueryFixture) : QueryLawFinding option =
+        let resolve = resolverOf fixture.Sources
+        let reference = render (QueryEvaluator.fold fixture.Source fixture.Pipeline resolve)
+        let answered = render (evaluator.Evaluate fixture.Source fixture.Pipeline resolve)
+
+        if reference = answered then
+            None
+        else
+            Some
+                { Fixture = fixture.Name
+                  Reference = reference
+                  Answered = answered }
+
+    /// Every fixture the evaluator disagrees with the fold on, in fixture
+    /// order. Empty is certified.
+    let certify (evaluator: QueryEvaluator) (fixtures: QueryFixture list) : QueryLawFinding list =
+        fixtures |> List.choose (check evaluator)
+
 /// A closed, default-deny registry of the server placement's effect
 /// permissions, plus the performers for the one arm that needs them.
 type ServerEffectRegistry =
@@ -195,6 +496,11 @@ type ServerEffectRegistry =
         /// Denial sink. Fired for every refusal, so a denied effect is
         /// observable rather than a silent nothing.
         OnDenied: ServerEffectDenial -> unit
+        /// The host's query evaluator (Phase 1905, D34), beside the host
+        /// functions because it is the same kind of thing: a host act,
+        /// registered, behind the gate. `None` is the in-memory fold — the
+        /// default and the reference, byte for byte as before the seam.
+        QueryEvaluator: QueryEvaluator option
     }
 
 module ServerEffectRegistry =
@@ -212,7 +518,9 @@ module ServerEffectRegistry =
           // narrow. Default-denying here as well would make the empty registry
           // deny twice and say nothing more.
           Constraints = Map.empty
-          OnDenied = ignore }
+          OnDenied = ignore
+          // The in-memory fold: an evaluator is a host act nobody performed.
+          QueryEvaluator = None }
 
     /// Register a `HostCall` performer under a function name. Registering does
     /// NOT permit: the gate still decides, and it is asked about `host:<fn>`.
@@ -250,6 +558,29 @@ module ServerEffectRegistry =
     /// Set the denial sink.
     let onDenied (sink: ServerEffectDenial -> unit) (registry: ServerEffectRegistry) : ServerEffectRegistry =
         { registry with OnDenied = sink }
+
+    /// Register the host's query evaluator (Phase 1905, D34). Registering does
+    /// NOT permit, on exactly `register`'s terms: the gate is still asked about
+    /// `RunQuery` and the argument policy still decides, before the evaluator
+    /// is. Construct it with `QueryEvaluator.reaching` unless the host can say
+    /// it is a pure read (`QueryEvaluator.pureRead`).
+    let withQueryEvaluator (evaluator: QueryEvaluator) (registry: ServerEffectRegistry) : ServerEffectRegistry =
+        { registry with
+            QueryEvaluator = Some evaluator }
+
+    /// The registry with the static query-schema check composed onto its
+    /// evaluator against `schemas` (`QueryEvaluator.checkedAgainst`) — what the
+    /// server placement does with the source schemas its host declared before
+    /// a handler runs. With no evaluator registered it is the registry
+    /// unchanged: the fold is the reference the check is derived from, so
+    /// nothing is checked against itself and an absent evaluator stays byte
+    /// for byte what it was.
+    let checkingQueries
+        (schemas: Fuaran.Program.Bounded.SourceSchemas)
+        (registry: ServerEffectRegistry)
+        : ServerEffectRegistry =
+        { registry with
+            QueryEvaluator = registry.QueryEvaluator |> Option.map (QueryEvaluator.checkedAgainst schemas) }
 
     /// The registered host-function names, for host introspection.
     let registered (registry: ServerEffectRegistry) : string list =

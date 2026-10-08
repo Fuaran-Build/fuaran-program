@@ -347,11 +347,22 @@ module Handler =
     /// decides nothing: the gate has already said yes, the performer has already
     /// been found, and the landing slot has already been checked. All that is
     /// left is the one irreversible act.
+    ///
+    /// Three arms stage calls: a host call, an op under a registered op
+    /// performer, and a query under an evaluator its host could not declare a
+    /// pure read (Phase 1905, D34). The answer says where it lands, and every
+    /// slot it names was checked while planning.
+    type private Landing =
+        /// Nothing lands: an op stage's receipt, or a host call with no `into`.
+        | Nowhere
+        /// A host call's result, in its declared state slot.
+        | StateSlot of key: string * value: Fuaran.Core.JVal
+        /// A staged query's table, in its query slot.
+        | QuerySlot of slot: string * table: Fuaran.Core.Table
+
     type private StagedCall =
         { Capability: string
-          Performer: Fuaran.Core.JVal -> Result<Fuaran.Core.JVal, string>
-          Args: Fuaran.Core.JVal
-          Into: string option }
+          Perform: unit -> Result<Landing, string> }
 
     /// The state threaded through the stage fold. Lists accumulate reversed and
     /// are flipped once at the end, so a long handler does not quadratically
@@ -379,22 +390,6 @@ module Handler =
             /// The flow decisions (Phase 1982), reversed like every list here.
             Flow: FlowDecision list
         }
-
-    /// The discriminator of a pipeline-evaluation failure. Deliberately not the
-    /// full error: see `ServerDiagnostic.Failed`.
-    let private evalErrorKind (error: Fuaran.Compute.EvalError) : string =
-        match error with
-        | Fuaran.Compute.UnknownColumn _ -> "UnknownColumn"
-        | Fuaran.Compute.TypeError _ -> "TypeError"
-        | Fuaran.Compute.AggError _ -> "AggError"
-        | Fuaran.Compute.JoinError _ -> "JoinError"
-        | Fuaran.Compute.ArityError _ -> "ArityError"
-        | Fuaran.Compute.UnresolvedSource _ -> "UnresolvedSource"
-        | Fuaran.Compute.OverflowError _ -> "OverflowError"
-        | Fuaran.Compute.UnboundParam _ -> "UnboundParam"
-        // The evaluator's clock read with no pinned evaluation instant
-        // (Core-Compute 0.34.0).
-        | Fuaran.Compute.UnpinnedClock _ -> "UnpinnedClock"
 
     let private halt
         (capability: string)
@@ -425,9 +420,8 @@ module Handler =
     /// A staged op's performer: the registered op performer closed over the
     /// state AS OF THE OP and the op (Phase 1974), in the shape a staged host
     /// call carries, so the perform phase runs ops and host calls through ONE
-    /// loop. The argument is inert (an op takes no declarative payload) and
-    /// the empty object is the honest spelling of that, since the wire value
-    /// has no null; the answer is the performer's RECEIPT (Phase 1981), already
+    /// loop. An op takes no declarative payload; the answer is the performer's
+    /// RECEIPT (Phase 1981), already
     /// checked by the contract `OpPerformance.performedChecked` composed into
     /// `perform`, landing in no slot. The model's `staged_from`, with the token
     /// carrying the contract at this state and op (`op_contract_keyed`).
@@ -438,9 +432,7 @@ module Handler =
         (op: 'Op)
         : StagedCall =
         { Capability = capability
-          Performer = fun _ -> perform state op
-          Args = Fuaran.Core.JObj []
-          Into = None }
+          Perform = fun () -> perform state op |> Result.map (fun _ -> Landing.Nowhere) }
 
     /// The `ApplyOps` arm's fold over its ops — the model's `plan_ops`
     /// (Phase 1974; `plan_views` since Phase 1976). Each op is VIEWED, then
@@ -682,17 +674,38 @@ module Handler =
                     // nowhere to land, so the read is refused before it runs.
                     | None -> halt capability NoBindingChannel acc
                     | Some store ->
-                        let evaluated =
-                            Fuaran.Compute.DataFrame.evalSource resolve source
-                            |> Result.bind (Fuaran.Compute.DataFrame.evalPipelineWith resolve pipeline)
+                        // The host's evaluator, or the in-memory fold where the
+                        // host registered none (Phase 1905, D34): the absent case
+                        // is the fold exactly as it ran before the seam, halt
+                        // reasons included.
+                        let evaluator =
+                            registry.QueryEvaluator |> Option.defaultValue QueryEvaluator.inMemory
 
-                        match evaluated with
-                        | Error err -> halt capability (evalErrorKind err) acc
-                        | Ok table ->
-                            { performed with
-                                Store =
-                                    { performed.Store with
-                                        Bindings = store.LandQuery name table performed.Store.Bindings } }
+                        if QueryEvaluator.isStaged evaluator then
+                            // An evaluator its host could not declare a pure read
+                            // is staged like a host call (D8): admitted here, asked
+                            // only once the plan completed, its table landing in
+                            // the slot then. `Performed` is not extended, on the
+                            // host-call arm's terms, and the trail records that
+                            // the run reached outside.
+                            { acc with
+                                Staged =
+                                    { Capability = capability
+                                      Perform =
+                                        fun () ->
+                                            evaluator.Evaluate source pipeline resolve
+                                            |> Result.map (fun table -> Landing.QuerySlot(name, table))
+                                            |> Result.mapError QueryFault.describe }
+                                    :: acc.Staged
+                                Trail = UndoStep.Reached capability :: acc.Trail }
+                        else
+                            match evaluator.Evaluate source pipeline resolve with
+                            | Error fault -> halt capability (QueryFault.describe fault) acc
+                            | Ok table ->
+                                { performed with
+                                    Store =
+                                        { performed.Store with
+                                            Bindings = store.LandQuery name table performed.Store.Bindings } }
 
                 | ServerEffect.ApplyOps ops ->
                     // The only domain-state mutation. Folded with short-circuit: an
@@ -765,9 +778,13 @@ module Handler =
                             { acc with
                                 Staged =
                                     { Capability = capability
-                                      Performer = performer
-                                      Args = args
-                                      Into = into }
+                                      Perform =
+                                        fun () ->
+                                            performer args
+                                            |> Result.map (fun result ->
+                                                match into with
+                                                | Some key -> Landing.StateSlot(key, result)
+                                                | None -> Landing.Nowhere) }
                                     :: acc.Staged
                                 Trail = UndoStep.Reached capability :: acc.Trail }
 
@@ -846,27 +863,33 @@ module Handler =
         match staged with
         | [] -> acc
         | call :: rest ->
-            match call.Performer call.Args with
+            match call.Perform() with
             | Error reason ->
                 { acc with
                     Halted = true
                     Diagnostics = ServerDiagnostic.PerformFailed(call.Capability, reason) :: acc.Diagnostics }
-            | Ok result ->
+            | Ok landing ->
                 let recorded =
                     { acc with
                         Externally = call.Capability :: acc.Externally }
 
                 let landed =
-                    match call.Into, channel with
-                    | None, _ -> recorded
-                    | Some key, Some store ->
+                    match landing, channel with
+                    | Landing.Nowhere, _ -> recorded
+                    | Landing.StateSlot(key, result), Some store ->
                         { recorded with
                             Store =
                                 { recorded.Store with
                                     Bindings = store.Assign key result recorded.Store.Bindings } }
+                    | Landing.QuerySlot(slot, table), Some store ->
+                        { recorded with
+                            Store =
+                                { recorded.Store with
+                                    Bindings = store.LandQuery slot table recorded.Store.Bindings } }
                     // Unreachable: a slot with no binding channel was refused
                     // while planning, so it was never staged.
-                    | Some _, None -> invalidOp "a landing slot was staged with no binding channel"
+                    | Landing.StateSlot _, None
+                    | Landing.QuerySlot _, None -> invalidOp "a landing slot was staged with no binding channel"
 
                 perform channel rest landed
 

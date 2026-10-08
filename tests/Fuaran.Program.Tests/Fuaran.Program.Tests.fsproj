@@ -54,6 +54,8 @@
          here from the server suite that left with the UI adapters. -->
     <Compile Include="CoreSourceGuardTests.fs" />
     <Compile Include="DemandedCorpusReadTests.fs" />
+    <!-- Phase 1905: the query evaluator seam (DECISIONS.md D34). -->
+    <Compile Include="QueryEvaluatorTests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
   <ItemGroup>

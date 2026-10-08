@@ -152,7 +152,15 @@
          change is there — the second domain's four findings, recorded in
          DECISIONS.md D19 — is in STABILITY.md, which holds this slot as a
          DRAFT until it is tagged. -->
-    <Version>0.7.1</Version>
+    <!-- 0.8.0 — Phase 1905. ADVANCES rather than rides: v0.7.1 is TAGGED,
+         and this change is breaking by this repository's own classification —
+         `ServerEffectRegistry` gains `QueryEvaluator` and `PerformerFacets`
+         gains `QueryEvaluator`, a record gaining a member (FS0764 on a
+         full-literal construction). Every other change is additive: the query
+         evaluator seam, its law family, and the registration and declaration
+         functions beside it (DECISIONS.md D34). STABILITY.md holds the slot as
+         a DRAFT until it is tagged. -->
+    <Version>0.8.0</Version>
     <!-- This repository's restore path is PUBLIC: it publishes to nuget.org, so
          a consumer of the published packages reaches the registry and nothing
          else. Undeclared would read as `local-feed`, under which a pin only this

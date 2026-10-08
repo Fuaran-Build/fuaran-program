@@ -84,6 +84,8 @@ type ServerServices<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect> =
         OpPerformance: OpPerformance<'Node, 'Op>
         /// Resolves a named data source for `ServerEffect.RunQuery`. Defaults to
         /// refusing every name, so a host that wires no data serves no query.
+        /// It is the bound environment a registered query evaluator receives
+        /// beside the source and the pipeline (Phase 1905, D34).
         Sources: string -> Result<Fuaran.Core.Table, Fuaran.Compute.EvalError>
         /// The SCHEMAS of those named sources, declared here beside the resolver
         /// that serves their rows. Read only by the pre-execution query-schema
@@ -139,6 +141,27 @@ module ServerServices =
         : ServerServices<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect> =
         { services with
             Handlers = Map.add endpoint handler services.Handlers }
+
+    /// Register the host's query evaluator (Phase 1905, D34) on this
+    /// placement's effect registry — `ServerEffectRegistry.withQueryEvaluator`.
+    /// The schemas declared with `withSourceSchema` are what its answers are
+    /// checked against when a handler runs, whichever order the two are
+    /// declared in.
+    let withQueryEvaluator
+        (evaluator: QueryEvaluator)
+        (services: ServerServices<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
+        : ServerServices<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect> =
+        { services with
+            Effects = ServerEffectRegistry.withQueryEvaluator evaluator services.Effects }
+
+    /// The effect registry a handler runs against: the host's, with the
+    /// static query-schema check composed onto its query evaluator against
+    /// the source schemas declared here (`ServerEffectRegistry.checkingQueries`).
+    /// Every interpreter behind this placement's call actions takes its
+    /// registry from here, so a host answer whose schema the static walk
+    /// refutes halts under each of them alike.
+    let effects (services: ServerServices<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>) : ServerEffectRegistry =
+        ServerEffectRegistry.checkingQueries services.SourceSchemas services.Effects
 
     /// Declare the schema a named `Ref` source resolves to.
     ///
@@ -454,7 +477,7 @@ module ServerSession =
                     let outcome =
                         Handler.runWith
                             services.Witness
-                            services.Effects
+                            (ServerServices.effects services)
                             services.OpPerformance
                             services.Sources
                             nodeId

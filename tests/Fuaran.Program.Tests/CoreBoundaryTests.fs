@@ -54,14 +54,32 @@ let private coreDir (name: string) = Path.Combine(repoRoot, "src", name)
 /// A UI-tier package id or namespace: `Fuaran.UI` itself or anything under it,
 /// or one of the two adapter packages that instantiate the core at it — whose
 /// names do not match `Fuaran.UI` by spelling, so they are named explicitly.
+///
+/// Since Phase 1905 (DECISIONS.md D34) the rule is wider than the UI tier: ANY
+/// `Fuaran.*` name outside the substrate (`Fuaran.Core`, `Fuaran.Compute`) and
+/// this domain's own packages is refused on the same terms. The query
+/// evaluator seam is generic, and whatever domain answers a query through it —
+/// a database, a file store — is a consumer of this core, never a dependency
+/// of it. Written as the complement of what is allowed rather than as a list
+/// of what is not, so a domain nobody has named yet is refused too.
 let private uiName =
-    Regex(@"\bFuaran\.(Program\.(Server\.)?)?UI(\.|\b|"")", RegexOptions.Compiled)
+    Regex(
+        @"\bFuaran\.((Program\.(Server\.)?)?UI|(?!(Core|Compute|Program)\b)[A-Z][A-Za-z0-9]*)(\.|\b|"")",
+        RegexOptions.Compiled
+    )
 
 /// The same test over a resolved library or assembly name.
 let private isUiTier (name: string) =
     name.StartsWith "Fuaran.UI"
     || name.StartsWith "Fuaran.Program.UI"
     || name.StartsWith "Fuaran.Program.Server.UI"
+    || (name.StartsWith "Fuaran."
+        // The segment after `Fuaran.`, up to the next `.` or a resolved
+        // name's `/version`, is the root that decides.
+        && not (
+            [ "Core"; "Compute"; "Program" ]
+            |> List.contains (name.Substring("Fuaran.".Length).Split([| '.'; '/' |]).[0])
+        ))
 
 /// Declared references in project-file TEXT: a `PackageReference`, a
 /// `ProjectReference` or a central `PackageVersion` naming the tier.
@@ -289,6 +307,28 @@ let tests =
               Expect.isEmpty
                   (namedInLines "Probe.fs" [| "// a comment about Fuaran.UI is not a reference" |])
                   "and not on a comment"
+
+              // Phase 1905: any other domain is refused on the same terms, and
+              // the substrate and this domain's own packages are not.
+              Expect.isNonEmpty
+                  (namedInLines "Probe.fs" [| "open Fuaran.Example.Store" |])
+                  "the source probe, on another domain"
+
+              Expect.isNonEmpty
+                  (declaredInText "probe.fsproj" [| """    <PackageReference Include="Fuaran.Example" />""" |])
+                  "the declared-reference probe, on another domain"
+
+              Expect.isTrue (isUiTier "Fuaran.Example.Adapter") "the resolved-name probe, on another domain"
+
+              Expect.isEmpty
+                  (namedInLines
+                      "Probe.fs"
+                      [| "open Fuaran.Core.Wire"
+                         "open Fuaran.Compute"
+                         "open Fuaran.Program.Bounded" |])
+                  "and not on the substrate or this domain"
+
+              Expect.isFalse (isUiTier "Fuaran.Compute.DataFrame") "the resolved-name probe passes the substrate"
 
               withScratch (fun dir ->
                   let assets = Path.Combine(dir, "project.assets.json")
