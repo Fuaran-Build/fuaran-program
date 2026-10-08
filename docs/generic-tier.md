@@ -1,6 +1,6 @@
 # The generic tier — inventory, witness contract, adapter home
 
-**Status: design note for Phase 1895, amended by Phases 1967 and 1974.** The binding parts are in
+**Status: design note for Phase 1895, amended by Phases 1967 and 1974; the fourth witness (§3.12) added by Phase 1992.** The binding parts are in
 [`DECISIONS.md`](../DECISIONS.md) D18, D19 and D20; §3 is written around the three axes D20 cut. This note holds the evidence behind them: the inventory the contract is sized against, the
 contract itself member by member, why each assumption it keeps is kept, the two adapter homes with
 their costs, and the consumers the change reaches. Phase 1896 cuts the core against §3; Phase 1897
@@ -775,6 +775,7 @@ the domain's gate decided. Its census of the contract:
 | UI tier | 32 | 0 | 0 |
 | verb (1967) | 6 | 24 | 1 |
 | document pipeline | 14 | 17 | 1 |
+| grid (Phase 1992, §3.12) | 9 of the state axis's 9 | 0 | 0 — walk and dispatch unfilled by composition (D20), not vacuous |
 
 The tree half went from one meaningful member (the verb) to six (the document) — ids, children,
 replace-children, traverse, canonical — and nothing on the pipeline's path read them to any effect
@@ -807,6 +808,47 @@ client-side. Fill `DispatchWitness` only if nodes carry handlers that events dis
 your guards are ops (`OpView.Require`), your reads are ops, and your tail is a performer handed the
 plan. The signatures tell you, before a line is written, which Program functions your composition
 can reach.
+
+### 3.12 The fourth witness — a grid, for per-element iteration (Phase 1992)
+
+Phase 1990 gave both axes `Each` over a literal collection, for a consumer that had not arrived: a
+spreadsheet's automation. Rather than wait for that domain to pay for the construct's gaps, a fourth
+witness measures it here, inside Program's own suite: `tests/Fuaran.Program.Tests/GridDomain.fs`, a
+grid of cells keyed by PERMANENT identities (`r2c3`, never a position an insert would move), ops that
+set, clear and copy a cell, named regions that grow by a row, a guard on a cell being filled, and
+three flow ops the state witness views as the core's — an `If <cell> <> ""` as `Choose`, a
+`For Each` as `Each`, and a `For i = a To b` as an `Each` over the range's integers. Its composition
+is `ProgramWitness<Grid, CellOp, Unfilled, Unfilled>`: a grid's automation is a handler over its
+cells, reached by no event and walking no tree.
+
+**Its census is the first with nothing vacuous.** All nine state-axis members are meaningful,
+`Diff` included — the verb leaves it empty, and a grid's state IS its cells, so a test holds
+`apply (Diff a b) a = b` in both directions and from the empty grid. Every edit has an exact inverse
+(an append's inverse is a drop of the last row; a region is never held empty, so the pair folds back
+byte for byte), so every grid handler's undo posture is `reversible`. The walk and dispatch axes are
+unfilled by composition, which D20 made a declaration rather than a cost.
+
+**The class-A fixtures** (`GridWitnessTests.fs`) are the loops a spreadsheet importer
+importer resolves at import time, each RUN, REVERSED through `Undo.run` back to the seed, and REPLAYED
+from a durable journal with every step served and no performer invoked: a column of fixed identities;
+a two-variable grid as a nested `Each` (row-major, the outer element fixed across the inner loop, the
+flow reported in pre-order); a copy-values loop over a range, where an empty source clears its target
+as a spreadsheet's copy does; and an `If` per element, whose guard reads the plan as of its position.
+A `For i = 2 To 100` copy loop reaches both cells of all ninety-nine rows in the demanded document,
+and an allow-list over two cells refuses it before anything performs.
+
+**The finding list.** Every member of the contract the witness had to fill vacuously, and every
+construct it needed and did not find:
+
+| Finding | What the witness did | Routed |
+|---|---|---|
+| **G1 — no value channel on the state axis.** An op's operands are literals of the tree and the placeholder's element; nothing carries a value one op READ to a later op that WRITES it, and the dispatch axis's `ExprWitness` resolves against the binding store, never the planned state. | The copy-values loop is ONE fused domain op, `Copy(source, target)`, that reads and writes in a single apply. That covers the copy; a computed write (`Cells(i, 4) = Cells(i, 3) * 2`) would need the domain to carry an expression inside its op, evaluated against the plan, with no shared vocabulary for it. | An open decision on the roadmap: whether an op-axis expression channel is Program's or each domain's. One witness needs it, so the rule of three says the domain's for now. |
+| **G2 — a region cannot be iterated at RUN time.** `Each` takes a literal collection, so `For Each r In Range("orders")` is resolved at import, and a row appended after the import is invisible to every later run of that handler. | Pinned as a test (`class B`): the region read once into a literal, a row appended by a later handler, and the next run still iterating the two rows the import froze. A replay of the earlier run serving the earlier rows holds trivially at a literal, which is why the claim only means something once a run can read three. | Phase 1991 — `Each` over a store-bound finite collection. The class-B fixtures (iterate, append, the next run sees it, a replay of the earlier run does not) extend this witness once it ships; the test above is the baseline they replace. |
+| **G3 — `For i = a To b` needed no construct.** | The domain's `View` resolves a range to an `Each` over its integers; substitution, scope, reach, the argument policy, undo and replay all read the lowered elements. | Nothing to route: a negative result. The bound is the range's length, fixed by the tree (D2), as for any literal collection. |
+| **Vacuous members — none.** | Every state-axis member is exercised by a test. | Nothing to route. |
+
+The grid stands beside the verb (§3.10) and the document pipeline (§3.11) in the measurement table
+above.
 
 ---
 
