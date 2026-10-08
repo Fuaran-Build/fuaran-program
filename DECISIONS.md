@@ -2170,3 +2170,103 @@ lines in 5 commits (`607515f` 4, `f6a4a34` 2, `cbeded1` 2, `e7e1156`, `e7c58f8`)
 bootstrap-era instruction file and pack-script header that `607515f` removed at the public flip, and
 the citations this entry rewords. This repository is already public, so its history is not rewritten
 here: the finding is recorded, and any remedy is the maintainers' act, not this repository's.
+
+## D34 — `RunQuery` gains a generic evaluator seam: the host's evaluator receives the source, the pipeline and the named-source resolver together, beside the host functions on the effect registry; the in-memory fold is the absent case and the reference; a host that cannot declare its evaluator a pure read is staged like a host call (2026-10-08)
+
+**2026-10-08. Phase 1905.** `ServerEffect.RunQuery` carries a `DataSource` and a `Transform list`
+behind the gate and the argument policy, but until this entry its evaluation was fixed: the handler
+resolved the source BY NAME into a whole table and folded the pipeline in memory. A host that could
+answer the pipeline more cheaply (from a database, a file with predicate pushdown, a remote service)
+was handed the name and never the pipeline, so it had to materialise everything. D18 kept that shape
+deliberately; this entry adds the one seam D18 left out, and adds it generically. Nothing in it says
+what the host does.
+
+**Where the seam lives: on `ServerEffectRegistry`, beside `HostFunctions`, not on `ProgramWitness`.**
+D18's witness parameterises a DOMAIN: its tree, its actions, its store, its ops. The query's types are
+not the domain's. `DataSource`, `Transform` and `Table` are the substrate's, the same for every
+witness, so a witness member would be generic in nothing. And an evaluator is not a property of a
+domain: two hosts of the same domain can answer the same query from different places. It is a host
+act, like registering a performer, and the registry is where this placement keeps host acts that sit
+behind the gate. Placing it there also means every interpreter that takes a registry, direct and
+durable, reaches it without a signature change, and the gate and the argument policy decide before it
+is ever asked: a refused capability never reaches an evaluator.
+
+**The signature is `source -> pipeline -> resolver -> Result<Table, QueryFault>`, synchronous.** The
+phase was written against `Deferred<Result<Table, _>>`. Checked against the tree, that premise does
+not hold here. Every host seam of this placement is a synchronous `Result`: the host functions, the
+op performer, and the named-source resolver the fold already used. The handler is a two-phase fold
+that decides before it performs, so it has no point at which a pending answer could be awaited. A
+`Pending` could only become a halt, and a host can say that with an `Error`. The substrate's
+`Deferred` also lives in a package this repository does not reference. The "bound environment" is the
+named-source resolver (`ServerServices.Sources`), the only environment the fold resolves against. A
+host that needs an asynchronous evaluator blocks inside it, exactly as a host function does today.
+
+**Absent is the fold, byte for byte.** `ServerEffectRegistry.denyAll` carries `QueryEvaluator =
+None`, and `None` runs `QueryEvaluator.inMemory`, which is today's evaluation moved, with the same
+halt reasons (`QueryFault.describe` on an `Eval` fault is the discriminator the handler always
+reported). No codec moved, and the program wire specification and its corpus do not change. The
+existing suites run unchanged against the absent case.
+
+**The static query-schema checks run unchanged; a host answer they refute halts, naming both.** The
+seam changes where a table comes from, not what shape it has. `QueryEvaluator.checkedAgainst`
+composes the walk the pre-execution check already runs (`Schema.ofPipeline` over the host's declared
+`SourceSchemas`) onto the evaluator's answer. A disagreement is `QueryFault.SchemaMismatch`, whose
+halt reason is `query-schema-mismatch: expected <derived>, answered <answered>`. Both renderings name
+only columns and types, which come from the host's own declarations and the host's own answer, never
+a row. A derived column must be answered, with its derived type where one is stated, and a closed
+derivation admits no column it does not name. Column ORDER is not compared, because readers address
+columns by name. The server placement composes the check through `ServerServices.effects`, which is
+the registry both the direct and the durable arm now take. With no evaluator it changes nothing,
+since the fold is the reference the derivation is checked against, not something to check. A
+pure-read answer that is refuted halts while planning (`Failed`); a staged one halts while performing
+(`PerformFailed`).
+
+**Staged is the default. Unstaged and `Idempotent` only where the host declares a pure read.**
+`QueryEvaluator.reaching` (staged) and `QueryEvaluator.pureRead` are the two constructors, and the
+posture is the host's declaration, which nothing here checks. A pure read keeps today's placement: it
+is evaluated while planning, recomputed on replay, and repeats freely. A host that cannot say its
+evaluator is a pure read gets D8's answer for anything that may reach outside, the same as a
+`HostCall`: the query is admitted while planning, asked only after the plan completes (so a halted
+plan asked nothing), its table lands then, and the run's trail records `Reached` (one-way for undo).
+The default is staged because staging fails closed. A host that wrongly declares a pure read can
+re-run a side effect; a host that wrongly leaves an evaluator staged pays only placement. The
+durability doctrine prefers that trade, and it is the same reason every other default here is closed.
+
+**What a staged query costs, stated.** Its table lands after the plan, so a `Compute` stage later in
+the same handler does not see it. `HostCall` with `into` already behaves this way. The durable
+interpreter journals the staged answer at its ordinal under capability `RunQuery`, with the table in
+the column codec's canonical form (`QueryEvaluator.through`), and a replay serves it without asking
+again. The repeat facet is declared with `DurableServices.declaringQueryEvaluator`, and
+`NonIdempotent` is the default for an undeclared facet, on `facetOf`'s terms. Unlike the op
+performer's registration, the evaluator's registration is not visible to the facet derivation (it is
+on the registry, which the derivation is not given). So the DECLARATION is what tells the derivation
+that `RunQuery` reaches outside, and `Facets.undeclaredQueryEvaluator` is the check that catches a
+staged evaluator the facets were not told about.
+
+**What this entry does not reach, recorded rather than papered over.** Two published STATIC postures
+read only the handler's declared form, which names no evaluator: the demanded projection's replay
+reasons (`HandlerWire.replayReasons`) and its undo posture (`Undo.postureOf`). So for a host with a
+staged evaluator they say what they have always said about a `RunQuery`, which is a read. The runtime
+fails closed in both places: the undo run refuses at the `Reached` step (`OneWayStep`, naming
+`RunQuery`), and the durable interpreter journals the step. Making the static postures say it would
+need a new defect tag in the demanded document, and that is a wire change this phase is bound not to
+make. It is left to a successor that can move the specification.
+
+**The law family is what a host runs to certify its own evaluator.** `QueryEvaluatorLaws.certify`
+takes an evaluator and the fixtures the host declares. Each fixture is a source, a pipeline, and the
+named tables both evaluators resolve against. On every fixture the evaluator must answer what the
+fold answers: the same table, byte for byte in the column codec's canonical form, rows in the fold's
+order (a reader may depend on it), or a fault with the same halt reason. Each disagreement is reported
+with the fixture's name and both answers. The fold passes trivially, and a filter pushed down to the
+source passes because it answers the same table. The family certifies agreement on the declared
+fixtures and nothing beyond them. The posture declaration is likewise the host's claim and is not
+tested.
+
+**What the seam does not claim.** Anything about what the host's evaluator does: where it reads, what
+else it touches, or how it arrives at the table. What crosses is a source and a pipeline (with the
+resolver). What mediates is the gate, the argument policy, the schema check on the answer, and, under
+the default posture, D8's staging. The core still references no database or any other domain.
+
+**Version.** `0.8.0`, advancing from the tagged `0.7.1`. `ServerEffectRegistry` and `PerformerFacets`
+each gain a member, which is FS0764 on a full-literal construction and therefore breaking by
+`STABILITY.md`'s own rule, even though everything else is additive.

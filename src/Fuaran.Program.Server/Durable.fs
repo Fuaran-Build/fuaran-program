@@ -177,6 +177,12 @@ module DurableServices =
         { services with
             Performers = PerformerFacets.declare fn facet services.Performers }
 
+    /// Declare what repeating the registered query evaluator does, where the
+    /// host registered one it could not declare a pure read (Phase 1905, D34).
+    let declaringQueryEvaluator (facet: IdempotencyFacet) (services: DurableServices) : DurableServices =
+        { services with
+            Performers = PerformerFacets.declareQueryEvaluator facet services.Performers }
+
     /// Declare what repeating the registered OP performer does (Phase 1980) —
     /// the declaration a domain whose op is a content-addressed write makes to
     /// reach exactly-once, and one whose op is a push cannot make without
@@ -218,6 +224,11 @@ module Durable =
     /// one entry per op, in the ordinal sequence the host calls share.
     [<Literal>]
     let OpStageCapability = "ApplyOps"
+
+    /// The capability a staged query's journal entries carry (Phase 1905):
+    /// the arm's own name, as an op stage's is.
+    [<Literal>]
+    let QueryStageCapability = "RunQuery"
 
     /// **Run one handler under deterministic replay, performing its ops as the
     /// placement declares.**
@@ -375,9 +386,24 @@ module Durable =
         let wrap (fn: string) (performer: Fuaran.Core.JVal -> Result<Fuaran.Core.JVal, string>) =
             wrapAt ("host:" + fn) None (PerformerFacets.facetOf fn services.Performers) (fun () -> None) performer
 
+        // A STAGED query evaluator (Phase 1905, D34) through the same wrapper:
+        // its answer is the step's recorded value — the table in the column
+        // codec's canonical form — taken at its ordinal in perform order, like
+        // a host call's. A pure read is not staged, is recomputed on replay as
+        // the in-memory fold is, and `QueryEvaluator.through` leaves it as is.
+        let journalQuery (performer: Fuaran.Core.JVal -> Result<Fuaran.Core.JVal, string>) =
+            wrapAt
+                QueryStageCapability
+                None
+                (PerformerFacets.queryEvaluatorFacet services.Performers)
+                (fun () -> None)
+                performer
+                (Fuaran.Core.JObj [])
+
         let journalling =
             { registry with
-                HostFunctions = registry.HostFunctions |> Map.map wrap }
+                HostFunctions = registry.HostFunctions |> Map.map wrap
+                QueryEvaluator = registry.QueryEvaluator |> Option.map (QueryEvaluator.through journalQuery) }
 
         // The op performer, through the same wrapper. The plan phase stages
         // `fun _ -> perform state op` per edit (`Handler.stagedOp`), so this
@@ -503,7 +529,7 @@ module Durable =
                             host.Witness
                             services
                             (sprintf "%s/%d" invocation ordinal)
-                            host.Effects
+                            (ServerServices.effects host)
                             host.OpPerformance
                             opRefusal
                             host.Sources

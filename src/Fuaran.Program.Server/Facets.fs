@@ -127,9 +127,21 @@ type DerivedGuarantees =
 /// declaration about a performer that is not registered changes nothing. The
 /// slot's identity is `OpPerformance.RegistrationKey` (Phase 1983): what a
 /// finding about it names, and what an operator's revoke withdraws it by.
+///
+/// `QueryEvaluator` (Phase 1905, D34) is the same declaration for a registered
+/// query evaluator its host could NOT declare a pure read — the one that makes
+/// `RunQuery` a staged arm. One slot, for the op performer's reason. Unlike the
+/// op performer's, its registration lives on the effect registry, which this
+/// derivation is not handed, so the declaration is what tells the derivation
+/// that the arm reaches outside: `None` derives `RunQuery` as the recomputed
+/// read it is under the in-memory fold or a declared pure read.
+/// `Facets.undeclaredQueryEvaluator` is the check that catches a staged
+/// evaluator the derivation was not told about — the same shape as
+/// `undeclaredPerformers` and `undeclaredOpPerformer`.
 type PerformerFacets =
     { Declared: Map<string, IdempotencyFacet>
-      OpPerformer: IdempotencyFacet option }
+      OpPerformer: IdempotencyFacet option
+      QueryEvaluator: IdempotencyFacet option }
 
 /// Which interpreter is running the handlers, and under what settings. The
 /// facet derivation is a function of THIS as much as of the handler — the same
@@ -314,7 +326,8 @@ module PerformerFacets =
     /// says something.
     let none: PerformerFacets =
         { Declared = Map.empty
-          OpPerformer = None }
+          OpPerformer = None
+          QueryEvaluator = None }
 
     /// Declare what repeating this performer does.
     let declare (fn: string) (facet: IdempotencyFacet) (facets: PerformerFacets) : PerformerFacets =
@@ -341,6 +354,20 @@ module PerformerFacets =
     /// has not said, on `facetOf`'s terms.
     let opPerformerFacet (facets: PerformerFacets) : IdempotencyFacet =
         facets.OpPerformer |> Option.defaultValue IdempotencyFacet.NonIdempotent
+
+    /// Declare what repeating a registered STAGED query evaluator does
+    /// (Phase 1905).
+    let declareQueryEvaluator (facet: IdempotencyFacet) (facets: PerformerFacets) : PerformerFacets =
+        { facets with
+            QueryEvaluator = Some facet }
+
+    /// Whether the host said anything about a staged query evaluator.
+    let isQueryEvaluatorDeclared (facets: PerformerFacets) : bool = facets.QueryEvaluator.IsSome
+
+    /// What repeating a staged query evaluator does — `NonIdempotent` where the
+    /// host has not said, on `facetOf`'s terms.
+    let queryEvaluatorFacet (facets: PerformerFacets) : IdempotencyFacet =
+        facets.QueryEvaluator |> Option.defaultValue IdempotencyFacet.NonIdempotent
 
 /// The placement ids a composition's logic-tree slot can name.
 module PlacementId =
@@ -486,7 +513,9 @@ module Facets =
         (effect: ServerEffect<'Op>)
         : IdempotencyFacet =
         match effect with
-        | ServerEffect.RunQuery _ -> IdempotencyFacet.Idempotent
+        // A staged evaluator (Phase 1905) repeats whatever its host declared;
+        // the fold and a declared pure read repeat freely.
+        | ServerEffect.RunQuery _ -> performers.QueryEvaluator |> Option.defaultValue IdempotencyFacet.Idempotent
         | ServerEffect.ApplyOps _ when performsOps performance -> PerformerFacets.opPerformerFacet performers
         | ServerEffect.ApplyOps _
         | ServerEffect.EmitPatch _
@@ -562,6 +591,10 @@ module Facets =
             directPosture intrinsic
         | PlacementDiscipline.DeterministicReplay replay ->
             match effect with
+            // A staged query reaches outside and is journaled like a host
+            // call (Phase 1905), so it is derived on a host call's terms.
+            | ServerEffect.RunQuery _ when PerformerFacets.isQueryEvaluatorDeclared performers ->
+                reachingOutside intrinsic replay
             | ServerEffect.RunQuery _ ->
                 { Delivery = DeliveryFacet.hazards DeliveryFacet.ExactlyOnceEffective
                   Idempotency = IdempotencyFacet.Idempotent
@@ -658,6 +691,25 @@ module Facets =
             |> Seq.exists (fun effect ->
                 match effect with
                 | ServerEffect.ApplyOps _ -> true
+                | _ -> false))
+
+    /// Whether the registry holds a STAGED query evaluator (Phase 1905) that the
+    /// performer declarations say nothing about, while a handler reaches
+    /// `RunQuery`. The derivation reads the declaration, not the registry, so
+    /// this is the finding that says the facets were not told the arm reaches
+    /// outside — the query evaluator's `undeclaredOpPerformer`.
+    let undeclaredQueryEvaluator
+        (performers: PerformerFacets)
+        (registry: ServerEffectRegistry)
+        (handlers: Handler<'Action, 'Op> seq)
+        : bool =
+        (registry.QueryEvaluator |> Option.exists QueryEvaluator.isStaged)
+        && not (PerformerFacets.isQueryEvaluatorDeclared performers)
+        && (handlers
+            |> Seq.collect effectsOf
+            |> Seq.exists (fun effect ->
+                match effect with
+                | ServerEffect.RunQuery _ -> true
                 | _ -> false))
 
     /// **The end-to-end consistency check.**
