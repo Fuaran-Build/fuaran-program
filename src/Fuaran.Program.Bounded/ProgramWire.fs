@@ -286,6 +286,11 @@ module ProgramWire =
     /// must reach a reader before anything is constructed from the document.
     /// The detail names neither the endpoint nor the target: both come off the
     /// wire.
+    ///
+    /// This check reads the REFERENCED subject's spelling (`Call` carrying
+    /// `into`), so on its own it decides the rule at one subject only. The
+    /// subject-independent half is `refuseViewedResultTarget` below, which
+    /// reads the target through the witness's view after decoding (D38).
     let rec private refuseResultTarget (value: JVal) : Result<unit, WireRefusal> =
         let here =
             match tag value, tryMember "into" value with
@@ -310,6 +315,38 @@ module ProgramWire =
         : JVal =
         witness.Dispatch.Action.Encode action
 
+    /// The same refusal read through the SUBJECT'S OWN declared reading
+    /// (fuaran#2019, D38): a call the witness's view says declares a result
+    /// target, at any depth the view unfolds. This is what makes §9.5 hold at
+    /// every subject rather than only at the one whose spelling the document
+    /// check above knows — the toy's call declares its target in `targeted`,
+    /// not in `into`, and before this its handler documents decoded and only
+    /// the fold refused them. It runs on the DECODED action, so nothing is
+    /// constructed past the decoder and nothing runs; the view is the one the
+    /// fold refuses through, so the codec and the fold cannot disagree about
+    /// what a declared target is. A leaf is not decomposed, which is why the
+    /// document check stays beside it: it reaches positions a domain views as
+    /// a leaf (D38).
+    let rec private refuseViewedResultTarget
+        (action: ActionWitness<'Action, 'Expr, 'Store, 'Effect>)
+        (value: 'Action)
+        : Result<unit, WireRefusal> =
+        match action.View value with
+        | ActionView.Call(_, true) ->
+            refuse
+                RefusalClass.TreeDeclaredResultTarget
+                "the call declares a result target; a handler declares where its own results land"
+        | ActionView.Sequence members -> members |> traverse (refuseViewedResultTarget action) |> Result.map ignore
+        | ActionView.Choose(_, whenTrue, whenFalse, _) ->
+            refuseViewedResultTarget action whenTrue
+            |> Result.bind (fun () -> refuseViewedResultTarget action whenFalse)
+        | ActionView.Repeat(_, body)
+        | ActionView.Each(_, _, body) -> refuseViewedResultTarget action body
+        | ActionView.Call(_, false)
+        | ActionView.Assign _
+        | ActionView.Require _
+        | ActionView.Leaf _ -> Ok()
+
     /// `decodeAction` over the action witness alone (Phase 1982, H1), for a
     /// path that reads its dispatch position through `IDispatchPosition` and
     /// holds the fold's action witness rather than the whole dispatch axis.
@@ -317,7 +354,9 @@ module ProgramWire =
         (action: ActionWitness<'Action, 'Expr, 'Store, 'Effect>)
         (value: JVal)
         : Result<'Action, WireRefusal> =
-        refuseResultTarget value |> Result.bind (fun () -> action.Decode value)
+        refuseResultTarget value
+        |> Result.bind (fun () -> action.Decode value)
+        |> Result.bind (fun decoded -> refuseViewedResultTarget action decoded |> Result.map (fun () -> decoded))
 
     let decodeAction
         (witness: ProgramWitness<'Node, 'Op, 'Walk, DispatchWitness<'Node, 'Action, 'Expr, 'Store, 'Effect>>)
