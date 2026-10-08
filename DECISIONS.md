@@ -1702,6 +1702,11 @@ op-performer revoke joins the suspend there. **The trigger to revisit** is a con
 a revoked op performer from a policy refusal from the coverage report alone; the revisit is an
 op-performer slot on `ServerCoverage` with its own finding, filed against `Fuaran.Program.Bounded`.
 
+> **Amended by D37 (2026-10-08, Phase 1993):** the operator ruled the revisit on 2026-10-02 — a
+> revoke is permanent, so a revoked op performer reads as an absence. `ServerCoverage.Withdrawn` is
+> the slot and `CoverageFinding.ServerCapabilityWithdrawn` the finding; this item's gate reading is
+> superseded. Items 1 and 3–6 stand.
+
 **3. Coverage carries no actor and no reason, for either kind of performer — the phase's premise
 that a withdrawn host capability is reported "naming the actor and reason" was checked and is false
 of coverage.** `ServerCoverage` is a vocabulary and a gate; a withdrawn host function's finding names
@@ -2501,6 +2506,82 @@ elements are VALUES; what an op does with an element it reads is still the op's 
 nothing here fixes what an operand may be, only what the collection is). A store-bound `Each` on the
 dispatch axis reads the BINDING store; a collection in the tree a dispatch-axis fold cannot see stays
 an op-axis construct, which is where a grid's regions live.
+
+## D37 — A revoked op performer reads as ABSENT in coverage: `ServerCoverage` gains a withdrawn-arm slot consulted before the gate, and a new finding `ServerCapabilityWithdrawn` says so; amends D28 item 2 (2026-10-08)
+
+**2026-10-08. Phase 1993. Amends D28 item 2 on the operator's ruling of 2026-10-02 (the fuaran#1986
+close-out): a revoke is permanent, so coverage reports it as an absence, not a policy refusal.**
+
+D28 carried a revoked op performer on coverage's GATE, so the demanded-effect check reported
+`ServerGateRefusesCapability "ApplyOps"`, and named the cost: the coverage vocabulary splits
+absences ("no policy makes it reachable") from policy refusals ("only this one is resolved by
+changing policy"), the controls already follow that split for a host performer and a suspend, and
+the op-performer revoke was the one revoke that read as policy — telling an operator that a policy
+change would fix something no `Controls.step` arm can lift. D28 named the revisit and the operator
+took it.
+
+**1. `ServerCoverage` gains `Withdrawn: Set<string>` — the gate-facing capabilities whose performer
+the host has withdrawn.** It is the registration fact the arms that need no host function lacked
+(`HostFunctions` is that fact for the host-function arm). Empty by default: `ServerCoverage.nothing`
+and every builder carry the empty set, and empty means exactly what coverage meant before the member
+existed. A set of capability names rather than an op-performer flag, because `Fuaran.Program.Bounded`'s
+coverage model is placement-generic and knows nothing of an op performer — the placement says WHICH
+arm it withdrew, in the vocabulary the check already speaks.
+
+**2. The check consults it BEFORE the gate.** For each demanded capability: withdrawn → an absence;
+else the gate as before. That is the order the server-tier check already states for host functions —
+"registration before policy … the fact policy cannot fix, first" — applied to the other half of the
+split. So a session both revoked and suspended reports the op arm as withdrawn: no resume restores it,
+and a finding that let the suspend speak for it would again send the operator to policy.
+
+**3. The finding is a NEW case, `CoverageFinding.ServerCapabilityWithdrawn of capability` — the
+shard's form (2), chosen over the operator's preferred form (1), reuse of
+`UnregisteredServerFunction "ApplyOps"`, because form (1)'s text cannot be made true without
+contortion.** Three facts decided it:
+
+- `UnregisteredServerFunction`'s meaning, in its own documentation and in `describe`, is "a handler
+  calls host function '…', for which this host registered no performer". An op stage calls no host
+  function; read for `ApplyOps` that sentence is false, and it sends a host looking for a function
+  registration it was never asked to make.
+- `describe` sees only the finding, and the finding carries only the string. A host function MAY be
+  registered under the name `ApplyOps` (`ServerEffectRegistry.register` does not refuse it; 1983
+  accepted that one revoke withdraws both), so special-casing the wording on the string would
+  describe a genuine host function named `ApplyOps` as the op stage, and would put the Server
+  placement's reserved key into the placement-generic `Bounded` package.
+- The only general rewording ("a handler needs the performer registered as '…'") changes the text of
+  every host-function finding a consumer reads today, including the repair messages a sibling
+  evaluation suite builds from `describe`.
+
+The new case costs every EXHAUSTIVE match over `CoverageFinding` an arm. In this repository there is
+one, `describe`; the consumers found outside it match with a wildcard. It is declared between
+`UnregisteredServerFunction` and `ServerGateRefusesCapability`, keeping the absences before the
+policy finding in declaration order. Its text names the capability and says the performer was
+withdrawn, and says nothing about policy.
+
+**4. `Controls.coverage` carries a revoked op performer in the slot and leaves the gate the
+registry's under the controls.** The condition is D28 item 1's, unchanged — `OpPerformance.Performed`
+with the key in `Revoked` — so the report and the run are still decided from the same two facts.
+`DurableControls.coverage` keeps its signature and follows. `coverage.Gate "ApplyOps"` now answers
+what the registry's gate answers; the withdrawal is read from `coverage.Withdrawn`.
+
+**5. What did not move.** A suspended session reads as `ServerGateRefusesCapability` (a suspend is
+lifted by `Resume`: the policy class). A revoked host performer reads as
+`UnregisteredServerFunction`. Nothing revoked, and `OpPerformance.InMemory` (D26 §5, D28 item 5), give
+the registry's coverage and the same findings: the tests compare host functions, channels, the
+withdrawn set, the gate capability by capability, and the findings, under an empty stream, a host
+revoke, a suspend and a throttle, for both performances. Monotonicity is D28 item 6's, read off the
+same `Revoked`. No signature, wire member, fixture byte, demanded-document byte, control-stream byte
+or proof statement moves; coverage is not part of any proof.
+
+**Version.** Rides the `0.8.0` draft: untagged, publicly unpinned and already breaking (D34, D36), and
+this is breaking of the same class — `ServerCoverage` gains a field (FS0764 on a full literal) and
+`CoverageFinding` a case. `STABILITY.md` has the consumer's account.
+
+**What this forecloses, and what it leaves.** The slot names withdrawn arms by capability, so a future
+withdrawal of another gate-only arm (none exists today) reports through it without a new member.
+Coverage still carries no actor or reason (D28 item 3 stands). A consumer that read the op performer's
+withdrawal as `ServerGateRefusesCapability "ApplyOps"`, or as `coverage.Gate "ApplyOps" = false`,
+reads `ServerCapabilityWithdrawn "ApplyOps"` / `coverage.Withdrawn` once it adopts this draft.
 
 ## D38 — A declared result target is refused by the CODEC at every subject, read through the subject's own call in the witness's view; a program's stays the fold's; amends D9 and closes D31's second finding (2026-10-08)
 

@@ -398,10 +398,19 @@ type DemandedProjection =
 /// named data sources through opaque functions cannot enumerate them, and
 /// refusing a handler for naming one against a host that never claimed a surface
 /// would be a finding nobody can act on.
+///
+/// `Withdrawn` (Phase 1993, D37) is the registration fact for the arms that
+/// need no host function: the gate-facing capabilities whose performer this
+/// host has WITHDRAWN. It is empty by default, and empty means what it meant
+/// before the member existed — every such arm meets the gate alone. A
+/// withdrawal is an absence, not a policy: a capability named here is reported
+/// as `ServerCapabilityWithdrawn` before the gate is asked about it, however
+/// the gate is written.
 type ServerCoverage =
     { HostFunctions: Set<string>
       Gate: string -> bool
-      Channels: Set<string> option }
+      Channels: Set<string> option
+      Withdrawn: Set<string> }
 
 type HostCoverage =
     {
@@ -444,6 +453,14 @@ type CoverageFinding =
     /// finding that named only the string would leave a host guessing which
     /// placement it had failed to serve.
     | UnregisteredServerFunction of fn: string
+    /// A reachable handler can emit an arm whose capability this host has
+    /// WITHDRAWN the performer of (`ServerCoverage.Withdrawn`, Phase 1993) —
+    /// an arm that needs no host function, such as the op stage. The
+    /// capability is absent: no policy makes it reachable. A separate arm from
+    /// `UnregisteredServerFunction` because the handler names no host function
+    /// here, and a finding that said it did would send a host looking for a
+    /// registration it was never asked to make.
+    | ServerCapabilityWithdrawn of capability: string
     /// A reachable handler names a capability this host's server policy gate
     /// refuses. Separate from `UnregisteredServerFunction` for the reason the
     /// runtime denial DU keeps its two arms apart: only this one is resolved by
@@ -461,7 +478,8 @@ module ServerCoverage =
     let nothing: ServerCoverage =
         { HostFunctions = Set.empty
           Gate = fun _ -> false
-          Channels = None }
+          Channels = None
+          Withdrawn = Set.empty }
 
     /// Declare the host functions the server registered. Registering does not
     /// permit — the gate still decides, exactly as at dispatch time.
@@ -476,6 +494,14 @@ module ServerCoverage =
     /// unregistered host function, because that half of the vocabulary is closed
     /// by registration rather than by policy.
     let permissive (coverage: ServerCoverage) : ServerCoverage = withGate (fun _ -> true) coverage
+
+    /// Declare the gate-facing capabilities whose performer this host has
+    /// withdrawn. Each reads as `ServerCapabilityWithdrawn` wherever a handler
+    /// demands it, before the gate is consulted — a withdrawal is not a policy
+    /// a gate can relax.
+    let withWithdrawn (capabilities: string seq) (coverage: ServerCoverage) : ServerCoverage =
+        { coverage with
+            Withdrawn = Set.ofSeq capabilities }
 
     /// Declare the server channel surface. Until this is called the surface is
     /// unconstrained and no channel finding is ever produced.
@@ -1951,6 +1977,8 @@ module Demanded =
             $"the program touches state namespace '%s{ns}', which is outside this host's declared namespaces"
         | CoverageFinding.UnregisteredServerFunction fn ->
             $"a handler this program can reach calls host function '%s{fn}', for which this host registered no performer"
+        | CoverageFinding.ServerCapabilityWithdrawn capability ->
+            $"a handler this program can reach needs server capability '%s{capability}', whose performer this host has withdrawn"
         | CoverageFinding.ServerGateRefusesCapability capability ->
             $"a handler this program can reach needs server capability '%s{capability}', which this host's policy gate refuses"
         | CoverageFinding.UncoveredServerChannel(channel, name) ->
@@ -2022,10 +2050,16 @@ module Demanded =
                         else
                             [])
 
+                // The same order for the arms that need no host function: a
+                // withdrawn performer (Phase 1993, D37) is the absence, and is
+                // reported before the gate is asked — a withdrawal no policy
+                // can lift must not read as one a policy change resolves.
                 let capabilityFindings =
                     demand.Capabilities
                     |> List.choose (fun c ->
-                        if offer.Gate c then
+                        if offer.Withdrawn.Contains c then
+                            Some(CoverageFinding.ServerCapabilityWithdrawn c)
+                        elif offer.Gate c then
                             None
                         else
                             Some(CoverageFinding.ServerGateRefusesCapability c))
