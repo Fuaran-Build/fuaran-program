@@ -2265,7 +2265,10 @@ tested.
 **What the seam does not claim.** Anything about what the host's evaluator does: where it reads, what
 else it touches, or how it arrives at the table. What crosses is a source and a pipeline (with the
 resolver). What mediates is the gate, the argument policy, the schema check on the answer, and, under
-the default posture, D8's staging. The core still references no database or any other domain.
+the default posture, D8's staging. The core still references no database or any other domain: the
+boundary test now refuses every `Fuaran.*` name outside the substrate and this domain's own packages,
+written as the complement of what is allowed so that a domain nobody has named yet is refused too.
+The suite `QueryEvaluatorTests` pins the rest of this entry at the toy witness.
 
 **Version.** `0.8.0`, advancing from the tagged `0.7.1`. `ServerEffectRegistry` and `PerformerFacets`
 each gain a member, which is FS0764 on a full-literal construction and therefore breaking by
