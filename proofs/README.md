@@ -319,6 +319,38 @@ the inverse of an `Each` run is the sequence's inverse: its elements' inverses i
 statement carried through the lowering. Unconditional; every other theorem above extends over `VEach`
 by its list lemma, with no new proof technique and no change to any `decreases` clause.
 
+### 10. `each_of_is_each_over_extent` / `each_of_over_ceiling_runs_nothing` / `each_of_reverse_is_sequence_reverse` / `each_of_priced_within_ceiling` — a store-bound `Each` is the literal `Each` over the extent it read, and nothing when the extent is over the ceiling (Phase 1991)
+
+Per-element iteration over a collection the STORE holds (D36). The view keeps D29's posture — it
+carries the lowered form, `VEachOf act source ceiling extent elements`, the body once per element of
+the extent the host read, substituted — and what the model ADDS is the READ: the source resolved
+ONCE at entry through `w_resolve`, read as a collection through the new arrow `w_as_elements` (the
+core reads `JArr xs` itself; `v` is abstract here), and the ceiling checked against what it answered
+before the first element. `each_of_is_each_over_extent` is therefore CONDITIONAL on the store holding
+the extent the view was lowered over — the differential host's obligation, stated under "Assumed" —
+and says that under it the fold answers exactly what `VEach` over the same elements answers, the
+traced fold the same outcome and placement with the trace `TEachOf xs steps` (the extent the arrow
+ANSWERED, which is how the model says "recorded", beside the same element steps), and the fragment
+membership is the literal's. `each_of_over_ceiling_runs_nothing` is unconditional: over the ceiling
+the fold halts at entry with the refusal named — the store untouched, no effect, one diagnostic,
+`TNothing` recorded — which is the operator's second condition proved. `each_of_reverse_is_sequence_reverse`
+says the inverse is the sequence's inverse over the view's elements, and `reverse` takes a program and
+a trace and NO store, so the inverse is built from the record by type; that production's inverse
+lowers the body over the trace's RECORDED extent rather than the view's elements is the half the
+model cannot state (it cannot substitute, D29 item 7) and is tested (`StoredEachTests`, the inverse
+over a store whose collection grew). `each_of_priced_at_the_read_plus_elements` and
+`each_of_priced_within_ceiling` are the price: one step for the read plus the lowered elements, and —
+over an extent within the ceiling with every element costing at most `c` — at most `1 + ceiling · c`,
+the figure production computes from the tree alone and the budget oracle maps to the parameter-bound
+repeat at the ceiling (`repeat_priced_at_top`). On the op axis `each_of_plans_as_each_over_extent`
+and `each_of_over_ceiling_plans_nothing` (`Staging.fst`) are the same two statements of `plan_view`
+and `trail_view` over `OEachOf collection ceiling extent elements`, the extent read through
+`w_read_extent` by the collection's NAME from the planned state; the effect-gate and undo ladders
+take the shape through the same `_each` helpers under the read. Every other theorem extends over
+`VEachOf` / `OEachOf` by its list lemma once the read is matched, with no change to any `decreases`
+clause. NOT modelled: that the durable interpreter journals the read and serves the record on replay
+— the model's arrow reads the state; `GridWitnessTests` class B and `StoredEachTests` pin it.
+
 ### Phase 1715's lemmas, one by one
 
 Nothing is dropped silently. Each Phase-1715 name is either kept with its statement, or restated
@@ -424,6 +456,12 @@ Over the generic tier's view, for every witness (Phase 1898):
     `each_reverse_is_sequence_reverse` (Phase 1990): the same outcome, placement, trace steps,
     fragment membership, cost and inverse as the sequence of its elements. Unconditional over the
     view; the lowering itself is the witness's `Substitute`, an obligation stated under "Assumed".
+11. **A store-bound `Each` is the literal `Each` over the extent it read, and nothing over the
+    ceiling** — `each_of_is_each_over_extent` (conditional on the store holding the extent the view
+    was lowered over, stated under "Assumed"), `each_of_over_ceiling_runs_nothing` (unconditional),
+    `each_of_reverse_is_sequence_reverse` (unconditional; `reverse` takes no store),
+    `each_of_priced_within_ceiling` (Phase 1991); and on the op axis `each_of_plans_as_each_over_extent`
+    / `each_of_over_ceiling_plans_nothing`.
 
 At the UI witness (Phase 1715's five, each a corollary of the generic theorem above it):
 
@@ -510,6 +548,16 @@ host's file citations move with the code in those commits.
   beside it over a corpus of empty, single, several, halting, nested and flow-wrapped iterations; and
   by `EachTests`, which checks an `Each` against its hand-written unrolling over generated
   collections through every walk, and that on a tree with no `Each` the arrow is never invoked.
+- **A store-bound `Each` is lowered over the extent the store answers at entry** (Phase 1991).
+  `VEachOf` / `OEachOf` carry `extent` and `elements` the HOST read and lowered; the model re-reads
+  the source itself (`w_as_elements`, `w_read_extent`) and checks the ceiling, but cannot check that
+  `elements` are the lowering OVER that extent — substitution is not a thing it can define (D29 item
+  7) — so `each_of_is_each_over_extent` requires the store to answer the extent the view was lowered
+  over. Mitigated by the differential host, which resolves the extent against the store the case
+  starts from through production's own `Resolve`, lowers through production's `Substitute`, and runs
+  production — which reads and lowers as it folds — beside the model: a host lowering over another
+  extent, or a `Substitute` that moved the shape, shows as a divergence; and by the corpus
+  discipline that no case writes a source before entering the loop that reads it.
 - **The scope rule is decided from the tree and refused at entry** (Phase 1990). The model's
   expressions and ops read no names, so a placeholder bound by no `Each` is outside it; production
   refuses such a program before its first step (`BoundedActions.run`) or before its first op plans

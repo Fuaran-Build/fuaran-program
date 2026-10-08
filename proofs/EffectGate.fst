@@ -395,7 +395,7 @@ let rec admitted_sigma (gate: string -> bool) (sigma: policy_spec) (tr: list str
 let rec plan_views_admitted (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
                             (w: witness t b v o q a eff d) (gate: string -> bool) (cap: string)
                             (stage: opt (t -> o -> (p & v)))
-                            (vs: list (op_view o)) (tree: t) (staged: list (staged_call v p))
+                            (vs: list (op_view v o)) (tree: t) (staged: list (staged_call v p))
   : Lemma (requires gate cap /\ admitted gate (caps staged))
           (ensures
             (let r = plan_views w cap stage vs tree staged in
@@ -414,7 +414,7 @@ let rec plan_views_admitted (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q:
 and plan_view_admitted (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
                        (w: witness t b v o q a eff d) (gate: string -> bool) (cap: string)
                        (stage: opt (t -> o -> (p & v)))
-                       (x: op_view o) (tree: t) (staged: list (staged_call v p))
+                       (x: op_view v o) (tree: t) (staged: list (staged_call v p))
   : Lemma (requires gate cap /\ admitted gate (caps staged))
           (ensures
             (let r = plan_view w cap stage x tree staged in
@@ -448,11 +448,16 @@ and plan_view_admitted (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type
   | OEach elements ->
     plan_view_each w cap stage elements tree staged;
     plan_each_admitted w gate cap stage elements tree staged
+  | OEachOf collection ceiling extent elements ->
+    plan_view_each_of w cap stage collection ceiling extent elements tree staged;
+    (match w.w_read_extent collection tree with
+     | OSome xs -> if length xs <= ceiling then plan_each_admitted w gate cap stage elements tree staged else ()
+     | ONone -> ())
 
 and plan_repeat_admitted (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
                          (w: witness t b v o q a eff d) (gate: string -> bool) (cap: string)
                          (stage: opt (t -> o -> (p & v)))
-                         (body: list (op_view o)) (n: nat) (tree: t) (staged: list (staged_call v p))
+                         (body: list (op_view v o)) (n: nat) (tree: t) (staged: list (staged_call v p))
   : Lemma (requires gate cap /\ admitted gate (caps staged))
           (ensures
             (let r = plan_repeat w cap stage body n tree staged in
@@ -471,7 +476,7 @@ and plan_repeat_admitted (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Ty
 and plan_each_admitted (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
                        (w: witness t b v o q a eff d) (gate: string -> bool) (cap: string)
                        (stage: opt (t -> o -> (p & v)))
-                       (elements: list (list (op_view o))) (tree: t) (staged: list (staged_call v p))
+                       (elements: list (list (op_view v o))) (tree: t) (staged: list (staged_call v p))
   : Lemma (requires gate cap /\ admitted gate (caps staged))
           (ensures
             (let r = plan_each w cap stage elements tree staged in

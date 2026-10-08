@@ -266,6 +266,13 @@ let rec rev (#a: Type0) (xs: list a) : Tot (list a) (decreases xs) =
   | [] -> []
   | x :: rest -> app (rev rest) [x]
 
+/// F#: `List.length`. The store-bound `Each`'s ceiling check reads it
+/// (Phase 1991), so it is part of the extraction.
+let rec length (#a: Type0) (xs: list a) : Tot nat (decreases xs) =
+  match xs with
+  | [] -> 0
+  | _ :: rest -> 1 + length rest
+
 (* ───────────────────────────────────────────────────────────────────
    The vocabulary — `ServerStore`, `ServerEffect`, `HandlerStage`, the
    two denial arms and the four diagnostic arms.
@@ -342,17 +349,26 @@ type bounded_outcome (b: Type0) (eff: Type0) (d: Type0) = {
 /// is given); a branch's entry condition and exit assertion are ops
 /// applied through `w_apply` for their ANSWER only — never viewed, never
 /// applied for their state, never staged.
-type op_view (o: Type0) =
-  | OEdit : op: o -> op_view o
-  | ORequire : op: o -> op_view o
-  | OChoose : entry: o -> when_true: list (op_view o) -> when_false: list (op_view o) -> exit: opt o -> op_view o
-  | ORepeat : count: nat -> body: list (op_view o) -> op_view o
+type op_view (v: Type0) (o: Type0) =
+  | OEdit : op: o -> op_view v o
+  | ORequire : op: o -> op_view v o
+  | OChoose : entry: o -> when_true: list (op_view v o) -> when_false: list (op_view v o) -> exit: opt o -> op_view v o
+  | ORepeat : count: nat -> body: list (op_view v o) -> op_view v o
   /// F#: `OpView.Each of collection * placeholder * body` (Phase 1990),
   /// seen LOWERED: one body of views per element of the collection, the
   /// element substituted for the placeholder by `StateWitness.Substitute`
   /// as the handler meets the shape. The bound is the collection's
   /// length; an empty collection is the empty sequence.
-  | OEach : elements: list (list (op_view o)) -> op_view o
+  | OEach : elements: list (list (op_view v o)) -> op_view v o
+  /// F#: `OpView.Each of Collection<StateCollection<'Node>> (Stored ({Name;
+  /// Read}, ceiling)) * placeholder * body` (Phase 1991, D36) — per-element
+  /// iteration over a collection the STATE holds, seen LOWERED over the
+  /// extent the host read: `collection` is the name the demanded projection
+  /// and the journal use, `extent` what the state held under it, and
+  /// `elements` one body of views per element of it. The plan reads the
+  /// collection ONCE, through `w_read_extent`, against the state as of the
+  /// op's position, and checks the ceiling before the first element.
+  | OEachOf : collection: string -> ceiling: nat -> extent: list v -> elements: list (list (op_view v o)) -> op_view v o
 
 /// F#: the members of `ProgramWitness` the handler reads, plus the
 /// query evaluator it calls. Since Phase 1974 they sit on two axes:
@@ -372,7 +388,12 @@ noeq type witness (t: Type0) (b: Type0) (v: Type0) (o: Type0) (q: Type0) (a: Typ
   /// 1976): an op viewed `ORequire` is a guard, resolved through
   /// `w_apply` and never staged; one viewed `OChoose` or `ORepeat` is
   /// control over its arms, which are themselves views.
-  w_op_view: o -> op_view o;
+  w_op_view: o -> op_view v o;
+  /// The collection the state holds under this name, if it holds one
+  /// (Phase 1991): `StateCollection.Read` of the collection the name
+  /// identifies, applied to the state at the op's position. On the STATE
+  /// axis. A domain that cannot enumerate a collection answers `ONone`.
+  w_read_extent: string -> t -> opt (list v);
   /// `StoreWitness.Assign`.
   w_assign: string -> v -> b -> b;
   /// The landing-slot refusal: `OSome reason` refuses the slot while
@@ -508,7 +529,7 @@ let staged_from (#t: Type0) (#v: Type0) (#o: Type0) (#p: Type0)
 /// exhaustion (Phase 1976).
 let rec views (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
               (w: witness t b v o q a eff d) (ops: list o)
-  : Tot (list (op_view o)) (decreases ops) =
+  : Tot (list (op_view v o)) (decreases ops) =
   match ops with
   | [] -> []
   | op :: rest -> w.w_op_view op :: views w rest
@@ -525,7 +546,7 @@ let rec views (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: T
 /// with `app` rather than accumulated reversed, so a lemma over the
 /// trail reads it in plan order.
 let rec trail_views (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
-                    (w: witness t b v o q a eff d) (vs: list (op_view o)) (tree: t)
+                    (w: witness t b v o q a eff d) (vs: list (op_view v o)) (tree: t)
   : Tot (res (t & list (t & o))) (decreases %[vs; 1; 0]) =
   match vs with
   | [] -> ROk (tree, [])
@@ -538,7 +559,7 @@ let rec trail_views (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) 
         | ROk (tree'', more) -> ROk (tree'', app first more)))
 
 and trail_view (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
-               (w: witness t b v o q a eff d) (x: op_view o) (tree: t)
+               (w: witness t b v o q a eff d) (x: op_view v o) (tree: t)
   : Tot (res (t & list (t & o))) (decreases %[x; 0; 0]) =
   match x with
   | ORequire op ->
@@ -570,9 +591,15 @@ and trail_view (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: 
              else ROk (tree', recorded))))
   | ORepeat count body -> trail_repeat w body count tree
   | OEach elements -> trail_each w elements tree
+  | OEachOf collection ceiling _ elements ->
+    (match w.w_read_extent collection tree with
+     | OSome xs ->
+       if length xs <= ceiling then trail_each w elements tree
+       else RErr "the collection's extent is over its declared ceiling"
+     | ONone -> RErr "the state holds no collection under that name")
 
 and trail_repeat (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
-                 (w: witness t b v o q a eff d) (body: list (op_view o)) (n: nat) (tree: t)
+                 (w: witness t b v o q a eff d) (body: list (op_view v o)) (n: nat) (tree: t)
   : Tot (res (t & list (t & o))) (decreases %[body; 2; n]) =
   if n = 0 then ROk (tree, [])
   else
@@ -588,7 +615,7 @@ and trail_repeat (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a
 /// records appended in plan order — a sequence's walk over the lowered
 /// form, written over the elements so that termination is structural.
 and trail_each (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
-               (w: witness t b v o q a eff d) (elements: list (list (op_view o))) (tree: t)
+               (w: witness t b v o q a eff d) (elements: list (list (op_view v o))) (tree: t)
   : Tot (res (t & list (t & o))) (decreases %[elements; 1; 0]) =
   match elements with
   | [] -> ROk (tree, [])
@@ -625,7 +652,7 @@ let rec edits (#t: Type0) (#b: Type0) (#o: Type0) (xs: list (t & o)) : Tot (list
 /// is the last place.
 let rec plan_views (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
                    (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
-                   (vs: list (op_view o)) (tree: t) (staged: list (staged_call v p))
+                   (vs: list (op_view v o)) (tree: t) (staged: list (staged_call v p))
   : Tot (res (t & list (staged_call v p))) (decreases %[vs; 1; 0]) =
   match vs with
   | [] -> ROk (tree, staged)
@@ -636,7 +663,7 @@ let rec plan_views (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (
 
 and plan_view (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
               (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
-              (x: op_view o) (tree: t) (staged: list (staged_call v p))
+              (x: op_view v o) (tree: t) (staged: list (staged_call v p))
   : Tot (res (t & list (staged_call v p))) (decreases %[x; 0; 0]) =
   match x with
   // The guard: resolved through its own apply against the state as of
@@ -688,10 +715,21 @@ and plan_view (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: T
   // The per-element iteration (Phase 1990): each element's lowered body
   // in turn, threaded like a sequence — `each_plans_as_lowered`.
   | OEach elements -> plan_each w cap stage elements tree staged
+  // The store-bound iteration (Phase 1991): the collection is read ONCE,
+  // against the state as of this op, and its extent checked against the
+  // ceiling before the first element — over it, the plan is refused with
+  // nothing moved or staged. Past the check, the elements plan exactly as
+  // `OEach`'s do — `each_of_plans_as_each_over_extent`.
+  | OEachOf collection ceiling _ elements ->
+    (match w.w_read_extent collection tree with
+     | OSome xs ->
+       if length xs <= ceiling then plan_each w cap stage elements tree staged
+       else RErr "the collection's extent is over its declared ceiling"
+     | ONone -> RErr "the state holds no collection under that name")
 
 and plan_repeat (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
                 (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
-                (body: list (op_view o)) (n: nat) (tree: t) (staged: list (staged_call v p))
+                (body: list (op_view v o)) (n: nat) (tree: t) (staged: list (staged_call v p))
   : Tot (res (t & list (staged_call v p))) (decreases %[body; 2; n]) =
   if n = 0 then ROk (tree, staged)
   else
@@ -701,7 +739,7 @@ and plan_repeat (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a:
 
 and plan_each (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
               (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
-              (elements: list (list (op_view o))) (tree: t) (staged: list (staged_call v p))
+              (elements: list (list (op_view v o))) (tree: t) (staged: list (staged_call v p))
   : Tot (res (t & list (staged_call v p))) (decreases %[elements; 1; 0]) =
   match elements with
   | [] -> ROk (tree, staged)
@@ -960,11 +998,6 @@ let run (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) 
    above.
    ─────────────────────────────────────────────────────────────────── *)
 
-[@@ noextract_to "FSharp"]
-let rec length (#a: Type0) (xs: list a) : Tot nat (decreases xs) =
-  match xs with
-  | [] -> 0
-  | _ :: rest -> 1 + length rest
 
 /// The first `k` elements, or all of them when there are fewer.
 [@@ noextract_to "FSharp"]
@@ -1306,7 +1339,7 @@ let plan_after (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: 
 [@@ noextract_to "FSharp"]
 let plan_views_after (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
                      (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
-                     (r: res (t & list (staged_call v p))) (ys: list (op_view o))
+                     (r: res (t & list (staged_call v p))) (ys: list (op_view v o))
   : res (t & list (staged_call v p)) =
   match r with
   | RErr code -> RErr code
@@ -1329,7 +1362,7 @@ let plan_views_nil (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (
 
 let plan_views_cons (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
                     (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
-                    (x: op_view o) (rest: list (op_view o)) (tree: t) (staged: list (staged_call v p))
+                    (x: op_view v o) (rest: list (op_view v o)) (tree: t) (staged: list (staged_call v p))
   : Lemma
       (plan_views w cap stage (x :: rest) tree staged ==
        (match plan_view w cap stage x tree staged with
@@ -1366,7 +1399,7 @@ let exit_violation_reason (#t: Type0) (took_true: bool) (answer: res t) : string
 
 let plan_view_choose (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
                      (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
-                     (entry: o) (when_true: list (op_view o)) (when_false: list (op_view o)) (exit: opt o)
+                     (entry: o) (when_true: list (op_view v o)) (when_false: list (op_view v o)) (exit: opt o)
                      (tree: t) (staged: list (staged_call v p))
   : Lemma
       (plan_view w cap stage (OChoose entry when_true when_false exit) tree staged ==
@@ -1391,17 +1424,17 @@ let plan_view_choose (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0)
 
 let plan_view_repeat (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
                      (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
-                     (n: nat) (body: list (op_view o)) (tree: t) (staged: list (staged_call v p))
+                     (n: nat) (body: list (op_view v o)) (tree: t) (staged: list (staged_call v p))
   : Lemma (plan_view w cap stage (ORepeat n body) tree staged == plan_repeat w cap stage body n tree staged) = ()
 
 let plan_repeat_zero (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
                      (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
-                     (body: list (op_view o)) (tree: t) (staged: list (staged_call v p))
+                     (body: list (op_view v o)) (tree: t) (staged: list (staged_call v p))
   : Lemma (plan_repeat w cap stage body 0 tree staged == ROk (tree, staged)) = ()
 
 let plan_repeat_step (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
                      (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
-                     (body: list (op_view o)) (n: nat) (tree: t) (staged: list (staged_call v p))
+                     (body: list (op_view v o)) (n: nat) (tree: t) (staged: list (staged_call v p))
   : Lemma
       (requires n > 0)
       (ensures
@@ -1412,8 +1445,32 @@ let plan_repeat_step (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0)
 
 let plan_view_each (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
                    (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
-                   (elements: list (list (op_view o))) (tree: t) (staged: list (staged_call v p))
+                   (elements: list (list (op_view v o))) (tree: t) (staged: list (staged_call v p))
   : Lemma (plan_view w cap stage (OEach elements) tree staged == plan_each w cap stage elements tree staged) = ()
+
+let plan_view_each_of (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                      (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
+                      (collection: string) (ceiling: nat) (extent: list v)
+                      (elements: list (list (op_view v o))) (tree: t) (staged: list (staged_call v p))
+  : Lemma
+      (plan_view w cap stage (OEachOf collection ceiling extent elements) tree staged ==
+       (match w.w_read_extent collection tree with
+        | OSome xs ->
+          if length xs <= ceiling then plan_each w cap stage elements tree staged
+          else RErr "the collection's extent is over its declared ceiling"
+        | ONone -> RErr "the state holds no collection under that name")) = ()
+
+let trail_view_each_of (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
+                       (w: witness t b v o q a eff d)
+                       (collection: string) (ceiling: nat) (extent: list v)
+                       (elements: list (list (op_view v o))) (tree: t)
+  : Lemma
+      (trail_view w (OEachOf collection ceiling extent elements) tree ==
+       (match w.w_read_extent collection tree with
+        | OSome xs ->
+          if length xs <= ceiling then trail_each w elements tree
+          else RErr "the collection's extent is over its declared ceiling"
+        | ONone -> RErr "the state holds no collection under that name")) = ()
 
 let plan_each_nil (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
                   (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
@@ -1422,7 +1479,7 @@ let plan_each_nil (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#
 
 let plan_each_cons (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
                    (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
-                   (el: list (op_view o)) (rest: list (list (op_view o))) (tree: t) (staged: list (staged_call v p))
+                   (el: list (op_view v o)) (rest: list (list (op_view v o))) (tree: t) (staged: list (staged_call v p))
   : Lemma
       (plan_each w cap stage (el :: rest) tree staged ==
        (match plan_views w cap stage el tree staged with
@@ -1460,7 +1517,7 @@ let rec views_app (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#
 /// staged list.
 let rec plan_views_app (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
                        (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
-                       (xs: list (op_view o)) (ys: list (op_view o)) (tree: t) (staged: list (staged_call v p))
+                       (xs: list (op_view v o)) (ys: list (op_view v o)) (tree: t) (staged: list (staged_call v p))
   : Lemma
       (ensures
         plan_views w cap stage (app xs ys) tree staged ==
@@ -1495,7 +1552,7 @@ let plan_ops_app (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a
 /// `plan_effect` keeps the staged list it was handed.
 let rec plan_views_unstaged (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
                             (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
-                            (vs: list (op_view o)) (tree: t) (staged: list (staged_call v p))
+                            (vs: list (op_view v o)) (tree: t) (staged: list (staged_call v p))
   : Lemma
       (requires ONone? stage)
       (ensures
@@ -1514,7 +1571,7 @@ let rec plan_views_unstaged (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q:
 
 and plan_view_unstaged (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
                        (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
-                       (x: op_view o) (tree: t) (staged: list (staged_call v p))
+                       (x: op_view v o) (tree: t) (staged: list (staged_call v p))
   : Lemma
       (requires ONone? stage)
       (ensures
@@ -1535,10 +1592,15 @@ and plan_view_unstaged (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type
   | OEach elements ->
     plan_view_each w cap stage elements tree staged;
     plan_each_unstaged w cap stage elements tree staged
+  | OEachOf collection ceiling extent elements ->
+    plan_view_each_of w cap stage collection ceiling extent elements tree staged;
+    (match w.w_read_extent collection tree with
+     | OSome xs -> if length xs <= ceiling then plan_each_unstaged w cap stage elements tree staged else ()
+     | ONone -> ())
 
 and plan_repeat_unstaged (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
                          (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
-                         (body: list (op_view o)) (n: nat) (tree: t) (staged: list (staged_call v p))
+                         (body: list (op_view v o)) (n: nat) (tree: t) (staged: list (staged_call v p))
   : Lemma
       (requires ONone? stage)
       (ensures
@@ -1557,7 +1619,7 @@ and plan_repeat_unstaged (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Ty
 
 and plan_each_unstaged (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
                        (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
-                       (elements: list (list (op_view o))) (tree: t) (staged: list (staged_call v p))
+                       (elements: list (list (op_view v o))) (tree: t) (staged: list (staged_call v p))
   : Lemma
       (requires ONone? stage)
       (ensures
@@ -1647,7 +1709,7 @@ let guard_refusal_halts (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Typ
 /// repeat — which is what makes "the last edit" a fact of the TREE rather
 /// than of a run. Ghost.
 [@@ noextract_to "FSharp"]
-let rec flat (#o: Type0) (vs: list (op_view o)) : Tot bool (decreases vs) =
+let rec flat (#v: Type0) (#o: Type0) (vs: list (op_view v o)) : Tot bool (decreases vs) =
   match vs with
   | [] -> true
   | x :: rest -> (OEdit? x || ORequire? x) && flat rest
@@ -1765,7 +1827,7 @@ let rec performer_handed_the_plan (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0
 /// law about a sequence of ops is a law about the arm a branch took.
 let choose_plans_the_taken_arm (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
                                (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
-                               (entry: o) (when_true: list (op_view o)) (when_false: list (op_view o)) (exit: opt o)
+                               (entry: o) (when_true: list (op_view v o)) (when_false: list (op_view v o)) (exit: opt o)
                                (tree: t) (staged: list (staged_call v p))
   : Lemma
       (requires
@@ -1837,7 +1899,7 @@ let exit_violation_halts (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Ty
 
 /// `n` copies of a body, concatenated: the unrolling of a repeat. Ghost.
 [@@ noextract_to "FSharp"]
-let rec unroll (#o: Type0) (n: nat) (body: list (op_view o)) : Tot (list (op_view o)) (decreases n) =
+let rec unroll (#v: Type0) (#o: Type0) (n: nat) (body: list (op_view v o)) : Tot (list (op_view v o)) (decreases n) =
   if n = 0 then [] else app body (unroll (n - 1) body)
 
 /// **`repeat_plans_as_unrolling`.** A repeat plans exactly as its body
@@ -1846,7 +1908,7 @@ let rec unroll (#o: Type0) (n: nat) (body: list (op_view o)) : Tot (list (op_vie
 /// `staged_from_the_final_state`) is a law about a repeat.
 let rec repeat_plans_as_unrolling (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
                                   (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
-                                  (body: list (op_view o)) (n: nat) (tree: t) (staged: list (staged_call v p))
+                                  (body: list (op_view v o)) (n: nat) (tree: t) (staged: list (staged_call v p))
   : Lemma (ensures plan_repeat w cap stage body n tree staged == plan_views w cap stage (unroll n body) tree staged)
           (decreases n) =
   if n = 0 then begin plan_repeat_zero w cap stage body tree staged; plan_views_nil w cap stage tree staged end
@@ -1862,7 +1924,7 @@ let rec repeat_plans_as_unrolling (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0
 /// The elements of a per-element iteration, concatenated: its LOWERED
 /// form as one sequence of views. Ghost.
 [@@ noextract_to "FSharp"]
-let rec lowered (#o: Type0) (elements: list (list (op_view o))) : Tot (list (op_view o)) (decreases elements) =
+let rec lowered (#v: Type0) (#o: Type0) (elements: list (list (op_view v o))) : Tot (list (op_view v o)) (decreases elements) =
   match elements with
   | [] -> []
   | el :: rest -> app el (lowered rest)
@@ -1876,7 +1938,7 @@ let rec lowered (#o: Type0) (elements: list (list (op_view o))) : Tot (list (op_
 /// plan sequences.
 let rec each_plans_as_lowered (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
                               (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
-                              (elements: list (list (op_view o))) (tree: t) (staged: list (staged_call v p))
+                              (elements: list (list (op_view v o))) (tree: t) (staged: list (staged_call v p))
   : Lemma (ensures plan_each w cap stage elements tree staged == plan_views w cap stage (lowered elements) tree staged)
           (decreases elements) =
   match elements with
@@ -1888,6 +1950,45 @@ let rec each_plans_as_lowered (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#
     (match s with
      | RErr _ -> ()
      | ROk r -> each_plans_as_lowered w cap stage rest (fst r) (snd r))
+
+/// **`each_of_plans_as_each_over_extent`** (Phase 1991). When the state
+/// holds, under the collection's name, an extent within the ceiling, a
+/// store-bound iteration plans exactly as the literal iteration over the
+/// same lowered elements — state and staged list — and walks the same
+/// undo trail; so `each_plans_as_lowered` and every sequence law reach it.
+/// Conditional on the state holding the extent the view was lowered over:
+/// the differential host's obligation, stated.
+let each_of_plans_as_each_over_extent (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                                      (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
+                                      (collection: string) (ceiling: nat) (xs: list v)
+                                      (elements: list (list (op_view v o))) (tree: t) (staged: list (staged_call v p))
+  : Lemma
+      (requires w.w_read_extent collection tree == OSome xs /\ length xs <= ceiling)
+      (ensures
+        plan_view w cap stage (OEachOf collection ceiling xs elements) tree staged ==
+        plan_view w cap stage (OEach elements) tree staged /\
+        trail_view w (OEachOf collection ceiling xs elements) tree == trail_view w (OEach elements) tree) =
+  plan_view_each_of w cap stage collection ceiling xs elements tree staged;
+  plan_view_each w cap stage elements tree staged;
+  trail_view_each_of w collection ceiling xs elements tree
+
+/// **`each_of_over_ceiling_plans_nothing`** (Phase 1991). When the state
+/// holds, under the collection's name, an extent OVER the ceiling, the
+/// plan is refused with the reason named, before the first element: no
+/// state moved, nothing staged — and the undo walk refuses alike.
+let each_of_over_ceiling_plans_nothing (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                                       (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
+                                       (collection: string) (ceiling: nat) (xs: list v) (extent: list v)
+                                       (elements: list (list (op_view v o))) (tree: t) (staged: list (staged_call v p))
+  : Lemma
+      (requires w.w_read_extent collection tree == OSome xs /\ length xs > ceiling)
+      (ensures
+        plan_view w cap stage (OEachOf collection ceiling extent elements) tree staged ==
+        RErr "the collection's extent is over its declared ceiling" /\
+        trail_view w (OEachOf collection ceiling extent elements) tree ==
+        RErr "the collection's extent is over its declared ceiling") =
+  plan_view_each_of w cap stage collection ceiling extent elements tree staged;
+  trail_view_each_of w collection ceiling extent elements tree
 
 /// What `staged_from_the_final_state` says of one planned step: either it
 /// moved nothing and staged nothing, or the head of the staged list it
@@ -1904,7 +2005,7 @@ let handed (#t: Type0) (#v: Type0) (#o: Type0) (#p: Type0)
 
 let rec handed_views (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
                      (w: witness t b v o q a eff d) (cap: string) (f: t -> o -> (p & v))
-                     (vs: list (op_view o)) (tree: t) (staged: list (staged_call v p))
+                     (vs: list (op_view v o)) (tree: t) (staged: list (staged_call v p))
   : Lemma (ensures handed cap f tree staged (plan_views w cap (OSome f) vs tree staged))
           (decreases %[vs; 1; 0]) =
   match vs with
@@ -1919,7 +2020,7 @@ let rec handed_views (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0)
 
 and handed_view (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
                 (w: witness t b v o q a eff d) (cap: string) (f: t -> o -> (p & v))
-                (x: op_view o) (tree: t) (staged: list (staged_call v p))
+                (x: op_view v o) (tree: t) (staged: list (staged_call v p))
   : Lemma (ensures handed cap f tree staged (plan_view w cap (OSome f) x tree staged))
           (decreases %[x; 0; 0]) =
   match x with
@@ -1955,10 +2056,15 @@ and handed_view (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a:
   | OEach elements ->
     plan_view_each w cap (OSome f) elements tree staged;
     handed_each w cap f elements tree staged
+  | OEachOf collection ceiling extent elements ->
+    plan_view_each_of w cap (OSome f) collection ceiling extent elements tree staged;
+    (match w.w_read_extent collection tree with
+     | OSome xs -> if length xs <= ceiling then handed_each w cap f elements tree staged else ()
+     | ONone -> ())
 
 and handed_repeat (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
                   (w: witness t b v o q a eff d) (cap: string) (f: t -> o -> (p & v))
-                  (body: list (op_view o)) (n: nat) (tree: t) (staged: list (staged_call v p))
+                  (body: list (op_view v o)) (n: nat) (tree: t) (staged: list (staged_call v p))
   : Lemma (ensures handed cap f tree staged (plan_repeat w cap (OSome f) body n tree staged))
           (decreases %[body; 2; n]) =
   if n = 0 then plan_repeat_zero w cap (OSome f) body tree staged
@@ -1973,7 +2079,7 @@ and handed_repeat (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#
 
 and handed_each (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
                 (w: witness t b v o q a eff d) (cap: string) (f: t -> o -> (p & v))
-                (elements: list (list (op_view o))) (tree: t) (staged: list (staged_call v p))
+                (elements: list (list (op_view v o))) (tree: t) (staged: list (staged_call v p))
   : Lemma (ensures handed cap f tree staged (plan_each w cap (OSome f) elements tree staged))
           (decreases %[elements; 1; 0]) =
   match elements with

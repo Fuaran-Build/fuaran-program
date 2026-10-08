@@ -143,13 +143,13 @@ let rec verdict_of (ds: list defect) : Tot verdict (decreases ds) =
 /// sequence, to exhaustion: an edit's class, a guard nothing, a branch
 /// BOTH arms (an untaken arm still counts, because which arm runs is not
 /// decided from the form), a repeat its body once.
-let rec view_defects (#t: Type0) (#o: Type0) (cls: o -> undo_class t o) (vs: list (op_view o))
+let rec view_defects (#t: Type0) (#v: Type0) (#o: Type0) (cls: o -> undo_class t o) (vs: list (op_view v o))
   : Tot (list defect) (decreases %[vs; 1]) =
   match vs with
   | [] -> []
   | x :: rest -> app (view_defect cls x) (view_defects cls rest)
 
-and view_defect (#t: Type0) (#o: Type0) (cls: o -> undo_class t o) (x: op_view o)
+and view_defect (#t: Type0) (#v: Type0) (#o: Type0) (cls: o -> undo_class t o) (x: op_view v o)
   : Tot (list defect) (decreases %[x; 0]) =
   match x with
   | OEdit op ->
@@ -164,8 +164,12 @@ and view_defect (#t: Type0) (#o: Type0) (cls: o -> undo_class t o) (x: op_view o
   // form — every element's body, since an op's class may differ once the
   // element is substituted into it.
   | OEach elements -> view_defects_each cls elements
+  // A store-bound iteration (Phase 1991): the defects of the lowered
+  // form, exactly as a literal one — the form carries the elements the
+  // extent lowered to, and which of them runs is the plan's.
+  | OEachOf _ _ _ elements -> view_defects_each cls elements
 
-and view_defects_each (#t: Type0) (#o: Type0) (cls: o -> undo_class t o) (elements: list (list (op_view o)))
+and view_defects_each (#t: Type0) (#v: Type0) (#o: Type0) (cls: o -> undo_class t o) (elements: list (list (op_view v o)))
   : Tot (list defect) (decreases %[elements; 1]) =
   match elements with
   | [] -> []
@@ -384,7 +388,7 @@ let trail_views_nil (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) 
   : Lemma (trail_views w [] tree == ROk (tree, [])) = ()
 
 let trail_views_cons (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
-                     (w: witness t b v o q a eff d) (x: op_view o) (rest: list (op_view o)) (tree: t)
+                     (w: witness t b v o q a eff d) (x: op_view v o) (rest: list (op_view v o)) (tree: t)
   : Lemma
       (trail_views w (x :: rest) tree ==
        (match trail_view w x tree with
@@ -412,7 +416,7 @@ let trail_view_edit (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) 
 
 let trail_view_choose (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
                       (w: witness t b v o q a eff d)
-                      (entry: o) (when_true: list (op_view o)) (when_false: list (op_view o)) (exit: opt o) (tree: t)
+                      (entry: o) (when_true: list (op_view v o)) (when_false: list (op_view v o)) (exit: opt o) (tree: t)
   : Lemma
       (trail_view w (OChoose entry when_true when_false exit) tree ==
        (let took_true = ROk? (w.w_apply entry tree) in
@@ -435,15 +439,15 @@ let trail_view_choose (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0
                  else ROk r))))) = ()
 
 let trail_view_repeat (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
-                      (w: witness t b v o q a eff d) (n: nat) (body: list (op_view o)) (tree: t)
+                      (w: witness t b v o q a eff d) (n: nat) (body: list (op_view v o)) (tree: t)
   : Lemma (trail_view w (ORepeat n body) tree == trail_repeat w body n tree) = ()
 
 let trail_repeat_zero (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
-                      (w: witness t b v o q a eff d) (body: list (op_view o)) (tree: t)
+                      (w: witness t b v o q a eff d) (body: list (op_view v o)) (tree: t)
   : Lemma (trail_repeat w body 0 tree == ROk (tree, [])) = ()
 
 let trail_repeat_step (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
-                      (w: witness t b v o q a eff d) (body: list (op_view o)) (n: nat) (tree: t)
+                      (w: witness t b v o q a eff d) (body: list (op_view v o)) (n: nat) (tree: t)
   : Lemma
       (requires n > 0)
       (ensures
@@ -456,7 +460,7 @@ let trail_repeat_step (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0
             | ROk r2 -> ROk (fst r2, app (snd r1) (snd r2))))) = ()
 
 let trail_view_each (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
-                    (w: witness t b v o q a eff d) (elements: list (list (op_view o))) (tree: t)
+                    (w: witness t b v o q a eff d) (elements: list (list (op_view v o))) (tree: t)
   : Lemma (trail_view w (OEach elements) tree == trail_each w elements tree) = ()
 
 let trail_each_nil (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
@@ -464,7 +468,7 @@ let trail_each_nil (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (
   : Lemma (trail_each w [] tree == ROk (tree, [])) = ()
 
 let trail_each_cons (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
-                    (w: witness t b v o q a eff d) (el: list (op_view o)) (rest: list (list (op_view o))) (tree: t)
+                    (w: witness t b v o q a eff d) (el: list (op_view v o)) (rest: list (list (op_view v o))) (tree: t)
   : Lemma
       (trail_each w (el :: rest) tree ==
        (match trail_views w el tree with
@@ -479,7 +483,7 @@ let trail_each_cons (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) 
 /// refuse on the same reason. Over the views, every shape.
 let rec trail_agrees_views (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
                            (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
-                           (vs: list (op_view o)) (tree: t) (staged: list (staged_call v p))
+                           (vs: list (op_view v o)) (tree: t) (staged: list (staged_call v p))
   : Lemma (ensures tree_of (plan_views w cap stage vs tree staged) == tree_of (trail_views w vs tree))
           (decreases %[vs; 1; 0]) =
   match vs with
@@ -496,7 +500,7 @@ let rec trail_agrees_views (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: 
 
 and trail_agrees_view (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
                       (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
-                      (x: op_view o) (tree: t) (staged: list (staged_call v p))
+                      (x: op_view v o) (tree: t) (staged: list (staged_call v p))
   : Lemma (ensures tree_of (plan_view w cap stage x tree staged) == tree_of (trail_view w x tree))
           (decreases %[x; 0; 0]) =
   match x with
@@ -516,10 +520,16 @@ and trail_agrees_view (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0
     plan_view_each w cap stage elements tree staged;
     trail_view_each w elements tree;
     trail_agrees_each w cap stage elements tree staged
+  | OEachOf collection ceiling extent elements ->
+    plan_view_each_of w cap stage collection ceiling extent elements tree staged;
+    trail_view_each_of w collection ceiling extent elements tree;
+    (match w.w_read_extent collection tree with
+     | OSome xs -> if length xs <= ceiling then trail_agrees_each w cap stage elements tree staged else ()
+     | ONone -> ())
 
 and trail_agrees_each (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
                       (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
-                      (elements: list (list (op_view o))) (tree: t) (staged: list (staged_call v p))
+                      (elements: list (list (op_view v o))) (tree: t) (staged: list (staged_call v p))
   : Lemma (ensures tree_of (plan_each w cap stage elements tree staged) == tree_of (trail_each w elements tree))
           (decreases %[elements; 1; 0]) =
   match elements with
@@ -536,7 +546,7 @@ and trail_agrees_each (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0
 
 and trail_agrees_repeat (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
                         (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
-                        (body: list (op_view o)) (n: nat) (tree: t) (staged: list (staged_call v p))
+                        (body: list (op_view v o)) (n: nat) (tree: t) (staged: list (staged_call v p))
   : Lemma (ensures tree_of (plan_repeat w cap stage body n tree staged) == tree_of (trail_repeat w body n tree))
           (decreases %[body; 2; n]) =
   if n = 0 then begin plan_repeat_zero w cap stage body tree staged; trail_repeat_zero w body tree end
@@ -594,7 +604,7 @@ let rec chain_app (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#
 /// The trail a walk records chains the state it started from to the
 /// state it answers.
 let rec trail_chain_views (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
-                          (w: witness t b v o q a eff d) (vs: list (op_view o)) (tree: t)
+                          (w: witness t b v o q a eff d) (vs: list (op_view v o)) (tree: t)
   : Lemma
       (ensures
         (let r = trail_views w vs tree in
@@ -616,7 +626,7 @@ let rec trail_chain_views (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: T
         | ROk r2 -> chain_app w tree (snd r1) (fst r1) (snd r2) (fst r2)))
 
 and trail_chain_view (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
-                     (w: witness t b v o q a eff d) (x: op_view o) (tree: t)
+                     (w: witness t b v o q a eff d) (x: op_view v o) (tree: t)
   : Lemma
       (ensures
         (let r = trail_view w x tree in
@@ -636,9 +646,14 @@ and trail_chain_view (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0)
   | OEach elements ->
     trail_view_each w elements tree;
     trail_chain_each w elements tree
+  | OEachOf collection ceiling extent elements ->
+    trail_view_each_of w collection ceiling extent elements tree;
+    (match w.w_read_extent collection tree with
+     | OSome xs -> if length xs <= ceiling then trail_chain_each w elements tree else ()
+     | ONone -> ())
 
 and trail_chain_each (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
-                     (w: witness t b v o q a eff d) (elements: list (list (op_view o))) (tree: t)
+                     (w: witness t b v o q a eff d) (elements: list (list (op_view v o))) (tree: t)
   : Lemma
       (ensures
         (let r = trail_each w elements tree in
@@ -660,7 +675,7 @@ and trail_chain_each (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0)
         | ROk r2 -> chain_app w tree (snd r1) (fst r1) (snd r2) (fst r2)))
 
 and trail_chain_repeat (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
-                       (w: witness t b v o q a eff d) (body: list (op_view o)) (n: nat) (tree: t)
+                       (w: witness t b v o q a eff d) (body: list (op_view v o)) (n: nat) (tree: t)
   : Lemma
       (ensures
         (let r = trail_repeat w body n tree in
@@ -950,7 +965,7 @@ let rec all_inverse_recorded_app (#t: Type0) (#o: Type0) (cls: o -> undo_class t
 
 let rec defects_clear_views (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
                             (w: witness t b v o q a eff d) (cls: o -> undo_class t o)
-                            (vs: list (op_view o)) (tree: t)
+                            (vs: list (op_view v o)) (tree: t)
   : Lemma
       (requires view_defects cls vs == [])
       (ensures
@@ -975,7 +990,7 @@ let rec defects_clear_views (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q:
 
 and defects_clear_view (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
                        (w: witness t b v o q a eff d) (cls: o -> undo_class t o)
-                       (x: op_view o) (tree: t)
+                       (x: op_view v o) (tree: t)
   : Lemma
       (requires view_defect cls x == [])
       (ensures
@@ -1003,10 +1018,15 @@ and defects_clear_view (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type
   | OEach elements ->
     trail_view_each w elements tree;
     defects_clear_each w cls elements tree
+  | OEachOf collection ceiling extent elements ->
+    trail_view_each_of w collection ceiling extent elements tree;
+    (match w.w_read_extent collection tree with
+     | OSome xs -> if length xs <= ceiling then defects_clear_each w cls elements tree else ()
+     | ONone -> ())
 
 and defects_clear_each (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
                        (w: witness t b v o q a eff d) (cls: o -> undo_class t o)
-                       (elements: list (list (op_view o))) (tree: t)
+                       (elements: list (list (op_view v o))) (tree: t)
   : Lemma
       (requires view_defects_each cls elements == [])
       (ensures
@@ -1031,7 +1051,7 @@ and defects_clear_each (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type
 
 and defects_clear_repeat (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
                          (w: witness t b v o q a eff d) (cls: o -> undo_class t o)
-                         (body: list (op_view o)) (n: nat) (tree: t)
+                         (body: list (op_view v o)) (n: nat) (tree: t)
   : Lemma
       (requires view_defects cls body == [])
       (ensures

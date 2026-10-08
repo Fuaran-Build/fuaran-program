@@ -1827,6 +1827,109 @@
         "runner": "run.ps1 (the Fuaran.Program.Tests project, which reaches no UI type) and proofs/check.ps1 step 6 (the BoundedFold module's toy host)",
         "note": "fuaran#2017: moved, unchanged in substance, from tests/Fuaran.Program.Parity.Tests/ProofOracleTests.fs (which reaches the UI tier through the parity project) to a project that reaches no UI type; the corpus root is read as the toy conformance leg reads it. Earlier note: a handler-loop scenario's call is compared UNANSWERED here: answering it is a handler run under the staging discipline, which is the staging oracle's subject in the server suite. The conformance leg (tests/Fuaran.Program.Tests/ToyFamilyTests.fs) and the Fable parity leg certify the same family against the recorded traces; this entry ties the family to the model, which neither of them does"
       }
+    },
+    {
+      "id": "each-of-is-each-over-extent",
+      "level": "proved",
+      "phase": "Phase 1991",
+      "claim": "An Each over a collection the store holds, seen lowered over the extent the store answers at entry, folds to the same outcome and placement as the literal Each over the same elements when that extent is within the ceiling; traced, it records the extent the read ANSWERED beside the same element steps (TEachOf); it is in the reversible fragment exactly when the literal is; and over the ceiling the fold halts at entry with the refusal named, the store untouched, no effect and nothing recorded — the operator's second condition. The price is one step for the read plus the lowered elements, and within the ceiling at most 1 + ceiling times the dearest element. On the op axis the plan and the undo trail answer the literal iteration's under the same read and refuse alike over the ceiling.",
+      "evidence": {
+        "theorem": "each_of_is_each_over_extent",
+        "model": "proofs/BoundedFold.fst",
+        "prover": "proofs/fstar-pin.json",
+        "supporting": [
+          "each_of_over_ceiling_runs_nothing",
+          "each_of_reverse_is_sequence_reverse",
+          "each_of_priced_at_the_read_plus_elements",
+          "each_of_priced_within_ceiling",
+          "each_of_plans_as_each_over_extent",
+          "each_of_over_ceiling_plans_nothing"
+        ],
+        "definitions": [
+          "fold",
+          "fold_traced",
+          "reverse",
+          "reversible",
+          "view_cost",
+          "plan_view",
+          "trail_view"
+        ],
+        "note": "conditional on the store answering the extent the view was lowered over (the each-of-lowered-over-the-entry-extent row); the read itself — w_as_elements over the resolved source, w_read_extent by the collection's name — is the model's and happens once, at entry. The two Staging theorems live in proofs/Staging.fst."
+      }
+    },
+    {
+      "id": "each-of-inverse-reads-the-record",
+      "level": "tested",
+      "phase": "Phase 1991",
+      "claim": "The inverse of a store-bound Each run lowers the body over the extent the TRACE recorded and runs exactly that many inverses, whatever the store's collection holds at reversal; a body that grows its own collection does not extend the running loop, because the extent is read once at entry.",
+      "evidence": {
+        "family": "Phase 1991 - Each over a store-bound collection",
+        "host": "tests/Fuaran.Program.Tests/StoredEachTests.fs",
+        "cases": [
+          "the inverse runs the RECORDED number of iterations, lowered over the record and not the live store",
+          "the extent is read ONCE at entry: a body that grows its own collection does not extend the running loop"
+        ],
+        "runner": "run.ps1 (the Tests project)",
+        "note": "the model's each_of_reverse_is_sequence_reverse proves the inverse is the sequence's inverse built from a program and a trace with no store in reach; that production lowers over the trace's RECORDED extent rather than the view's elements is the half the model cannot state, because substitution is the witness's (D29 item 7). The stronger statement — reverse over TEachOf recorded steps equals the sequence inverse over the body lowered over `recorded` — needs a lowering arrow in the model and is the statement to prove if the model ever carries one."
+      }
+    },
+    {
+      "id": "each-of-replay-serves-the-record",
+      "level": "tested",
+      "phase": "Phase 1991",
+      "claim": "Under the durable interpreter the extent read is a journaled step at its ordinal (capability ReadExtent, subject the collection's name or the binding keys the source reads, the extent as its completed value), a replay of the invocation is SERVED that extent and consults the live state for none of it — a row appended between the run and the replay is not iterated, while a fresh invocation sees it — and a journal written before this phase, which holds no such step, replays unchanged.",
+      "evidence": {
+        "family": "Phase 1991 - Each over a store-bound collection",
+        "host": "tests/Fuaran.Program.Tests/GridWitnessTests.fs",
+        "cases": [
+          "a region is read when the loop is entered: a row appended after one run is seen by the next, and a replay of the earlier run is served the two it recorded",
+          "under the durable interpreter the extent read is a journaled step: a replay is SERVED the recorded extent, not the live store",
+          "a journal written before this phase replays unchanged: a handler with no store-bound Each never reaches the reader"
+        ],
+        "runner": "run.ps1 (the Tests project); the second and third cases are in tests/Fuaran.Program.Tests/StoredEachTests.fs",
+        "note": "not modelled: the model's extent arrow reads the state; the journaling of the read rides the staging model's existing decide/replay discipline through the same wrapper every host call takes (D23), so what it adds is one more capability through a proved path, pinned here rather than restated"
+      }
+    },
+    {
+      "id": "each-of-lowered-over-the-entry-extent",
+      "level": "assumed",
+      "phase": "Phase 1991",
+      "claim": "The lowered elements a VEachOf / OEachOf carries are the body lowered — through the witness's shape-preserving Substitute — over the extent the same store answers for the source at the loop's entry.",
+      "class": "witness-obligation",
+      "evidence": {
+        "assumption": "each_of_is_each_over_extent and each_of_plans_as_each_over_extent require w_as_elements (w_resolve s source) == OSome xs (respectively w_read_extent collection tree == OSome xs) for the xs the view was lowered over; the model cannot check that elements are that lowering, because substitution is not a thing it can define"
+      },
+      "mitigation": "the differential hosts resolve the extent against the store the case starts from through production's own Resolve, lower through production's Substitute, and run production beside the model over a corpus whose stored cases read a collection the case before them wrote (no case writes a source before entering the loop that reads it); a host lowering over another extent shows as a divergence. The toy's state holds no collection, so the op-axis shape is exercised at the grid witness (GridWitnessTests class B) rather than at the staging oracle."
+    },
+    {
+      "id": "each-of-model-agrees-with-shipped-code",
+      "level": "tested",
+      "phase": "Phase 1991",
+      "claim": "The extracted generic fold, handed a store-bound Each lowered over the extent the entry store answers, agrees with BoundedActions.run — which reads the source, checks the ceiling and lowers as it folds — over a toy corpus of stored iterations: elements written one by one, over the ceiling, a source that is not a list, one that does not resolve, a body that grows its own collection, and an empty collection; in store, effects, diagnostics, halt and placement.",
+      "evidence": {
+        "family": "Phase 1715 - the proved bounded fold as oracle at the toy witness",
+        "host": "tests/Fuaran.Program.Tests/ToyBoundedFoldOracleTests.fs",
+        "cases": [
+          "stored each writes the element, element by element",
+          "stored each over the ceiling halts before the first element",
+          "stored each over a source that is not a list halts",
+          "stored each over a source that does not resolve halts",
+          "stored each whose body grows its own collection runs the entry extent",
+          "stored each over nothing runs nothing"
+        ],
+        "runner": "run.ps1 (the Fuaran.Program.Tests project) and proofs/check.ps1 step 6 (the BoundedFold module's toy host)",
+        "note": "the model witness is built per case over the production store the case starts from (toyModelWitnessIn), which is where the host's lowering reads the extent; the budget oracle maps the shape to ARepeat (BParameter 0 ceiling), the law repeat_priced_at_top"
+      }
+    },
+    {
+      "id": "each-of-specification-unchanged",
+      "level": "policy",
+      "phase": "Phase 1991",
+      "claim": "The program wire specification does not move for a store-bound Each: no schema, fixture byte, refusal class or rule.",
+      "evidence": {
+        "document": "DECISIONS.md"
+      },
+      "reason": "D36 item 6: the collection source travels in the domain's own codec (the toy's and the grid's test codecs gain a case), the demanded document — which gains the member `iterations` and moves to version 7 — is deliberately ungoverned by the specification (its section 11.2), and the journal step ReadExtent is the extension D23 declared is not a specification act. The codec families and the driver scenarios pass byte for byte against the specification clone FUARAN_PROGRAM_SPEC names."
     }
   ]
 }
