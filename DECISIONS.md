@@ -2352,3 +2352,152 @@ before comparing.
 (`budget-ceilings-are-policy`); that a `seq`-backed payload is finite (`lazy-payload-cap-assumed`);
 and anything about the UI tier's data-bearing weighing or its driver's G2 stage, which are that
 repository's evidence (D32).
+
+## D36 — `Each` over a collection the STORE holds: the extent is read ONCE at entry under a ceiling the tree declares, recorded in the trace and the journal, and is the only extent ever used again; amends D21, and D2 already permitted it (2026-10-08)
+
+**2026-10-08. Phase 1991. Records the operator's ruling of 2026-10-02 (yes, under four conditions);
+amends D21 (the bound of an iteration may now come from the store, its LIMIT stays in the tree) and
+extends D29 (the collection may be the store's, not only the tree's). Under D14: `proofs/BoundedFold.fst`
+and `proofs/Staging.fst` were restated and re-proved, with `Undo.fst` and `EffectGate.fst` taking the
+new shape through their list lemmas, before a `.fs` moved. Written before any `.fs` change, as the
+phase asked.**
+
+D29 gave both axes `Each` over a LITERAL collection, and said what it foreclosed: "a collection the
+store holds — a region's extent read once, recorded in the trace, replayed from the record — is Phase
+1991's, under the operator's four conditions". The commoner intent is "every row of this data" — a
+spreadsheet macro walking `End(xlDown)` or `UsedRange`, the verifiable-data-agent plan's class B — and
+the fourth witness measured the gap as finding G2 (`docs/generic-tier.md` §3.12): a region resolved
+at import is a literal, so a row appended after the import is invisible to every later run.
+
+**0. D2 already permitted this.** D2 permits "structural recursion over finite data and bounded
+iteration (a repeat whose count is a literal or a validated-range parameter)". Iteration over a
+finite collection the state holds IS structural recursion over finite data; what D2 asks is that the
+WORST-CASE cost remain a function of the tree, which is what the ceiling below keeps. Nothing in D2
+moves. What moves is D21's "the bound is fixed by the tree": the actual COUNT may now come from the
+store; its LIMIT stays in the tree.
+
+**The operator's ruling, 2026-10-02 — YES, under four conditions, recorded here in substance:**
+
+1. **Finite, and enumerable through the state witness.** The collection is one the domain can
+   enumerate. A domain that cannot does not offer the case, and a core path that would need it is a
+   compile error (D20's axis rule), never a runtime default.
+2. **A ceiling in the tree.** Every store-bound `Each` declares a ceiling, a literal in the tree (or
+   a range-validated parameter, which is the same thing: the top of the range). The budget prices at
+   the ceiling, and an extent over it is refused BEFORE the first element. The worst-case cost
+   therefore remains a function of the tree, which is D2's purpose.
+3. **Snapshot at entry, recorded, and the only extent ever used again.** The extent is read ONCE,
+   when the loop is entered, and recorded. The body cannot change which elements are walked — a row
+   it appends to the region does not extend the running loop, which is what keeps a store-bound loop
+   TOTAL — though it may read and write the current values of the elements it is given. Reversal
+   and replay read the recorded extent, never the live store.
+4. **The envelope states both.** The demanded projection names the collection and the ceiling, so
+   the signed effect envelope (D15) reads "iterates THIS collection, at most N".
+
+**1. The shape: the collection gains a SOURCE, beside the literal, on both axes.** `Collection<'Source>`
+is `Literal of elements: JVal list | Stored of source: 'Source * ceiling: int`, and `Each` carries one
+where it carried a `JVal list`. What the source IS differs per axis, as what the placeholder stands in
+does (D29 item 1):
+
+- On the DISPATCH axis `'Source` is `'Expr`: the collection is an expression resolved against the
+  binding store at entry, through the same `ExprWitness.Resolve` a parameter bound resolves through,
+  and must resolve to a `JArr` — the elements. A domain with no dispatch axis has no `'Expr` value to
+  put there (condition 1, by typing).
+- On the STATE axis `'Source` is `StateCollection<'Node>`: a NAME, which the demanded projection and
+  the journal use, and a READ, `'Node -> JVal list`, the domain's own enumeration of the state it
+  holds — reached through the state the plan holds at the op's position, which is the state axis
+  (D20). A domain that cannot enumerate a collection never constructs the case; no member of the
+  state witness was added, so no domain fills anything vacuously. Two collections are the same
+  collection when they are the same NAME: the name is the identity the projection states and the
+  journal subjects, and a domain that gives two reads one name has misnamed one of them.
+
+**2. Read once, at entry; the ceiling first; then lowered exactly as a literal.** The fold
+(`BoundedActions`) and the plan (`Handler.planOps`) read the extent ONCE, before the first element,
+and refuse: a NEGATIVE ceiling (as a negative literal bound is refused); an extent over the ceiling
+("the collection's extent is over its declared ceiling"), with nothing run, written, staged or emitted;
+on the dispatch axis a source that does not resolve, resolves to something other than a list, or
+errors, each with its own reason, as a parameter bound's are. Past the check, the extent is the
+collection, and the lowering is D29's — `ActionWitness.lowered` / `StateWitness.lowered` over the
+extent — so what runs is the SEQUENCE of the substituted bodies and nothing downstream learns a new
+shape. The model's `each_of_is_each_over_extent` (`BoundedFold.fst`) and `each_of_plans_as_each_over_extent`
+(`Staging.fst`) are the equations; `each_of_over_ceiling_runs_nothing` / `..._plans_nothing` are the
+refusals. A placeholder's scope is unchanged: the body is walked once, unsubstituted (D29 item 5).
+
+**3. Recorded in the trace; the inverse reads the record.** `Trace` gains `EachOf of extent: JVal list *
+elements: Trace list`: a reversible run records the extent it READ beside the elements that ran. The
+inverse of a store-bound `Each` run lowers the body over the RECORDED extent and inverts the result as
+a sequence — `BoundedActions.reverse` never consults the store for it, and the type says so: `reverse`
+takes a program and a trace and no store. This is why a store-bound `Each` is IN the reversible
+fragment where a parameter-bound `Repeat` is not (D21: "a parameter bound is read from the store the
+body may have overwritten"): the count is not re-read, it is recorded. The element is still a value
+written over the placeholder, not a cell the body can overwrite (D29 item 4), so D21's reversal
+argument carries over unchanged. `each_of_reverse_is_sequence_reverse` in the model. On the op axis
+the undo trail already records every lowered edit with its pre-state (D22), so an undo runs exactly the
+recorded number of inverses; nothing there re-reads the region.
+
+**4. Journaled; the replay serves the record.** D23 journals every arm that reaches OUTSIDE. The
+state a handler plans over is the host's, handed in at each run, and a replay of an earlier invocation
+is handed the host's CURRENT state — so a region that grew since the recorded run would, re-read,
+change the replay, which condition 3 forbids. The extent read is therefore a journaled step: one seam,
+`ExtentReader` — `string -> (unit -> Result<JVal list, string>) -> Result<JVal list, string>`, the
+subject and the live read — carried on the `ServerEffectRegistry` (`ReadExtent`; `denyAll` reads live)
+and handed to the compute stage's fold through the `HandlerArm` (`ReadExtent`; `inert` reads live).
+The durable interpreter wraps it exactly as it wraps a host call and an op performer (`wrapAt`, under
+the capability `ReadExtent`, the subject the collection's name on the state axis and the binding keys
+the source reads on the dispatch axis), so an extent read takes its ordinal from the same cursor, is
+journaled as the step's completed value (the extent as a `JArr`), and on replay is SERVED from the
+record: the live state is not consulted, a replay whose recomputation reaches a different collection
+at that ordinal diverges (`durable-replay-divergence`), and a journal written before this phase —
+which holds no `ReadExtent` step — replays unchanged, because a handler with no store-bound `Each`
+reaches the seam never. This is the journal extension D23 declared is not a specification act: §7.1
+of the wire specification journals ops and names no step vocabulary. Not modelled: the model's extent
+arrow reads the state; that the durable interpreter serves the recorded value is tested
+(`GridWitnessTests` class B, `ToyDurableReplayTests`).
+
+**5. Priced at the ceiling; the envelope names both.** `Budget.actionCascadeCost` prices a store-bound
+`Each` as ONE step (the read) plus the body's cost times the ceiling — the parameter-bound repeat's
+rule at the top of its range, D35's "a repeat by the top of its bound" — so the price needs no store,
+and the budget oracle maps the shape to exactly that repeat (`ARepeat (BParameter 0 ceiling)`), which
+is the law `repeat_priced_at_top` already covers; no shape was added to `Budget.fst`. The demanded
+projection gains `Iterations: IterationDemand list` — `{ Collection: string; Ceiling: int }` — on both
+tiers: the dispatch axis names what the source expression reads (its `BindingUse` keys), the state
+axis names the collection; the document gains the member `iterations` and moves to **version 7**.
+The argument policy sees the body's reach with the placeholder STANDING, because the addresses a
+run-time extent will supply are not in the tree: an allow-list that binds addresses therefore refuses
+a store-bound loop whose addresses it cannot see, which is condition 2 doing its work, and a deployer
+that wants the loop admits the collection by its name in the demanded document. The replay
+classification reads a store-bound `Each` as it reads a parameter bound — resolved at dispatch,
+undecidable from the declared form — beside the body's own defects.
+
+**6. The specification does not move, for the reason D29 item 6 gave.** The wire never spells a view
+shape; the collection source travels in the DOMAIN's codec (the toy's and the grid's test codecs gain a
+case). The demanded document is deliberately ungoverned by the specification (§11.2, "the
+demanded-effect projection") and its version is this repository's; the journal step is D23's
+not-a-specification-act. No schema, fixture byte, refusal class or rule moves; the codec families and
+the driver scenarios pass byte for byte, with `FUARAN_PROGRAM_SPEC` naming the specification clone the
+gate certified against.
+
+**7. What the model owns, and what it does not.** The model keeps D29's posture: it sees the
+collection only through the elements the witness hands it, already lowered — `VEachOf act source
+ceiling extent elements` on the dispatch axis, `OEachOf collection ceiling extent elements` on the op
+axis — because substitution into its abstract action and op types is not a thing it can define. What
+it ADDS is the read: a witness arrow (`w_as_elements` over a resolved value; `w_read_extent` over the
+state), called once at entry, and the ceiling check against what it answers, so `each_of_is_each_over_extent`
+is conditional on the store holding the extent the view was lowered over, and `each_of_over_ceiling_runs_nothing`
+is unconditional. The obligation this puts on the differential host, stated: it lowers over the
+extent the same store answers, through production's `Substitute` (the `each-substitution-preserves-shape`
+row), and a host that lowered over another extent would show as a divergence. The trace's `TEachOf`
+records what the arrow ANSWERED, not the view's field, which is how the model says "recorded".
+
+**Version.** Rides the `0.8.0` draft: the slot is untagged, publicly unpinned and already breaking
+(D34), and this is breaking of the same class — the `collection` field of `ActionView.Each` and
+`OpView.Each` changes type, `Trace` gains a case, `HandlerArm` and `ServerEffectRegistry` gain a
+member, `DemandedProjection` gains a field and the demanded document a version. `STABILITY.md` has
+the consumer's account and `docs/migrations/phase-1991.md` the diff.
+
+**What this forecloses, and what it leaves.** The ceiling is in the TREE; a store-bound `Each` with no
+ceiling is not expressible, by design. The body cannot extend the running loop. The collection's
+elements are VALUES; what an op does with an element it reads is still the op's own literal operand
+(fuaran#2186 — an op operand resolved against the plan — builds beside this and is not foreclosed:
+nothing here fixes what an operand may be, only what the collection is). A store-bound `Each` on the
+dispatch axis reads the BINDING store; a collection in the tree a dispatch-axis fold cannot see stays
+an op-axis construct, which is where a grid's regions live.
