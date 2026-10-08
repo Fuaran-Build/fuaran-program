@@ -85,7 +85,10 @@ module Budget =
     /// of it, and in saturating arithmetic. `fold_steps_within_cost` in
     /// `proofs/BoundedFold.fst` is the statement that a run never takes more
     /// steps than this prices (Phase 1976; over the lowered elements, Phase
-    /// 1990).
+    /// 1990), and `cascade_saturates_exact` in `proofs/Budget.fst` is the
+    /// statement that THIS figure is that exact price clipped at the
+    /// saturation bound — never below it — over every shape above, with
+    /// one law per flow shape in a caller's terms beside it (Phase 2018).
     ///
     /// Reads the DISPATCH axis (the action view) and nothing else.
     let actionCascadeCost

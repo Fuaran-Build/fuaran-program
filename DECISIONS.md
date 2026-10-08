@@ -2170,3 +2170,82 @@ lines in 5 commits (`607515f` 4, `f6a4a34` 2, `cbeded1` 2, `e7e1156`, `e7c58f8`)
 bootstrap-era instruction file and pack-script header that `607515f` removed at the public flip, and
 the citations this entry rewords. This repository is already public, so its history is not rewritten
 here: the finding is recorded, and any remedy is the maintainers' act, not this repository's.
+
+## D34 — The budget model prices the three flow shapes as the shipped code does — a selection by its dearer arm, a repeat by the top of its bound, an iteration by its lowered elements, all saturating — and the code's rule is taken for every shape, none corrected (2026-10-08)
+
+**2026-10-08. fuaran#2018.** `proofs/Budget.fst` was written against an `actionCascadeCost` that made
+one distinction — is this a chain, and what does it hold — and summed with an unsaturated `+`. Phase
+1976 gave the shipped function `Choose` and `Repeat` and made it saturate; Phase 1990 gave it `Each`.
+The model did not move, so its `act` priced every flow shape as a leaf and its G2 theorem described
+a gate over a figure the core no longer computed. fuaran#2017 recorded the gap (D31) and held it open
+with a named case at the toy witness. This entry closes it, and records the decision the phase asked
+for first: for each shape, is the code's rule the one the model takes, or is the code wrong?
+
+**The rule the code computes, shape by shape, and the decision.**
+
+- **`Choose(condition, whenTrue, whenFalse, exit)` → `satAdd 1 (max (cost whenTrue) (cost whenFalse))`.**
+  One step for the condition, plus the DEARER arm; the exit expression is not priced. TAKEN. The price
+  must bound the run whichever arm the condition picks, and the condition is read once; the exit is
+  read only by the reversal, which runs as its own handler through the same gate (D22) and is priced
+  there. Pricing both arms (the sum) would be a correct bound and a bad one — it would refuse a tree
+  whose run can never cost that much — and pricing the cheaper arm is the defect the new go-red case
+  commits. The model's `AChoose` carries the two arms and nothing else, because nothing else is read.
+- **`Repeat(Literal n, body)` → `satAdd 1 (satMul (max n 0) (cost body))`.** One step for the bound,
+  plus the body `n` times; a negative literal runs nothing and is priced as nothing but its step.
+  TAKEN. It is the unrolling the fold performs (`repeat_is_unrolling`), and `max n 0` is the clause
+  that keeps a negative count from pricing NEGATIVE — which would read as cheap — rather than a
+  validation the price is standing in for. The model spells the clamp out (`clamp_nat`).
+- **`Repeat(Parameter(count, lo, hi), body)` → `satAdd 1 (satMul (max hi 0) (cost body))`.** Priced
+  at the TOP of the range, with the count expression never resolved and `lo` never read. TAKEN. The
+  price is computed from the tree before the run and must need no store; the top of the range is
+  the most the fold will run before it halts on an out-of-range count (`fold`'s `VRepeat` arm in `BoundedFold.fst`),
+  so it is the least price that bounds every admitted run. The model's `BParameter` carries the
+  range and drops the expression, which is the honest statement that the price cannot see it.
+- **`Each(collection, placeholder, body)` → the lowered elements' costs summed, with no step for a
+  bound.** TAKEN. An `Each` IS the sequence of its lowered elements (D29, `each_is_lowering`), and a
+  sequence has no bound step because a literal collection is not read — an `Each` over nothing costs
+  zero exactly as an empty sequence does. The model's `AEach` carries the lowered elements, as
+  `BoundedFold.fst`'s `VEach` does: what the lowering IS belongs to the witness's `Substitute` and
+  is that theorem's subject, and the model is exact over whatever the witness lowers by construction.
+- **Saturation.** Every add and multiply above is `satAdd` / `satMul`. TAKEN, and the model's
+  cascade now saturates under the same parameter `mx` the walk uses — which is the drift the shard
+  did not name: the file's "NOT saturating, deliberately" was true of the function in Phase 1716 and
+  false since 1976. Nothing in model or production is now unsaturated, and `proofs.json`'s
+  `int32-bound-assumed` says so instead of the reverse.
+
+No code changed. The shipped rules are the ones a reader would arrive at from the fold's own laws,
+and each has a theorem behind it now rather than a comment.
+
+**What is proved, and in whose terms.** The one theorem about the figure is `cascade_saturates_exact`:
+the cascade cost of every shape the core accepts is the EXACT price — `view_cost`'s rule, restated
+over the budget model's own `act` because the two models deliberately share no type (D31's
+`resource-bounds` posture) — clipped at the bound. So the gate never reads a figure below the exact
+one, which is what lets `fold_steps_within_cost`'s bound on a run carry across to the number the
+gate compares, and a figure under the bound is the exact price, usable as a number. Beside it, one
+law per flow shape stated for the gate's caller — what an ADMITTED price says of the parts that will
+run: `choose_covers_either_arm` (either arm admitted under the cap less one), `repeat_literal_is_unrolling`
+and `repeat_parameter_covers_every_count` (the unrolling is priced, and every count in the range is
+covered), `each_is_elements` with `each_member_within` / `chain_member_within` (every element
+admitted). Every per-shape law carries `cap < mx`, because a price AT the bound says only "at least
+this much" — `InteractionBudget.unlimited`'s case, and nobody's gate.
+
+**The model's `step` names the bound.** Since the cascade saturates, `step` and `breached` take the
+saturation bound as their first argument. The UI tier's repository holds byte copies of this model
+and its extraction (declared in its `copies.json` with these files as canonical, D32) and its host
+calls `step`; the next re-copy carries the new signature and that host passes the bound it already
+supplies for the walk. That is the declared copy mechanism working, not a coupling this entry adds.
+
+**The host states the lowering rather than reading it.** The toy differential translates an `Each`
+as the body once per element of the collection, not as whatever `ActionWitness.lowered` answers.
+Taking the elements from production would hand the oracle production's answer to the one question
+the `Each` arm asks; stating the toy's lowering — substitution writes the element over the
+placeholder in expressions only and never changes an action's shape — means a toy whose
+substitution ever did change a shape shows as a divergence. Every flow case carries the core's price
+as a literal beside it, so the agreement is with a figure a reader checks by hand and not with
+whatever production said, and a saturating corpus asserts each of its prices reaches the bound
+before comparing.
+
+**Not claimed.** That the shipped prices are the RIGHT prices for any placement's policy
+(`budget-ceilings-are-policy`); that a `seq`-backed payload is finite (`lazy-payload-cap-assumed`);
+and anything about the UI tier's data-bearing weighing or its driver's G2 stage, which are that
+repository's evidence (D32).
