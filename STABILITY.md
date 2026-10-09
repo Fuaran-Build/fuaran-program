@@ -20,7 +20,7 @@ what a consumer pays to adopt it and why.
 This document starts at `0.6.0`. The slots before it are recorded where they were cut, in the
 comments beside `<Version>` in `Directory.Build.props`, and are not restated here.
 
-## 0.8.0 — DRAFT (untagged) — the query evaluator seam on `RunQuery` (Phase 1905)
+## 0.8.0 — RELEASED (tagged `v0.8.0`, 2026-10-09) — the query evaluator seam on `RunQuery` (Phase 1905), and what rode the draft (Phases 1991, 1993, 2018, 2019, 2130, 2165, 2175)
 
 **Class: breaking**, by this file's own rule, for a consumer that constructs a
 `ServerEffectRegistry` or a `PerformerFacets` as a full record literal (FS0764 names the missing
