@@ -199,7 +199,11 @@ module ServerDemanded =
                               { Capability = capability
                                 Argument = argument
                                 Name = name }) } with
-                Iterations = StateWitness.iterations state ops }
+                Iterations = StateWitness.iterations state ops
+                // A `Let` beneath them (Phase 2186, D42) demands the VALUE as
+                // well: the state value it resolves at run time, by name, and
+                // the targets its body writes with the value standing.
+                Values = StateWitness.values state ops }
 
     /// What one stage demands.
     let private ofStage

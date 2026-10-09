@@ -481,7 +481,11 @@ module Handler =
     /// placeholder through the state witness's `Substitute`, threaded as a
     /// sequence (`each_plans_as_lowered`); an op sequence that reads a
     /// placeholder no enclosing `Each` binds is refused BEFORE its first op
-    /// plans, with the placeholder named (`StateWitness.scopeDefects`).
+    /// plans, with the placeholder named (`StateWitness.scopeDefects`). A
+    /// `Let` (Phase 2186) resolves its value against the state as of its
+    /// position, through the placement's reader, and plans its body with the
+    /// value substituted; an unresolved or errored value refuses the effect
+    /// (`let_of_plans_as_body_when_resolved`).
     let private planOps
         (state: StateWitness<'Node, 'Op>)
         (performance: OpPerformance<'Node, 'Op>)
@@ -616,6 +620,27 @@ module Handler =
                         | Ok extent when List.length extent > ceiling ->
                             Error "the collection's extent is over its declared ceiling"
                         | Ok extent -> over extent
+            // The value channel (Phase 2186, D42): the value is resolved ONCE,
+            // here, against the state as of this position — through the
+            // placement's reader, as a one-element extent under the value's
+            // name, so a durable placement journals the resolution and serves
+            // the record on replay — and the body plans with it substituted
+            // for the placeholder, as a sequence from the same state. An
+            // unresolved or errored value refuses the effect before the first
+            // op of the body plans, the errored one's message verbatim
+            // (`let_of_plans_as_body_when_resolved`, `let_of_unresolved_plans_nothing`).
+            | OpView.Let(placeholder, value, body) ->
+                let resolve () =
+                    match value.Resolve tree with
+                    | ExprResolution.Resolved resolved -> Ok [ resolved ]
+                    | ExprResolution.NotResolved -> Error(sprintf "the value did not resolve: %s" value.Name)
+                    | ExprResolution.Errored reason -> Error reason
+
+                match readExtent value.Name resolve with
+                | Error reason -> Error reason
+                | Ok [ resolved ] ->
+                    go (body |> List.map (state.Substitute placeholder resolved)) tree staged trail flow
+                | Ok _ -> Error(sprintf "the recorded value is not one value: %s" value.Name)
 
         // Validation first (Phase 1990): a placeholder read where no `Each`
         // binds it is a defect of the FORM, refused with the placeholder named

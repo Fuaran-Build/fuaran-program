@@ -160,7 +160,7 @@
          evaluator seam, its law family, and the registration and declaration
          functions beside it (DECISIONS.md D34). STABILITY.md holds the slot as
          a DRAFT until it is tagged. -->
-    <Version>0.8.0</Version>
+    <Version>0.9.0</Version>
     <!-- This repository's restore path is PUBLIC: it publishes to nuget.org, so
          a consumer of the published packages reaches the registry and nothing
          else. Undeclared would read as `local-feed`, under which a pin only this

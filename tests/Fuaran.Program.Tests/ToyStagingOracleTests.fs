@@ -199,10 +199,18 @@ let private modelWitness
             // shape is exercised at the grid witness (`GridWitnessTests`).
             | OpView.Each(Collection.Stored(collection, ceiling), _, _) ->
                 Staging.OEachOf(collection.Name, bigint (max ceiling 0), [], [])
+            // A value the state holds (Phase 2186): the toy's state holds
+            // none and no toy op views as a binding, so the translation is
+            // total over a value the toy never resolves — `w_resolve` below
+            // answers none, and the model refuses the shape exactly as the
+            // plan would refuse an unresolved value. The shape is exercised
+            // at the grid witness (`GridWitnessTests`, Phase 2186).
+            | OpView.Let(_, value, _) -> Staging.OLetOf(value.Name, JArr [], [])
 
         view
-      // The toy's state holds no collection.
+      // The toy's state holds no collection, and no value.
       w_read_extent = fun _ _ -> Staging.ONone
+      w_resolve = fun _ _ -> Staging.NotResolved
       w_assign = witness.Dispatch.Store.Assign
       // The landing-slot refusal as production renders it: the
       // reserved-namespace text over this witness's predicate and prefix.
