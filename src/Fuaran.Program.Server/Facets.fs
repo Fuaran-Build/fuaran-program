@@ -138,9 +138,24 @@ type DerivedGuarantees =
 /// `Facets.undeclaredQueryEvaluator` is the check that catches a staged
 /// evaluator the derivation was not told about — the same shape as
 /// `undeclaredPerformers` and `undeclaredOpPerformer`.
+///
+/// `OpKinds` (Phase 2165, D39, F-FACET) declares the op performer PER EFFECT
+/// KIND rather than once for the whole performer: an op's kinds are the
+/// argument names its reach declares (`StateWitness.Reach`, read through
+/// `ServerArgumentPolicy.reachOfOp`; Program's own `destination` argument
+/// aside), so a domain whose vocabulary mixes a content-addressed write with
+/// a commit and a push declares `write` idempotent and the other two not,
+/// where one slot made it declare the whole performer non-idempotent or lie.
+/// What repeating ONE op does is the MEET over its kinds (`opFacetOf`): every
+/// kind idempotent, or the op is not; a kind the host did not declare reads
+/// as the whole-performer declaration, and an op naming no kind reads as it
+/// too. The static derivation, which is handed no witness, reads the arm as
+/// the meet over everything declared (`opPerformerFacet`) — sound, and
+/// coarser than the per-op reading the durable wrapper takes.
 type PerformerFacets =
     { Declared: Map<string, IdempotencyFacet>
       OpPerformer: IdempotencyFacet option
+      OpKinds: Map<string, IdempotencyFacet>
       QueryEvaluator: IdempotencyFacet option }
 
 /// Which interpreter is running the handlers, and under what settings. The
@@ -327,7 +342,20 @@ module PerformerFacets =
     let none: PerformerFacets =
         { Declared = Map.empty
           OpPerformer = None
+          OpKinds = Map.empty
           QueryEvaluator = None }
+
+    /// The MEET of two facets (Phase 2165): repeating both is as safe as the
+    /// less safe of the two. `NonIdempotent` absorbs; `IdempotentWithStore`
+    /// is below `Idempotent`, because a store-backed claim is only as good as
+    /// the store.
+    let meet (a: IdempotencyFacet) (b: IdempotencyFacet) : IdempotencyFacet =
+        match a, b with
+        | IdempotencyFacet.NonIdempotent, _
+        | _, IdempotencyFacet.NonIdempotent -> IdempotencyFacet.NonIdempotent
+        | IdempotencyFacet.IdempotentWithStore, _
+        | _, IdempotencyFacet.IdempotentWithStore -> IdempotencyFacet.IdempotentWithStore
+        | IdempotencyFacet.Idempotent, IdempotencyFacet.Idempotent -> IdempotencyFacet.Idempotent
 
     /// Declare what repeating this performer does.
     let declare (fn: string) (facet: IdempotencyFacet) (facets: PerformerFacets) : PerformerFacets =
@@ -347,13 +375,44 @@ module PerformerFacets =
     let declareOpPerformer (facet: IdempotencyFacet) (facets: PerformerFacets) : PerformerFacets =
         { facets with OpPerformer = Some facet }
 
-    /// Whether the host said anything about the op performer.
-    let isOpPerformerDeclared (facets: PerformerFacets) : bool = facets.OpPerformer.IsSome
+    /// Declare what repeating the op performer does for ONE effect kind
+    /// (Phase 2165, D39) — a kind being an argument name an op's reach
+    /// declares.
+    let declareOpKind (kind: string) (facet: IdempotencyFacet) (facets: PerformerFacets) : PerformerFacets =
+        { facets with
+            OpKinds = Map.add kind facet facets.OpKinds }
 
-    /// What repeating the op performer does — `NonIdempotent` where the host
-    /// has not said, on `facetOf`'s terms.
+    /// Whether the host said anything about the op performer — as a whole, or
+    /// for any effect kind.
+    let isOpPerformerDeclared (facets: PerformerFacets) : bool =
+        facets.OpPerformer.IsSome || not facets.OpKinds.IsEmpty
+
+    /// What repeating the op performer does for an op of the given KINDS
+    /// (Phase 2165, D39): the meet over the kinds' declarations, a kind the
+    /// host did not declare reading as the whole-performer declaration, and
+    /// an op naming no kind reading as that declaration too — `NonIdempotent`
+    /// where the host has not said, on `facetOf`'s terms.
+    let opFacetOf (kinds: string list) (facets: PerformerFacets) : IdempotencyFacet =
+        let whole = facets.OpPerformer |> Option.defaultValue IdempotencyFacet.NonIdempotent
+
+        match kinds with
+        | [] -> whole
+        | _ ->
+            kinds
+            |> List.map (fun kind -> Map.tryFind kind facets.OpKinds |> Option.defaultValue whole)
+            |> List.reduce meet
+
+    /// What repeating the op performer does, for the ARM as a whole — the
+    /// static reading the derivation takes with no op in hand: the meet over
+    /// every kind declared and the whole-performer declaration where one was
+    /// made (so a declared push keeps the arm non-idempotent whatever the
+    /// writes say), `NonIdempotent` where the host has not said.
     let opPerformerFacet (facets: PerformerFacets) : IdempotencyFacet =
-        facets.OpPerformer |> Option.defaultValue IdempotencyFacet.NonIdempotent
+        match facets.OpPerformer, Map.isEmpty facets.OpKinds with
+        | whole, true -> whole |> Option.defaultValue IdempotencyFacet.NonIdempotent
+        | whole, false ->
+            facets.OpKinds
+            |> Map.fold (fun acc _ facet -> meet acc facet) (whole |> Option.defaultValue IdempotencyFacet.Idempotent)
 
     /// Declare what repeating a registered STAGED query evaluator does
     /// (Phase 1905).

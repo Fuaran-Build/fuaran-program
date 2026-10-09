@@ -1690,5 +1690,46 @@ in {do_outcome = (finish s r.rp_acc); do_replayed = r.rp_replayed; do_invoked = 
      end))
 
 
+let read_entry_capability : Prims.string = "ReadEntry"
+
+
+let entry_read_diverged : Prims.string = "durable-entry-read-diverged"
+
+
+let entry_read_refusal : Prims.string  ->  Prims.string = (fun ( subject  :  Prims.string ) -> (Prims.strcat (Prims.strcat entry_read_diverged ":") subject))
+
+
+let entry_read = (fun ( dur  :  journal<'v> ) ( k  :  Prims.nat ) ( subject  :  Prims.string ) ( live  :  res<'v> ) -> (
+
+let identity = ((read_entry_capability), (OSome (subject)))
+in (
+
+let diverged = (match ((dur.j_recorded k)) with
+| OSome (recorded) -> begin
+     (not ((Prims.op_Equals recorded identity)))
+     end
+| ONone -> begin
+     false
+     end)
+in  
+if diverged then begin
+     RErr ((entry_read_refusal subject))
+     end else begin
+     (match ((dur.j_step k)) with
+| JValue (x) -> begin
+     ROk (x)
+     end
+| JRefusal (r) -> begin
+     RErr (r)
+     end
+| JUnrun -> begin
+     live
+     end
+| JIndeterminate -> begin
+     live
+     end)
+     end)))
+
+
 
 

@@ -231,6 +231,25 @@
 ///     invoked rest, committed exactly when the rest ran.
 ///   * `empty_journal_is_direct` — with nothing recorded, the durable
 ///     run's outcome is the direct run's.
+///
+/// And the plan's ENTRY READ (Phase 2165, D39 — a read the plan phase
+/// makes of the world through the run's `EntryReader`, journaled at its
+/// own ordinal through the same wrapper; `entry_read`):
+///
+///   * `entry_read_served` — a read the journal records as completed,
+///     under the read's identity, is answered the RECORDED value whatever
+///     the live world answers: the resumed plan observes the journaled
+///     entry and never the live world.
+///   * `entry_read_diverged_refused` — a read at an ordinal whose recorded
+///     identity is not this read's is refused under
+///     `durable-entry-read-diverged` naming the read, whatever the live
+///     world and the journal's value say: a resume that would plan
+///     differently is a typed refusal, never the domain's own.
+///   * `entry_read_unrun_is_live` — with nothing recorded the read is the
+///     live read: a first run reads the world.
+///   * `resumed_plan_observes_entry` — at the plan: a plan built over the
+///     served read is the plan built over the recorded value, for every
+///     live world — two re-entries against two worlds plan alike.
 
 module Staging
 
@@ -2323,6 +2342,57 @@ let durable_run (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a:
       do_indeterminate = r.rp_indeterminate;
       do_overrides = r.rp_overrides }
 
+(* ───────────────────────────────────────────────────────────────────
+   The plan's ENTRY READ (Phase 2165, D39).
+
+   `Durable.runReading` hands the witness an `EntryReader` bound to the
+   run: a read the plan makes of the world — inside the state witness's
+   `Apply`, which the model keeps opaque — goes through the SAME wrapper
+   the staged calls go through, at an ordinal of its own in the one
+   cursor sequence, under the capability `ReadEntry` with the read's name
+   as its subject, declared idempotent (a read repeats freely) and asked
+   no operator refusal. `entry_read` is that wrapper's answer to the
+   plan, clause for clause with `wrapAt` under those settings: the
+   divergence check first, then the recorded value or refusal, and the
+   live read where the journal has nothing or could not decide. Where it
+   diverges the refusal NAMES the read, which is what the handler's halt
+   carries — never the domain's own "nothing matched", which is what a
+   re-plan against the moved world used to produce.
+
+   What the plan does WITH the value is the host's `Apply` and stays out
+   of the model, as `w_apply` already is; the theorems are about what the
+   plan is ANSWERED, and `resumed_plan_observes_entry` lifts that to any
+   witness built over the answer.
+   ─────────────────────────────────────────────────────────────────── *)
+
+/// F#: `EntryReader.Capability`.
+let read_entry_capability : string = "ReadEntry"
+
+/// F#: `DurableCode.EntryReadDiverged`.
+let entry_read_diverged : string = "durable-entry-read-diverged"
+
+/// F#: `DurableCode.entryReadDiverged subject` — the code, a colon, the read.
+let entry_read_refusal (subject: string) : string =
+  strcat (strcat entry_read_diverged ":") subject
+
+/// F#: the `EntryReader` `Durable.runReading` hands the witness, at the
+/// ordinal `k` the cursor holds when the plan reads: `subject` is the
+/// read's name, `live` what the host's live read answers. The journal
+/// snapshot is the same `journal` the staged calls are decided by.
+let entry_read (#v: Type0) (dur: journal v) (k: nat) (subject: string) (live: res v) : res v =
+  let identity = (read_entry_capability, OSome subject) in
+  let diverged =
+    (match dur.j_recorded k with
+     | OSome recorded -> not (recorded = identity)
+     | ONone -> false) in
+  if diverged then RErr (entry_read_refusal subject)
+  else
+    (match dur.j_step k with
+     | JValue x -> ROk x
+     | JRefusal r -> RErr r
+     | JUnrun -> live
+     | JIndeterminate -> live)
+
 // ─── the durable theorems (ghost from here) ──────────────────────────
 
 /// The ordinals `k`, `k+1`, … `k+n-1`.
@@ -2621,3 +2691,70 @@ let empty_journal_is_direct (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q:
   let planned = plan w reg node_id stages (start s) in
   if planned.ac_halted then ()
   else replay_unrun_is_perform w reg dur 0 (rev planned.ac_staged) planned
+
+// ─── the entry read's theorems (Phase 2165, D39) ─────────────────────
+
+/// **`entry_read_served`.** A read the journal records as COMPLETED at
+/// its ordinal, under the read's own identity (`ReadEntry` with the
+/// read's name), is answered the recorded value — for EVERY live world.
+/// The resumed plan observes the journaled entry and never the live
+/// world: this is what lets a run killed after the op that moved what it
+/// read stage the same calls on re-entry, so the journaled stages are
+/// served rather than refused.
+let entry_read_served (#v: Type0) (dur: journal v) (k: nat) (subject: string) (x: v) (live: res v)
+  : Lemma
+      (requires
+        dur.j_recorded k == OSome (read_entry_capability, OSome subject) /\
+        dur.j_step k == JValue x)
+      (ensures entry_read dur k subject live == ROk x) = ()
+
+/// **`entry_read_diverged_refused`.** A read at an ordinal whose recorded
+/// identity is NOT this read's — another read's name, or a staged call's
+/// identity, because the resumed plan reads where the recorded run did
+/// not or reads something else — is refused under
+/// `durable-entry-read-diverged` with the read named, whatever the live
+/// world answers and whatever value the journal holds there. A resume
+/// that would plan differently is a typed refusal naming the read that
+/// moved, never the domain's own refusal of a plan against the live
+/// world.
+let entry_read_diverged_refused (#v: Type0) (dur: journal v) (k: nat) (subject: string)
+                                (recorded: string & opt string) (live: res v)
+  : Lemma
+      (requires
+        dur.j_recorded k == OSome recorded /\
+        recorded =!= (read_entry_capability, OSome subject))
+      (ensures entry_read dur k subject live == RErr (entry_read_refusal subject)) = ()
+
+/// **`entry_read_unrun_is_live`.** With nothing recorded at the ordinal —
+/// a first run, or `Journal.none` — the read IS the live read: the plan
+/// reads the world, as it always did, and the record is what this run
+/// leaves behind.
+let entry_read_unrun_is_live (#v: Type0) (dur: journal v) (k: nat) (subject: string) (live: res v)
+  : Lemma
+      (requires dur.j_recorded k == ONone /\ dur.j_step k == JUnrun)
+      (ensures entry_read dur k subject live == live) = ()
+
+/// **`resumed_plan_observes_entry`.** At the PLAN: for any way `mk` of
+/// building a witness over the read's answer — the host's own, which
+/// closes its `Apply` over the reader — the plan under the served read is
+/// the plan under the recorded value, whatever the live world: two
+/// re-entries of one invocation against two worlds plan alike, and both
+/// plan as the recorded run did. The staged list is therefore the one
+/// the journal's stages were recorded against, which is what
+/// `durable_resume` then serves.
+let resumed_plan_observes_entry (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                                (mk: res v -> witness t b v o q a eff d) (reg: registry t v o q p)
+                                (dur: journal v) (k: nat) (subject: string) (x: v)
+                                (live1: res v) (live2: res v)
+                                (node_id: string) (stages: list (stage a v o q)) (s: store t b)
+  : Lemma
+      (requires
+        dur.j_recorded k == OSome (read_entry_capability, OSome subject) /\
+        dur.j_step k == JValue x)
+      (ensures
+        plan (mk (entry_read dur k subject live1)) reg node_id stages (start s) ==
+        plan (mk (ROk x)) reg node_id stages (start s) /\
+        plan (mk (entry_read dur k subject live2)) reg node_id stages (start s) ==
+        plan (mk (ROk x)) reg node_id stages (start s)) =
+  entry_read_served dur k subject x live1;
+  entry_read_served dur k subject x live2

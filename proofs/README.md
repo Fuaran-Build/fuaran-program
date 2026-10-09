@@ -70,6 +70,7 @@ anything about that witness.
 | `Staging.fst` | `guard_holds_moves_nothing`, `guard_refusal_halts` (the op-channel guard, F-GUARD) | `w_apply`, `w_op_view` | **state** only |
 | `Staging.fst` | `performer_handed_the_plan` (F-PERFORM) | `w_apply`, `w_op_view`, and the registry's `r_op_perform` | **state** only |
 | `Staging.fst` | `replay_unrun_is_perform`, `replay_serves_completed`, `resume_performs_only_the_rest`, `indeterminate_refused_by_default`, `indeterminate_reinvoked_only_by_name`, `divergence_refused`, `durable_resume`, `empty_journal_is_direct` (the durable discipline, Phase 1980) | `d_subject` → `Stream.Encode`, the op's canonical form content-addressed as an op stage's journal SUBJECT (**state**); `w_assign` → `Store.Assign`, for a served landing slot (**dispatch**); the journal snapshot and the declarations are `DurableServices`, not witness members | **state**, with `w_assign` as the hypothesis a dispatch-less witness discharges (nothing lands, so it is never asked) |
+| `Staging.fst` | `entry_read_served`, `entry_read_diverged_refused`, `entry_read_unrun_is_live`, `resumed_plan_observes_entry` (the plan's entry read, Phase 2165) | the journal snapshot alone, and for the last an arbitrary way of building a witness over the read's answer (production: the state witness's `Apply` closing over the `EntryReader`) | **state**, as the arrow the host builds over the reader |
 | `EffectGate.fst` | `gate_before_perform`, `gate_refusal_halts_run`, `policy_sufficient`, `return_contract`, `op_return_contract`, `uncontracted_is_direct` (Phase 1981) | the staging witness, quantified over every one, plus the registry; `op_return_contract` reads the registry's `r_op_perform` (**state**) and the contract keyed on the token it stages | **state**, on the staging theorem's terms |
 
 **A witness filling ONLY the state axis satisfies every theorem that names no dispatch member.**
@@ -944,6 +945,37 @@ accumulator the perform phase left, and the four ordinal lists (`Replayed`, `Inv
 - **`empty_journal_is_direct`** — with nothing recorded for any staged call the durable run's outcome
   IS the direct run's, and it reports nothing served, nothing refused, no override.
 
+**The plan's ENTRY READ (Phase 2165, D39).** The discipline above has a premise its header states:
+the plan phase is a function of the entry state. A verb whose plan reads the WORLD — inside its
+state witness's `Apply`, before deciding what to perform — breaks it the moment its own perform phase
+moves what it read: killed after the op and re-entered, the re-plan reads the moved world, plans
+differently, and is refused by the domain before any journaled stage is reached. `Durable.runReading`
+hands the witness an `EntryReader` bound to the run, and the read goes through the SAME wrapper at an
+ordinal of its own under `ReadEntry`, the read's name as its subject; `entry_read` is that wrapper's
+answer, clause for clause with `wrapAt` under a declared-idempotent, never-refused step. Four
+theorems, over the journal snapshot alone:
+
+- **`entry_read_served`** — a read the journal records as COMPLETED under the read's own identity is
+  answered the recorded value for EVERY live world: the resumed plan observes the journaled entry and
+  never the live world.
+- **`entry_read_diverged_refused`** — a read at an ordinal whose recorded identity is not this read's
+  is refused under `durable-entry-read-diverged` naming the read, whatever the live world and the
+  journal's value: a resume that would plan differently is a typed refusal, never the domain's own.
+- **`entry_read_unrun_is_live`** — with nothing recorded the read is the live read: a first run reads
+  the world.
+- **`resumed_plan_observes_entry`** — at the plan: for any way of building a witness over the read's
+  answer, the plan under the served read is the plan under the recorded value, for two live worlds at
+  once — two re-entries of one invocation plan alike, and as the recorded run did, so the staged list
+  is the one the journal's stages were recorded against and `durable_resume` serves them.
+
+The spec-strength check, for these: they say what the wrapper COMPUTES (the answer, not a shape),
+are tied to the implementation by the differential host (the extraction of `entry_read` beside the
+reader `runReading` hands a witness, over six journal shapes), state the whole guarantee (served
+value, typed refusal, live first read, and the plan's independence from the world, each as an
+equation), are usable by a caller who reads the plan's outcome and the halt reason, and are
+visible here, in the ladder and in `proofs.json`. The one assumption they add — that the read's
+ordinal precedes the staged list's in production's one cursor sequence — is stated in the ladder.
+
 `land` (the perform phase's `ROk` clause, named so a served answer lands as a performed one does),
 `serve` (ghost: what serving a completed prefix does to the accumulator), `completed_at` /
 `unrun_from` (ghost: the journal shapes the theorems are stated over), `ordinals` and `asked` support
@@ -1046,6 +1078,14 @@ The denial sink (`OnDenied`) is a unit-returning observer and is not modelled.
     (`trail_each`, `plan_each_admitted`, `trail_agrees_each`, `trail_chain_each`,
     `defects_clear_each`). Unconditional over the view; the substitution that lowers the body is the
     state witness's, with the obligation the fold theorem states.
+21. **A completed entry read is answered the recorded value for every live world** —
+    `entry_read_served` (Phase 2165): the resumed plan observes the journaled entry, never the world.
+22. **An entry read at an ordinal recorded under another identity is refused naming the read** —
+    `entry_read_diverged_refused` (Phase 2165), under `durable-entry-read-diverged:<subject>`.
+23. **With nothing recorded the entry read is the live read** — `entry_read_unrun_is_live`
+    (Phase 2165).
+24. **A plan built over the served read is the plan built over the recorded value, for two worlds at
+    once** — `resumed_plan_observes_entry` (Phase 2165).
 
 Since Phase 1976 the op view is taken to EXHAUSTION (`op_view o`, `views`), as the action view has
 been since Phase 1898: `plan_ops` plans the views (`plan_views` / `plan_view` / `plan_repeat`, and
@@ -1096,6 +1136,14 @@ audit trail and the diagnostics. It went red before it went green: a list compre
 shortened the model's staged list to two calls, and every case that reached the host call lost on
 `invoked`.
 
+**The entry read has its own** (Phase 2165; `DurableInterpreterTests`, "the proved entry read as
+oracle"): the extraction of `entry_read` is run beside the reader `Durable.runReading` hands a
+witness, observed through the witness's own `Apply`, over six journal shapes — nothing recorded, the
+read completed, the read refused, the read attempted and undecided, another read recorded at the
+ordinal, an op stage recorded at the ordinal — with the snapshot built from production entries through
+the same three readers. A GO RED case feeds the model another subject and requires the comparison to
+lose.
+
 #### Assumed, and stated
 
 - **The performer is a function of the call.** The model's `r_perf` is pure, so a stateful
@@ -1107,6 +1155,18 @@ shortened the model's staged list to two calls, and every case that reached the 
 - **The witness and the registry**, per the table above: what production does with a query, an
   op, a landing slot and a `Compute` stage is supplied to the model from production's own
   members, and the differential is over the extraction of everything else.
+- **The entry read's ordinal precedes the staged list's** (Phase 2165). Production keeps ONE cursor
+  for the plan-phase reads and the perform-phase calls, so a plan that reads at ordinal 0 stages its
+  calls from ordinal 1; the model addresses the read by its own ordinal `k` and `durable_run` replays
+  the staged list from 0, and the two are related by that cursor rather than by a theorem.
+  `DurableInterpreterTests` pins the sequence (`Invoked = [0; 1; 2]` on a first run, `Replayed = [0; 1]`
+  on the resume). What the plan does WITH the served value is the host's `Apply`, as `w_apply`
+  already is.
+- **The op prefix is outside the performer token** (Phase 2165). Production hands the op performer
+  and its contract the run's prefix — the pre-op state and the earlier op stages' receipts — beside
+  the planned state and the op; the Staging and EffectGate models' tokens carry the state and the op
+  only. Every performer the oracles stage reads none of the prefix, so the model's side hands the
+  entry prefix. The prefix's content is pinned by `DurableInterpreterTests` (F-RECEIPTS), not proved.
 - **The toolchain**, on the same terms as the fold theorem's.
 
 #### Not claimed

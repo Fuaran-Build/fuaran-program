@@ -971,6 +971,35 @@ module ServerArgumentPolicy =
 /// (`performer_handed_the_plan` in `proofs/Staging.fst`); the state before an
 /// op is the state handed with the one before it, or the entry state the host
 /// passed in. A guard (`OpView.Require`) is never handed to the performer.
+///
+/// **The performer is also handed the run's PREFIX (Phase 2165, D39).** The
+/// state as of the op says what the plan produced; it does not say what the
+/// run has DONE. A performer whose act is "commit the receipts before me",
+/// and a contract that states "this op owed N effects", need the state the op
+/// was applied TO and the receipts the earlier op stages answered — and until
+/// this both had to be read back from the host's own journal beside Program.
+/// `OpPrefix` carries them: the pre-op state, and the receipts of the op
+/// stages performed before this one in the run, in perform order, a served
+/// stage's recorded receipt standing in for a performed one's under the
+/// durable interpreter, so a resumed run's performer sees the prefix the dead
+/// run left exactly as an uninterrupted one would.
+type OpPrefix<'Node> =
+    {
+        /// The planned state the op was applied TO — the state handed with the
+        /// op before it, or the entry state the host passed in.
+        Before: 'Node
+        /// The receipts the op stages before this one answered, in perform
+        /// order; under the durable interpreter a served stage's recorded
+        /// receipt is among them.
+        Receipts: Fuaran.Core.JVal list
+    }
+
+module OpPrefix =
+
+    /// The prefix at the first op stage of a run from `entry`: nothing before
+    /// it.
+    let atEntry (entry: 'Node) : OpPrefix<'Node> = { Before = entry; Receipts = [] }
+
 [<RequireQualifiedAccess>]
 type OpPerformance<'Node, 'Op> =
     /// The in-memory apply is the whole effect, performed in the plan phase —
@@ -993,7 +1022,9 @@ type OpPerformance<'Node, 'Op> =
     /// and the op before the op is reported as performed. Constrained on the
     /// terms a host function is (D24): the gate and the policy decide what
     /// reaches it, and the contract decides what it may claim to have done.
-    | Performed of ('Node -> 'Op -> Result<Fuaran.Core.JVal, string>)
+    /// Handed the run's PREFIX first (Phase 2165, D39): the pre-op state and
+    /// the receipts of the op stages before it.
+    | Performed of (OpPrefix<'Node> -> 'Node -> 'Op -> Result<Fuaran.Core.JVal, string>)
 
 /// A host-declared post-condition on an op performer's RECEIPT (Phase 1981) —
 /// `ReturnContract` keyed by the state and the op: a name, which is the host's
@@ -1014,32 +1045,54 @@ type OpContract<'Node, 'Op> =
     {
         /// What the host calls this contract — the one thing a refusal says.
         Name: string
-        /// Whether a receipt satisfies it, at the planned state and the op.
-        Holds: 'Node -> 'Op -> Fuaran.Core.JVal -> bool
+        /// Whether a receipt satisfies it, at the run's prefix (Phase 2165,
+        /// D39: the pre-op state and the earlier op stages' receipts), the
+        /// planned state and the op. A contract with nothing to say about the
+        /// prefix ignores its first argument — `OpContract.at` spells that.
+        Holds: OpPrefix<'Node> -> 'Node -> 'Op -> Fuaran.Core.JVal -> bool
     }
 
 module OpContract =
+
+    /// A contract over the planned state, the op and the receipt alone — the
+    /// shape every contract had before the prefix was handed (Phase 2165).
+    let at (name: string) (holds: 'Node -> 'Op -> Fuaran.Core.JVal -> bool) : OpContract<'Node, 'Op> =
+        { Name = name
+          Holds = fun _ state op receipt -> holds state op receipt }
 
     /// The refusal's text, in the ONE vocabulary a return contract's refusal
     /// has (`ReturnContract.describe`): the NAME and never the receipt.
     let describe (contract: OpContract<'Node, 'Op>) : string = "return-contract:" + contract.Name
 
-    /// The wrapper `OpPerformance.performedChecked` composes: a receipt the
-    /// contract rejects becomes the host's own refusal, carrying the
-    /// contract's name; a raw refusal passes through unchanged.
-    /// `EffectGate.check_op` is this, clause for clause.
+    /// The wrapper `OpPerformance.performedChecked` composes, one contract at
+    /// a time: a receipt the contract rejects becomes the host's own refusal,
+    /// carrying the contract's name; a raw refusal passes through unchanged.
+    /// `EffectGate.check_op` is this, clause for clause, at the planned state
+    /// and the op — the prefix is handed through to the contract and is not
+    /// in that model (`proofs.json`, `op-contract-prefix-out-of-model`).
     let check
         (contract: OpContract<'Node, 'Op>)
-        (perform: 'Node -> 'Op -> Result<Fuaran.Core.JVal, string>)
-        : 'Node -> 'Op -> Result<Fuaran.Core.JVal, string> =
-        fun state op ->
-            match perform state op with
+        (perform: OpPrefix<'Node> -> 'Node -> 'Op -> Result<Fuaran.Core.JVal, string>)
+        : OpPrefix<'Node> -> 'Node -> 'Op -> Result<Fuaran.Core.JVal, string> =
+        fun prefix state op ->
+            match perform prefix state op with
             | Error reason -> Error reason
             | Ok receipt ->
-                if contract.Holds state op receipt then
+                if contract.Holds prefix state op receipt then
                     Ok receipt
                 else
                     Error(describe contract)
+
+    /// Several contracts over one performer, composed by Program (Phase 2165,
+    /// D39, F-CONTRACTS): checked in declaration order, and the FIRST that
+    /// rejects names the refusal — the nesting of `check` with the first
+    /// declared innermost, so a host declares a list where it used to nest by
+    /// hand. An empty list is the performer unchecked.
+    let checkAll
+        (contracts: OpContract<'Node, 'Op> list)
+        (perform: OpPrefix<'Node> -> 'Node -> 'Op -> Result<Fuaran.Core.JVal, string>)
+        : OpPrefix<'Node> -> 'Node -> 'Op -> Result<Fuaran.Core.JVal, string> =
+        List.fold (fun inner contract -> check contract inner) perform contracts
 
 module OpPerformance =
 
@@ -1067,23 +1120,34 @@ module OpPerformance =
 
     /// Register an op performer: handed the state as of each op and the op,
     /// answering a receipt. No contract: the receipt is recorded and nothing
-    /// checks it (`uncontracted_is_direct` in `proofs/EffectGate.fst`).
+    /// checks it (`uncontracted_is_direct` in `proofs/EffectGate.fst`). The
+    /// prefix is not handed — `performedWithPrefix` is the form that reads it.
     let performedBy (perform: 'Node -> 'Op -> Result<Fuaran.Core.JVal, string>) : OpPerformance<'Node, 'Op> =
+        OpPerformance.Performed(fun _ state op -> perform state op)
+
+    /// Register an op performer that reads the run's PREFIX (Phase 2165, D39):
+    /// handed the pre-op state and the earlier op stages' receipts, then the
+    /// state as of the op and the op. No contract.
+    let performedWithPrefix
+        (perform: OpPrefix<'Node> -> 'Node -> 'Op -> Result<Fuaran.Core.JVal, string>)
+        : OpPerformance<'Node, 'Op> =
         OpPerformance.Performed perform
 
-    /// Register an op performer WITH a contract over its receipt: the
-    /// performer the placement holds is `OpContract.check contract perform`,
-    /// so a receipt the contract rejects reaches the handler as a refusal
-    /// naming the contract and never as a performed op — the `registerChecked`
-    /// shape, on the op axis.
+    /// Register an op performer WITH contracts over its receipt (Phase 2165,
+    /// D39: a list, composed by Program through `OpContract.checkAll`): the
+    /// performer the placement holds is the performer under every contract in
+    /// declaration order, so a receipt a contract rejects reaches the handler
+    /// as a refusal naming THAT contract and never as a performed op — the
+    /// `registerChecked` shape, on the op axis. The performer and each
+    /// contract are handed the prefix.
     let performedChecked
-        (contract: OpContract<'Node, 'Op>)
-        (perform: 'Node -> 'Op -> Result<Fuaran.Core.JVal, string>)
+        (contracts: OpContract<'Node, 'Op> list)
+        (perform: OpPrefix<'Node> -> 'Node -> 'Op -> Result<Fuaran.Core.JVal, string>)
         : OpPerformance<'Node, 'Op> =
-        OpPerformance.Performed(OpContract.check contract perform)
+        OpPerformance.Performed(OpContract.checkAll contracts perform)
 
     /// Register an op performer with nothing to say: its receipt is the inert
     /// empty object — the honest spelling of "an op lands nothing", since the
     /// wire value has no null — which no contract can be declared over.
     let performedWithoutReceipt (perform: 'Node -> 'Op -> Result<unit, string>) : OpPerformance<'Node, 'Op> =
-        OpPerformance.Performed(fun state op -> perform state op |> Result.map (fun () -> Fuaran.Core.JObj []))
+        OpPerformance.Performed(fun _ state op -> perform state op |> Result.map (fun () -> Fuaran.Core.JObj []))

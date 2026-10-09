@@ -1891,6 +1891,145 @@
       }
     },
     {
+      "id": "durable-entry-read-served",
+      "level": "proved",
+      "phase": "Phase 2165",
+      "claim": "A plan's entry read — a read of the world the plan makes through the run's EntryReader, journaled under ReadEntry with the read's name as its subject — that the journal records as COMPLETED under that identity is answered the recorded value for EVERY live world: the resumed plan observes the journaled entry and never the live world, which is what lets a run killed after the op that moved what it read stage the same calls on re-entry and have the journaled stages served.",
+      "evidence": {
+        "theorem": "entry_read_served",
+        "model": "proofs/Staging.fst",
+        "prover": "proofs/fstar-pin.json",
+        "definitions": [
+          "entry_read",
+          "journal",
+          "read_entry_capability"
+        ],
+        "note": "the model of the EntryReader Durable.runReading hands a witness (DECISIONS.md D39): the same wrapper the staged calls go through, at an ordinal of its own, declared idempotent and asked no operator refusal"
+      }
+    },
+    {
+      "id": "durable-entry-read-diverged-refused",
+      "level": "proved",
+      "phase": "Phase 2165",
+      "claim": "An entry read at an ordinal whose recorded identity is not this read's — another read's name, or a staged call's identity — is refused under durable-entry-read-diverged with the read named after the colon, whatever the live world answers and whatever value the journal holds there: a resume that would plan differently from the run it resumes is a typed refusal naming the read that moved, never the domain's own refusal of a plan against the live world.",
+      "evidence": {
+        "theorem": "entry_read_diverged_refused",
+        "model": "proofs/Staging.fst",
+        "prover": "proofs/fstar-pin.json",
+        "definitions": [
+          "entry_read",
+          "entry_read_refusal",
+          "entry_read_diverged"
+        ]
+      }
+    },
+    {
+      "id": "durable-entry-read-unrun-is-live",
+      "level": "proved",
+      "phase": "Phase 2165",
+      "claim": "With nothing recorded at the read's ordinal — a first run, or Journal.none — the entry read IS the live read: a first run reads the world as every run did before, and the record is what it leaves behind.",
+      "evidence": {
+        "theorem": "entry_read_unrun_is_live",
+        "model": "proofs/Staging.fst",
+        "prover": "proofs/fstar-pin.json"
+      }
+    },
+    {
+      "id": "durable-resumed-plan-observes-entry",
+      "level": "proved",
+      "phase": "Phase 2165",
+      "claim": "At the PLAN: for any way of building a witness over the read's answer — the host's own, which closes its Apply over the reader — the plan under the served read equals the plan under the recorded value, for two live worlds at once; so two re-entries of one invocation against two worlds plan alike and as the recorded run did, and the staged list is the one the journal's stages were recorded against, which durable_resume then serves.",
+      "evidence": {
+        "theorem": "resumed_plan_observes_entry",
+        "model": "proofs/Staging.fst",
+        "prover": "proofs/fstar-pin.json",
+        "supporting": [
+          "entry_read_served"
+        ],
+        "definitions": [
+          "plan",
+          "entry_read"
+        ]
+      }
+    },
+    {
+      "id": "durable-entry-read-model-agrees-with-shipped-code",
+      "level": "tested",
+      "phase": "Phase 2165",
+      "claim": "The extracted entry_read and the reader Durable.runReading hands a witness agree — the value the plan is answered, or the refusal it halts on — over six journal shapes: nothing recorded, the read completed, the read refused, the read attempted and undecided, another read recorded at the ordinal, an op stage recorded at the ordinal; a go-red case feeds the model another subject and the comparison loses.",
+      "evidence": {
+        "family": "Phase 2165 - the durable tier at the toy witness: the entry read, the prefix, per-kind facets and composed contracts",
+        "host": "tests/Fuaran.Program.Tests/DurableInterpreterTests.fs",
+        "cases": [
+          "nothing recorded",
+          "the read completed",
+          "the read refused",
+          "the read attempted and undecided",
+          "another read recorded at the ordinal",
+          "an op stage recorded at the ordinal",
+          "GO RED: a model fed another subject disagrees with production"
+        ]
+      }
+    },
+    {
+      "id": "durable-entry-read-resumes-against-the-record",
+      "level": "tested",
+      "phase": "Phase 2165",
+      "claim": "Against production's own tree: a plan that reads a value in its plan phase, performs the op that moves it, is interrupted after the op and re-entered against the moved world is — under a witness that reads live — refused by the domain before any stage with the stage after the op never reached (the premise reproduced as reported); under runReading it is served the entry read and the op stage, invokes only the host call, commits, and relabels with what the DEAD run read; a fresh invocation reads live and is refused; a resume reading another subject, or reaching an op stage where the record holds the read, is refused under durable-entry-read-diverged naming the read before any stage; runWith journals no read.",
+      "evidence": {
+        "family": "Phase 2165 - the durable tier at the toy witness: the entry read, the prefix, per-kind facets and composed contracts",
+        "host": "tests/Fuaran.Program.Tests/DurableInterpreterTests.fs",
+        "cases": [
+          "premise: under a live-reading witness the resume re-plans against the moved world and is refused before any stage",
+          "the entry read is journaled at its ordinal",
+          "resumed under runReading, the plan observes the journaled entry",
+          "a fresh invocation against the moved world reads live",
+          "a resume whose plan reads ANOTHER subject at the read's ordinal is refused naming the read",
+          "a resume whose plan reaches an op stage where the record holds the read is refused naming the recorded read",
+          "runWith is runReading over a witness that ignores the reader"
+        ]
+      }
+    },
+    {
+      "id": "durable-entry-read-ordinal-precedes-the-staged-list",
+      "level": "assumed",
+      "phase": "Phase 2165",
+      "claim": "The entry read's ordinal precedes the staged list's: production keeps ONE cursor for the plan-phase reads and the perform-phase calls, so a plan that reads at ordinal 0 stages its calls from ordinal 1, while the model addresses the read by its own ordinal and durable_run replays the staged list from 0.",
+      "class": "model-bridge",
+      "evidence": {
+        "assumption": "the read and the staged calls take their ordinals from Durable.runWith's one cursor, in plan-then-perform order, and the model's k for the read and 0 for the first staged call are related by that cursor"
+      },
+      "mitigation": "DurableInterpreterTests pins the sequence: Invoked = [0; 1; 2] on a first run that reads, performs one op and calls one host function; Replayed = [0; 1] and Invoked = [2] on its resume"
+    },
+    {
+      "id": "op-prefix-out-of-model",
+      "level": "assumed",
+      "phase": "Phase 2165",
+      "claim": "The run's PREFIX at an op stage — the pre-op state and the receipts of the earlier op stages, handed to the op performer and to every contract beside the planned state and the op (F-RECEIPTS) — is outside the Staging and EffectGate models' performer token, which carries the state and the op only; every performer the oracles stage reads none of it, so the model's side hands the entry prefix.",
+      "class": "model-bridge",
+      "evidence": {
+        "assumption": "a contract or performer that reads the prefix is not what the oracles stage; the theorems about the token at (state, op) hold of production restricted to those two"
+      },
+      "mitigation": "DurableInterpreterTests (F-RECEIPTS) pins the prefix's content against production: the first op stage sees the entry state and no receipts, the second the first's planned state and receipt, a contract stating what an op owed is checked and names the refusal, and on a resume the served stage's recorded receipt is in the next performer's prefix"
+    },
+    {
+      "id": "op-facet-per-kind-and-composed-contracts",
+      "level": "tested",
+      "phase": "Phase 2165",
+      "claim": "An idempotency facet is declared per effect kind — an argument name the op's reach declares — and the facet consulted for an op is the meet over the kinds it names, a kind nobody declared reading as the whole-performer declaration: a crash inside a write declared idempotent closes its window by re-invoking with no override, a crash inside a push declared non-idempotent is refused as indeterminate, under one declaration; and a list of contracts composed by Program is checked in declaration order with the first that rejects naming the refusal, the empty list being the performer unchecked.",
+      "evidence": {
+        "family": "Phase 2165 - the durable tier at the toy witness: the entry read, the prefix, per-kind facets and composed contracts",
+        "host": "tests/Fuaran.Program.Tests/DurableInterpreterTests.fs",
+        "cases": [
+          "the facet of an op is the meet over the kinds its reach names",
+          "a crash inside a WRITE closes its window by re-invoking",
+          "a crash inside a PUSH is refused as indeterminate under the same declaration",
+          "a list of contracts is checked in order, and the FIRST that rejects names the refusal",
+          "checkAll is the nesting of check"
+        ]
+      }
+    },
+    {
       "id": "each-of-lowered-over-the-entry-extent",
       "level": "assumed",
       "phase": "Phase 1991",

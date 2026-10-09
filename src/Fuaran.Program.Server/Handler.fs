@@ -361,9 +361,15 @@ module Handler =
         /// A staged query's table, in its query slot.
         | QuerySlot of slot: string * table: Fuaran.Core.Table
 
+    /// A call the plan admitted and the perform phase runs. `Perform` is handed
+    /// the RECEIPTS of the op stages performed before it in the run (Phase
+    /// 2165, D39) — a host call and a staged query ignore them and answer no
+    /// receipt of their own; an op stage hands them to its performer as the
+    /// run's prefix and answers the receipt the performer returned, which the
+    /// fold appends for the stages after it.
     type private StagedCall =
         { Capability: string
-          Perform: unit -> Result<Landing, string> }
+          Perform: Fuaran.Core.JVal list -> Result<Landing * Fuaran.Core.JVal option, string> }
 
     /// The state threaded through the stage fold. Lists accumulate reversed and
     /// are flipped once at the end, so a long handler does not quadratically
@@ -378,6 +384,10 @@ module Handler =
             /// single list would make "what actually happened" a question about
             /// string prefixes.
             Externally: string list
+            /// The receipts the op stages of the perform phase answered so far
+            /// (Phase 2165, D39), reversed like every other list here: what the
+            /// next op stage is handed as its prefix.
+            Receipts: Fuaran.Core.JVal list
             Staged: StagedCall list
             Patches: 'Op list
             Notifications: (string * Fuaran.Core.JVal) list
@@ -425,15 +435,23 @@ module Handler =
     /// RECEIPT (Phase 1981), already
     /// checked by the contract `OpPerformance.performedChecked` composed into
     /// `perform`, landing in no slot. The model's `staged_from`, with the token
-    /// carrying the contract at this state and op (`op_contract_keyed`).
+    /// carrying the contract at this state and op (`op_contract_keyed`). The
+    /// performer is also handed the run's PREFIX (Phase 2165, D39): `before`,
+    /// the state the op was applied to, and the receipts of the op stages the
+    /// perform phase ran before this one, which only the perform phase knows,
+    /// so they reach the closure as its argument rather than being closed over.
     let private stagedOp
-        (perform: 'Node -> 'Op -> Result<Fuaran.Core.JVal, string>)
+        (perform: OpPrefix<'Node> -> 'Node -> 'Op -> Result<Fuaran.Core.JVal, string>)
         (capability: string)
+        (before: 'Node)
         (state: 'Node)
         (op: 'Op)
         : StagedCall =
         { Capability = capability
-          Perform = fun () -> perform state op |> Result.map (fun _ -> Landing.Nowhere) }
+          Perform =
+            fun receipts ->
+                perform { Before = before; Receipts = receipts } state op
+                |> Result.map (fun receipt -> Landing.Nowhere, Some receipt) }
 
     /// The `ApplyOps` arm's fold over its ops — the model's `plan_ops`
     /// (Phase 1974; `plan_views` since Phase 1976). Each op is VIEWED, then
@@ -519,7 +537,7 @@ module Handler =
                     match performance with
                     | OpPerformance.InMemory -> Ok(tree', staged, trail', flow)
                     | OpPerformance.Performed perform ->
-                        Ok(tree', stagedOp perform capability tree' op :: staged, trail', flow)
+                        Ok(tree', stagedOp perform capability tree tree' op :: staged, trail', flow)
             | OpView.Choose(entry, whenTrue, whenFalse, exit) ->
                 let tookTrue = Result.isOk (state.Stream.Apply entry tree)
                 let arm = if tookTrue then whenTrue else whenFalse
@@ -713,9 +731,9 @@ module Handler =
                                 Staged =
                                     { Capability = capability
                                       Perform =
-                                        fun () ->
+                                        fun _ ->
                                             evaluator.Evaluate source pipeline resolve
-                                            |> Result.map (fun table -> Landing.QuerySlot(name, table))
+                                            |> Result.map (fun table -> Landing.QuerySlot(name, table), None)
                                             |> Result.mapError QueryFault.describe }
                                     :: acc.Staged
                                 Trail = UndoStep.Reached capability :: acc.Trail }
@@ -809,12 +827,13 @@ module Handler =
                                 Staged =
                                     { Capability = capability
                                       Perform =
-                                        fun () ->
+                                        fun _ ->
                                             performer args
                                             |> Result.map (fun result ->
-                                                match into with
-                                                | Some key -> Landing.StateSlot(key, result)
-                                                | None -> Landing.Nowhere) }
+                                                (match into with
+                                                 | Some key -> Landing.StateSlot(key, result)
+                                                 | None -> Landing.Nowhere),
+                                                None) }
                                     :: acc.Staged
                                 Trail = UndoStep.Reached capability :: acc.Trail }
 
@@ -893,15 +912,21 @@ module Handler =
         match staged with
         | [] -> acc
         | call :: rest ->
-            match call.Perform() with
+            // The prefix an op stage is handed (Phase 2165, D39): the receipts
+            // the op stages before it answered, in perform order.
+            match call.Perform(List.rev acc.Receipts) with
             | Error reason ->
                 { acc with
                     Halted = true
                     Diagnostics = ServerDiagnostic.PerformFailed(call.Capability, reason) :: acc.Diagnostics }
-            | Ok landing ->
+            | Ok(landing, receipt) ->
                 let recorded =
                     { acc with
-                        Externally = call.Capability :: acc.Externally }
+                        Externally = call.Capability :: acc.Externally
+                        Receipts =
+                            match receipt with
+                            | Some receipt -> receipt :: acc.Receipts
+                            | None -> acc.Receipts }
 
                 let landed =
                     match landing, channel with
@@ -952,6 +977,7 @@ module Handler =
               Halted = false
               Performed = []
               Externally = []
+              Receipts = []
               Staged = []
               Patches = []
               Notifications = []

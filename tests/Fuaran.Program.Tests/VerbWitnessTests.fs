@@ -413,7 +413,7 @@ let tests =
               let outcome =
                   runPerforming
                       world
-                      (OpPerformance.performedChecked Receipt.withinReach (world.Performer None))
+                      (OpPerformance.performedChecked [ Receipt.withinReach ] (fun _ -> world.Performer None))
                       archive
 
               Expect.isTrue outcome.Committed "every receipt named only what its op's reach declared"
@@ -439,7 +439,7 @@ let tests =
               let outcome =
                   runPerforming
                       world
-                      (OpPerformance.performedChecked Receipt.withinReach (world.Escaping escape None))
+                      (OpPerformance.performedChecked [ Receipt.withinReach ] (fun _ -> world.Escaping escape None))
                       archive
 
               Expect.isFalse outcome.Committed "rolled back"
@@ -480,12 +480,15 @@ let tests =
               let recording: OpContract<FileMap, FileOp> =
                   { Name = "recording"
                     Holds =
-                      fun state op receipt ->
+                      fun prefix state op receipt ->
                           seen.Add(encodeOp op, canonical state)
-                          Receipt.withinReach.Holds state op receipt }
+                          Receipt.withinReach.Holds prefix state op receipt }
 
               let outcome =
-                  runPerforming world (OpPerformance.performedChecked recording (world.Performer None)) archive
+                  runPerforming
+                      world
+                      (OpPerformance.performedChecked [ recording ] (fun _ -> world.Performer None))
+                      archive
 
               Expect.isTrue outcome.Committed "committed"
 
@@ -506,7 +509,7 @@ let tests =
               let outcome =
                   runPerforming
                       world
-                      (OpPerformance.performedChecked Receipt.withinReach (world.Performer(Some 2)))
+                      (OpPerformance.performedChecked [ Receipt.withinReach ] (fun _ -> world.Performer(Some 2)))
                       archive
 
               Expect.isFalse outcome.Committed "rolled back"
