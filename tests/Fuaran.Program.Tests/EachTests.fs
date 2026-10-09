@@ -535,14 +535,20 @@ let opTests =
               let publishEach (targets: string list) =
                   Verb.handler "publish-each" [ ForEach(targets |> List.map JStr, "t", [ Publish "{t}" ]) ]
 
-              Expect.equal (Undo.posture witness (publishEach [ "staging" ])) UndoVerdict.Compensable "retractable"
+              Expect.equal
+                  (Undo.posture QueryPosture.PureRead witness (publishEach [ "staging" ]))
+                  UndoVerdict.Compensable
+                  "retractable"
 
               Expect.equal
-                  (Undo.posture witness (publishEach [ "staging"; "origin" ]))
+                  (Undo.posture QueryPosture.PureRead witness (publishEach [ "staging"; "origin" ]))
                   UndoVerdict.OneWay
                   "one element is public"
 
-              Expect.equal (Undo.posture witness (publishEach [])) UndoVerdict.Reversible "nothing to undo"
+              Expect.equal
+                  (Undo.posture QueryPosture.PureRead witness (publishEach []))
+                  UndoVerdict.Reversible
+                  "nothing to undo"
 
               Expect.equal
                   (ProgramWire.replayDefectsOfOp witness (Verb.writeEach [ "a"; "b" ]))

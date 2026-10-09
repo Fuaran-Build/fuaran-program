@@ -296,6 +296,16 @@ module QueryEvaluator =
     let isStaged (evaluator: QueryEvaluator) : bool =
         evaluator.Posture = QueryPosture.Reaching
 
+    /// The posture a registry's evaluator member declares — the ONE input the
+    /// static postures (`HandlerWire.replayReasons`, `Undo.postureOf`) take
+    /// from the host rather than from the declared form (Phase 2187, D44).
+    /// Absent is the in-memory fold, which `inMemory` declares a pure read, so
+    /// a host with no evaluator publishes exactly what it published before the
+    /// seam. Read off the same member the handler's own staging decision reads
+    /// (`isStaged`), so the projection and the run cannot consult two facts.
+    let postureOf (evaluator: QueryEvaluator option) : QueryPosture =
+        (evaluator |> Option.defaultValue inMemory).Posture
+
     let private renderType (ty: Fuaran.Core.ColumnType) : string = Fuaran.Core.ColumnType.tag ty
 
     /// A statically derived schema, rendered: `[a:int, b]` for a closed set (a
@@ -579,6 +589,13 @@ module ServerEffectRegistry =
     let withQueryEvaluator (evaluator: QueryEvaluator) (registry: ServerEffectRegistry) : ServerEffectRegistry =
         { registry with
             QueryEvaluator = Some evaluator }
+
+    /// The query posture this registry declares: where the host's evaluator
+    /// declaration enters the static projection (D44). A host that publishes
+    /// its demanded document passes this to the posture derivations; `denyAll`
+    /// declares the fold, a pure read.
+    let queryPosture (registry: ServerEffectRegistry) : QueryPosture =
+        QueryEvaluator.postureOf registry.QueryEvaluator
 
     /// Replace how a store-bound collection's extent is read (Phase 1991).
     /// What the durable interpreter does to journal the read; a host has no

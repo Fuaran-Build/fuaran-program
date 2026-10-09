@@ -145,9 +145,9 @@ let projection =
 let document =
     testList
         "Phase 2130 — the demanded document carries opaqueLeaves at version 8"
-        [ test "the version is 9, and it is the only one read" {
-              Expect.equal Demanded.Version 9 "the version"
-              Expect.equal Demanded.decodableVersions [ 9 ] "the versions read"
+        [ test "the version is 10, and it is the only one read" {
+              Expect.equal Demanded.Version 10 "the version"
+              Expect.equal Demanded.decodableVersions [ 10 ] "the versions read"
           }
 
           test "the member is encoded between iterations and values, and round-trips" {
@@ -177,7 +177,7 @@ let document =
           test "a previous-version document is refused by version, not read through this version's lens" {
               let bytes =
                   Demanded.encode Demanded.empty
-                  |> fun s -> s.Replace("\"version\":9", "\"version\":8")
+                  |> fun s -> s.Replace($"\"version\":{Demanded.Version}", $"\"version\":{Demanded.Version - 1}")
 
               match Demanded.decode bytes with
               | Error failure -> Expect.equal failure.Defect DemandedDefect.UnknownVersion "the class"

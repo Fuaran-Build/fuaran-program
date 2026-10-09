@@ -130,9 +130,12 @@ module Replay =
 
     /// What a host in `mode` is admitted to do with `handler`.
     ///
-    /// Total, allocation-light, and decided entirely from the declared form: no
-    /// store is read, no effect is performed, and the handler is not run.
+    /// Total, allocation-light, and decided entirely from the declared form and
+    /// the host's declared query posture (D44): no store is read, no effect is
+    /// performed, and the handler is not run. A read under a staged evaluator is
+    /// a reach, so resuming it is refused as a host call's would be.
     let admit
+        (query: QueryPosture)
         (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (mode: ReplayMode)
         (policy: ReplayPolicy)
@@ -144,7 +147,7 @@ module Replay =
             { Admission = ReplayAdmission.OpsOnly
               Record = None }
         | ReplayMode.Resume ->
-            let reasons = HandlerWire.replayReasons witness handler
+            let reasons = HandlerWire.replayReasons query witness handler
             let safety = ProgramWire.verdictOfReasons reasons
 
             match safety with
@@ -171,12 +174,15 @@ module Replay =
     /// key — what a host resuming a session asks once, before resuming any of
     /// them.
     let admitAll
+        (query: QueryPosture)
         (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (mode: ReplayMode)
         (policy: ReplayPolicy)
         (handlers: Handler<'Action, 'Op> seq)
         : (string * ReplayDecision) list =
-        handlers |> Seq.map (fun h -> h.Name, admit witness mode policy h) |> List.ofSeq
+        handlers
+        |> Seq.map (fun h -> h.Name, admit query witness mode policy h)
+        |> List.ofSeq
 
     /// Human-readable, log-safe rendering of a decision.
     ///
@@ -210,12 +216,14 @@ module Replay =
 
     // ─── the projection join ─────────────────────────────────────────────────
 
-    /// One handler's posture, as the demanded-projection document carries it.
+    /// One handler's posture, as the demanded-projection document carries it,
+    /// under the host's declared query posture (D44).
     let postureOf
+        (query: QueryPosture)
         (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (handler: Handler<'Action, 'Op>)
         : ReplayPosture =
-        let reasons = HandlerWire.replayReasons witness handler
+        let reasons = HandlerWire.replayReasons query witness handler
 
         { Handler = handler.Name
           Safety = ProgramWire.replaySafetyTag (ProgramWire.verdictOfReasons reasons)
@@ -233,6 +241,7 @@ module Replay =
     /// the field's own contract forbids. Use `ofTreeAndHandlers` below, which
     /// walks and joins together and so cannot reach that state.
     let withPostures
+        (query: QueryPosture)
         (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (handlers: Handler<'Action, 'Op> seq)
         (projection: DemandedProjection)
@@ -240,7 +249,7 @@ module Replay =
         match projection.Server with
         | None -> projection
         | Some server ->
-            let postures = handlers |> Seq.map (postureOf witness) |> List.ofSeq
+            let postures = handlers |> Seq.map (postureOf query witness) |> List.ofSeq
 
             Demanded.withServer
                 { server with
@@ -255,9 +264,10 @@ module Replay =
     /// reachability, through the same function, so the document cannot describe
     /// one set of handlers in its capabilities and another in its postures.
     let ofTreeAndHandlers
+        (query: QueryPosture)
         (witness: FullWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
         (handlers: Map<string, Handler<'Action, 'Op>>)
         (root: 'Node)
         : DemandedProjection =
         ServerDemanded.ofTreeAndHandlers witness handlers root
-        |> withPostures witness (ServerDemanded.reachable witness handlers root)
+        |> withPostures query witness (ServerDemanded.reachable witness handlers root)

@@ -178,7 +178,7 @@ let tests =
               // no state namespace — it has no binding store (Phase 1974).
               Expect.equal
                   (Demanded.encode projection)
-                  ("{\"kind\":\"demanded\",\"version\":9,\"effects\":[],\"hostCalls\":[],"
+                  ($"{{\"kind\":\"demanded\",\"version\":{Demanded.Version},\"effects\":[],\"hostCalls\":[],"
                    + "\"stateNamespaces\":[],"
                    + "\"opaqueHandlers\":[],\"iterations\":[],\"opaqueLeaves\":[],\"values\":[],\"server\":{\"effects\":[\"ApplyOps\"],\"capabilities\":[\"ApplyOps\"],"
                    + "\"functions\":[],\"channels\":[],"
@@ -871,7 +871,7 @@ let private undoIn (world: World) (failAt: int option) plan post =
         post
 
 let private undoOf (handler: VerbHandler) =
-    Undo.posture witness handler, Undo.reasons witness handler
+    Undo.posture QueryPosture.PureRead witness handler, Undo.reasons QueryPosture.PureRead witness handler
 
 let private stepText (step: UndoStep<FileMap, FileOp, Nothing>) =
     match step with
@@ -916,7 +916,8 @@ let undoTests =
               let handlers = [ rewrite; stage; push ]
 
               let projection =
-                  ServerDemanded.ofHandlers witness handlers |> Undo.withPostures witness handlers
+                  ServerDemanded.ofHandlers witness handlers
+                  |> Undo.withPostures QueryPosture.PureRead witness handlers
 
               let tier =
                   match projection.Server with
@@ -933,7 +934,11 @@ let undoTests =
 
               // The document's bytes carry it at version 7 (Phase 1991), and read back.
               let json = Demanded.encode projection
-              Expect.stringContains json "\"version\":9" "the undo posture rides the version this release emits"
+
+              Expect.stringContains
+                  json
+                  $"\"version\":{Demanded.Version}"
+                  "the undo posture rides the version this release emits"
 
               Expect.stringContains
                   json

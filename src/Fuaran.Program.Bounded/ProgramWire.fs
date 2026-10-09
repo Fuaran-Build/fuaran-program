@@ -124,9 +124,14 @@ type ReplaySafety =
 /// manifest — under exactly the log-safety rule the rest of it keeps: a
 /// diagnostic carries the derived capability, never a name off the wire.
 ///
-/// Two arms are PROOFS that a re-run reaches outside; the other four are places
+/// Three arms are PROOFS that a re-run reaches outside; the other four are places
 /// the walk cannot decide. The split is not cosmetic — it is what `gradeOfDefect`
 /// reads, and it is why `unknown` is never rounded to a neighbour.
+///
+/// One arm, `StagedQuery`, is not read off the declared form alone: it is the
+/// declared form read under the HOST's declaration of its query evaluator
+/// (Phase 2187, DECISIONS.md D44). It is still a derived fact — the host's
+/// declaration is an input to the walk, never a string a document supplied.
 [<RequireQualifiedAccess>]
 type ReplayDefect =
     /// An op is not provably absolutely addressed: it names no non-empty target
@@ -146,6 +151,10 @@ type ReplayDefect =
     | OpaqueHostCall
     /// A notification: a second run ships the message a second time.
     | OutboundNotification
+    /// A read the host answers through an evaluator it could not declare a pure
+    /// read: the query is staged like a host call (D34), so a re-run asks
+    /// something this host does not own a second time.
+    | StagedQuery
 
 /// One reason, positioned.
 ///
@@ -409,7 +418,7 @@ module ProgramWire =
 
     /// The grade one defect forces.
     ///
-    /// The two outward-reaching arms are the only PROOFS; everything else is a
+    /// The three outward-reaching arms are the only PROOFS; everything else is a
     /// place the walk could not decide, and the specification is explicit that
     /// such a place is reported as undecided rather than rounded to either
     /// neighbour. A classification that fired on ordinary correct handlers would
@@ -417,7 +426,8 @@ module ProgramWire =
     let gradeOfDefect (defect: ReplayDefect) : ReplaySafety =
         match defect with
         | ReplayDefect.OpaqueHostCall
-        | ReplayDefect.OutboundNotification -> ReplaySafety.Unsafe
+        | ReplayDefect.OutboundNotification
+        | ReplayDefect.StagedQuery -> ReplaySafety.Unsafe
         | ReplayDefect.RelativeAddressing
         | ReplayDefect.UnencodableOp
         | ReplayDefect.NonLiteralWrite
@@ -575,6 +585,7 @@ module ProgramWire =
         | ReplayDefect.UndecidableAction -> "undecidable-action"
         | ReplayDefect.OpaqueHostCall -> "opaque-host-call"
         | ReplayDefect.OutboundNotification -> "outbound-notification"
+        | ReplayDefect.StagedQuery -> "staged-query"
 
     // ─── the cross-layer reference ───────────────────────────────────────────
 

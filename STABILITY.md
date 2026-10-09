@@ -122,6 +122,50 @@ pays.
 - The prefix's order, the contract composition and the perform fold are 2165's, unchanged; only the
   receipt's type moved.
 
+### Rides the draft: the static postures name a staged query evaluator (Phase 2187)
+
+**Class: breaking**, and it rides the untagged `0.9.0` draft, which D42 opened at that class. Two
+closed DUs gain a case, which breaks every exhaustive match over them. Fifteen functions gain a
+leading parameter, and every caller meets it at compile time. A pinned reader of the demanded
+document refuses version 10. `DECISIONS.md` D44 records what was decided; this entry records what a
+consumer pays.
+
+### What changed shape
+
+- **`ReplayDefect` gains `StagedQuery`** (wire token `staged-query`, grade `unsafe`), and **`UndoDefect`
+  gains `StagedQuery`** (token `staged-query`, grade `one-way`). A consumer matching either
+  exhaustively adds the arm.
+- **Every posture derivation takes the host's `QueryPosture` as its first parameter:**
+  `HandlerWire.replayReasons` and `replaySafety`; `Replay.admit`, `admitAll`, `postureOf`,
+  `withPostures` and `ofTreeAndHandlers`; `Undo.defectsOfStage`, `reasons`, `posture`, `postureOf`,
+  `withPostures` and `ofTreeAndHandlers`; `Harvest.ofProgram` and `ofRegistration`. A host passes
+  `ServerEffectRegistry.queryPosture registry`. A caller with no registry in hand, and no evaluator,
+  passes `QueryPosture.PureRead` and gets exactly the 0.8.0 answer.
+- **`Replay.admit` refuses to resume a handler holding a read under a `Reaching` posture** under
+  `Replay.strict`, as it refuses one holding a host call. Its derived safety is `unsafe`.
+- **The demanded document is at version 10.** No member moves. `staged-query` may appear as a `defect`
+  in both `server.replay[].reasons` and `server.undo[].reasons`. `Demanded.Version` is `10`,
+  `decodableVersions` is `[10]`, and `conformance/demanded-effect-projection.json` is re-cut at
+  version 10.
+- **The program wire specification is at format version 3.** §7.5's vocabulary gains `staged-query`,
+  §7.4 gains the host query posture, and a handler vector may carry `queryEvaluator`. No document's
+  bytes move. A host certifying the referenced subject's handler vectors recomputes under the vector's
+  `queryEvaluator`.
+
+### What was added
+
+- `QueryEvaluator.postureOf` (`None` is the in-memory fold, `PureRead`) and
+  `ServerEffectRegistry.queryPosture`: the one place the host's declaration enters the static
+  projection.
+
+### What did not move
+
+- **A host with no evaluator, or a pure-read one, publishes the same postures as 0.8.0**: a read
+  contributes no reason. Its demanded document differs in the version alone.
+- **The runtime**: staging, journaling and the undo's refusal at a `Reached` step are D34's,
+  unchanged. This entry only makes the projection say them.
+- **The extracted model and the oracle differential**, which run at `PureRead`.
+
 ## 0.8.0 — RELEASED (tagged `v0.8.0`, 2026-10-09) — the query evaluator seam on `RunQuery` (Phase 1905), and what rode the draft (Phases 1991, 1993, 2018, 2019, 2130, 2165, 2175)
 
 **Class: breaking**, by this file's own rule, for a consumer that constructs a

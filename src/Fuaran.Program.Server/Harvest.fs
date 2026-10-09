@@ -105,12 +105,15 @@ module Harvest =
     /// each of those handlers' replay postures — the complete two-tier
     /// document, computed through the single reachability rule so the
     /// capabilities and the postures cannot describe different handler sets.
+    /// The postures are read under the host's declared query posture
+    /// (`ServerEffectRegistry.queryPosture`, D44).
     let ofProgram
+        (query: QueryPosture)
         (witness: FullWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
         (handlers: Map<string, Handler<'Action, 'Op>>)
         (root: 'Node)
         : HarvestedDemand =
-        publish (Undo.ofTreeAndHandlers witness handlers root)
+        publish (Undo.ofTreeAndHandlers query witness handlers root)
 
     /// The document for a REGISTRATION alone, with no program in hand.
     ///
@@ -121,11 +124,12 @@ module Harvest =
     /// tier is therefore empty — there is no tree — and the server tier is
     /// present, because a walk did run.
     let ofRegistration
+        (query: QueryPosture)
         (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (handlers: Handler<'Action, 'Op> seq)
         : HarvestedDemand =
         publish (
             ServerDemanded.ofHandlers witness handlers
-            |> Replay.withPostures witness handlers
-            |> Undo.withPostures witness handlers
+            |> Replay.withPostures query witness handlers
+            |> Undo.withPostures query witness handlers
         )

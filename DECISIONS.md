@@ -3180,3 +3180,122 @@ changes ride that draft (`STABILITY.md`).
 - The first instantiation's server tests (the UI tier's `Fuaran.UI.Program.Server.Tests`) register op
   performers and contracts over `JVal` receipts. They adopt this draft when that tier raises its pin.
   The migration is mechanical (`performedWithDetail`, `.Detail`) and belongs to the adopting phase.
+
+## D44 — The static postures read the HOST's query posture: a read under an evaluator its host could not declare a pure read is `staged-query` in both closed defect vocabularies, read off the registry by `ServerEffectRegistry.queryPosture`; the program wire specification widens §7.5 at format version 3 and the demanded document moves to version 10; closes D34's "What this entry does not reach" (2026-10-09)
+
+**2026-10-09. Phase 2187.** D34 staged a `RunQuery` whose evaluator its host could not declare a pure
+read: admitted while planning, asked after the plan, journaled by the durable interpreter, recorded
+on the trail as `Reached` so the undo refuses there. The runtime failed closed. The two STATIC
+postures did not say so. `HandlerWire.replayReasons` and `Undo.postureOf` read only the handler's
+declared form, which names no evaluator, so the demanded document (the signed envelope's subject,
+D15) told a reader that a handler replays and reverses cleanly when the host it runs on would refuse
+both. This entry makes the static postures say what the runtime does.
+
+**The shape: a new arm in each closed defect vocabulary, not a reach-class on the query member.** The
+shard offered both and asked for the one the documents can carry with the smallest specification
+change. A reach-class on `RunQuery` would put a property of the HOST in the handler DOCUMENT. The
+document's author does not know which host will run it, the same handler runs under the fold on one
+host and a staged evaluator on another (D34: an evaluator is a host act, not a domain's), and an
+untrusted tree could declare its own read pure. It would also move every `RunQuery` document's bytes,
+or add a member whose absence a reader must interpret. A new token moves no document at all.
+`ReplayDefect.StagedQuery` and `UndoDefect.StagedQuery` are the arms, both spelled `staged-query`.
+
+**Where the host's declaration enters the static projection.** Through one value,
+`ServerEffectRegistry.queryPosture registry`, which is `QueryEvaluator.postureOf registry.QueryEvaluator`:
+the registered evaluator's declared `Posture`, and `QueryEvaluator.inMemory`'s (`PureRead`) when none
+is registered. That is the same member the handler's own staging decision reads
+(`registry.QueryEvaluator`, then `QueryEvaluator.isStaged`), so the projection and the run consult one
+fact. The `QueryPosture` is a REQUIRED parameter of every posture derivation:
+`HandlerWire.replayReasons` and `replaySafety`; `Replay.admit`, `admitAll`, `postureOf`,
+`withPostures` and `ofTreeAndHandlers`; `Undo.defectsOfStage`, `reasons`, `posture`, `postureOf`,
+`withPostures` and `ofTreeAndHandlers`; `Harvest.ofProgram` and `ofRegistration`. Required, not
+defaulted, because a default is the gap this entry closes: a posture computed without the host's
+declaration is the posture that silently reads as the fold.
+
+**The grades: `unsafe` for replay, `one-way` for undo.** Both are the grades the runtime already
+enforces, and both are the grades of `opaque-host-call`, which is the arm D8 stages the query like.
+`unsafe` is a PROOF in §7.5's sense on the terms `opaque-host-call` is: what is proved is the host's
+own declaration that the stage reaches somewhere the host does not own, read together with the
+document. `unknown` was considered and rejected. Resume-replay re-evaluates reads (§7.2), so an
+`unknown` staged read would be resumed and its evaluator asked again by a strict host. That is the
+re-run D34's staging exists to prevent. `Replay.admit` therefore now refuses to resume such a
+handler under `Replay.strict`, as it refuses one holding a host call. Under `PureRead`, which is
+absent or declared, a read contributes nothing to either posture, exactly as before. A host with no
+evaluator publishes its demanded document byte-identically except for the version.
+
+**Static agrees with runtime, and a test fails if they diverge.** `StagedQueryPostureTests` runs one
+read under each posture (absent, `pureRead`, `reaching`) and compares the two sides. The static side
+reads the replay reasons and the undo posture under `ServerEffectRegistry.queryPosture` of the
+registry the run is given. The run side runs `Durable.run` twice (did the first run journal the read
+at its ordinal, and did the second serve it from the journal?) and runs `Undo.run` over
+`Handler.runPlanned`'s plan (was it refused `undo-one-way-step` naming `RunQuery`?). The predicate is
+that the projection calls the read staged exactly when the run journals it, and one-way exactly when
+the undo is refused at it. The test also pins which way each side lands, so agreement on a wrong
+answer cannot pass. It shows the predicate can go red by reading the projection under the posture the
+registry does NOT declare. A probe removed the undo arm from `Undo.defectsOfStage` alone and the
+reaching case went red.
+
+**The specification moves, in one change-set across both repositories.** `staged-query` is a seventh
+token in §7.5's closed vocabulary. By §11.1's own rule, adding an arm to a closed vocabulary is
+breaking and takes a format version, so the specification is at **format version 3**. No document
+moves. §7.4 gains the host query posture: a two-row table (`pure-read`, `reaching`) and the rule that
+a host derives a handler's replay safety under the posture it actually runs it under. §7.2's
+resume-replay bullet says a staged read is not a read for its purpose. §10.1 point 3 gives a handler
+vector an optional `queryEvaluator` member naming the posture its derived values are read under. It
+is an INPUT a reader recomputes under and never writes, and absent means `pure-read`, so every
+existing vector's expectation is unchanged. §10.7 makes the token reachable at the toy subject, since
+a `RunQuery`'s source and pipeline are the substrate's at both subjects.
+
+The resident emitter and both independent emitters take the posture from the vector. The manifest
+carries `handler/staged-query` and `toy-handler/staged-query`, one read each under `reaching`, each
+discriminating the token. `check-manifest.mjs` holds both subjects to discriminating it, admits only
+the two postures, and checks the JOIN no emitter can make for a reader: a vector names `staged-query`
+at exactly its read stages under `reaching`, and nowhere otherwise. **The schemas do not move.** They
+describe documents, no document changes, and the manifest has no schema.
+
+**The demanded document moves to version 10.** No member moves. A reason's `defect` is a token from a
+closed vocabulary, though, and a reader pinned to version 9 holds a vocabulary that cannot name
+`staged-query`. The number is what tells a reader which vocabulary it holds. Riding version 9 was
+considered, since version 9 belongs to this unreleased draft and the atMost clause rode version 6 on
+that argument. It was rejected because that argument rested on a pinned reader REFUSING the new
+member. A version-9 reader reads `defect` as an open string, so it would carry the token without
+refusing it, and nothing would tell it the vocabulary had grown. `conformance/demanded-effect-projection.json`
+is re-cut at version 10, on the terms version 9's re-cut was (D42). The UI tier's emitter re-emits it
+when that tier adopts this release.
+
+**The extracted model is the `PureRead` case, and it is not extended here.** `proofs/Undo.fst`'s
+`stage_defects` answers `[]` for a read, and the model has no staged evaluator. Neither did D34's
+runtime staging reach the model, which still plans every read while planning. The oracle differential
+therefore runs production at `QueryPosture.PureRead` and stays exact. The staged path, at runtime
+(D34) and in the posture (here), is pinned by the suites and not by a theorem. A model of it would
+give `w_query` a posture and stage a reaching read as `plan_stage` stages a host call. This entry
+records the gap rather than closing it, because it predates the entry and the entry does not widen
+it.
+
+**Assumptions kept, with the evidence that would falsify each.**
+
+- *A host runs every handler of a registration under ONE query posture.* The posture is read off the
+  registry, and a registry carries one evaluator. Falsified by a host that routes different reads to
+  different evaluators. That host would need a posture per source, and `QueryPosture` would become a
+  function of the `DataSource`.
+- *The posture is the host's declaration, and nothing checks it.* This is D34's assumption,
+  inherited. A host that declares a reaching evaluator a pure read publishes `reversible` and
+  `safe`, exactly as its run will treat the read. The static posture and the run agree on the lie.
+  Falsified by a deployer who needs the declaration attested. That is a claim about the evaluator,
+  and its route is `QueryEvaluatorLaws`, not this projection.
+- *A version-2 reader is a version behind, not wrong.* The UI tier's server suites certify the
+  referenced subject's handler vectors at the released `0.8.0`, which has no posture to recompute
+  under. Its first `reaching` vector reads there as a mismatch, by §11.1's own account of a widened
+  closed vocabulary. The specification commit is therefore pushed beside the codec but lands on its
+  `main` only with the UI tier's adoption of this release. Program's toy suite discriminates the arm
+  from a host-declared case as well as from the corpus, so its gate holds against either revision of
+  the corpus.
+
+**What the UI tier pays when it adopts this draft.** It passes `ServerEffectRegistry.queryPosture` (or
+`QueryPosture.PureRead` where no registry is in hand) at every call above. Its corpus suite reads
+`queryEvaluator` from the manifest and recomputes under it. It re-emits the demanded conformance
+corpus at version 10.
+
+**Version.** Breaking, by `STABILITY.md`'s rule: two closed DUs gain a case, fifteen functions gain a
+leading parameter, and the demanded document is at version 10. `0.9.0` is an untagged draft already
+of the breaking class (D42, D43), so this rides it.

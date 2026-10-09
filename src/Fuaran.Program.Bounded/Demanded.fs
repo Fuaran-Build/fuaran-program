@@ -100,7 +100,7 @@ type ServerFunctionDemand =
 
 /// One reason a handler is not provably re-runnable, as the document carries
 /// it: a stage ORDINAL and a token from the derivation's closed defect
-/// vocabulary. Both are derived facts, so a posture is log-safe on exactly the
+/// vocabulary (`staged-query` since version 10, D44). Both are derived facts, so a posture is log-safe on exactly the
 /// terms the rest of this document is.
 type ReplayReasonDemand =
     {
@@ -138,7 +138,7 @@ type ReplayPosture =
 /// (Phase 1977): a stage ORDINAL and a token from the undo classification's
 /// closed defect vocabulary — `compensated-op`, `one-way-op`,
 /// `opaque-host-call`, `outbound-notification`, `emitted-patch`,
-/// `compute-outside-fragment`. Derived facts both, so a posture is log-safe on
+/// `compute-outside-fragment`, and since version 10 `staged-query` (D44). Derived facts both, so a posture is log-safe on
 /// the terms the replay posture is.
 type UndoReasonDemand =
     {
@@ -1122,7 +1122,7 @@ module Demanded =
     /// The version this encoder emits, and — see `decodableVersions` — the only
     /// one this reader reads.
     [<Literal>]
-    let Version = 9
+    let Version = 10
 
     // The policy clause's discriminator, written once and read once. A literal
     // spelled at the encoder and again at the reader is the drift this document
@@ -1255,6 +1255,16 @@ module Demanded =
     /// never share a spelling. The cost is the one version 5 paid: every
     /// envelope signed under version 5 reports `Unreadable` drift naming the
     /// version, and a re-sign is the remedy (STABILITY.md, 0.7.0).
+    ///
+    /// **Version 10 widens the two defect vocabularies the postures carry**
+    /// (Phase 2187, D44): `staged-query` joins both the replay and the undo
+    /// reasons, for a read the host answers through an evaluator it could not
+    /// declare a pure read. No member moves. The version moves anyway, because
+    /// a reason's `defect` is a token from a CLOSED vocabulary and a reader
+    /// pinned to version 9 holds a vocabulary that cannot name it; the number
+    /// is what tells it which vocabulary it is reading. A document for a host
+    /// with no evaluator, or a pure-read one, differs from its version-9 bytes
+    /// in the version alone.
     let encode (projection: DemandedProjection) : string =
         let effects = projection.Effects |> List.map q |> arr
 

@@ -111,7 +111,7 @@ let private classA (h: GridHandler) =
     Expect.isTrue outcome.Committed "the run commits"
     Expect.equal (canonical afterRun) (canonical outcome.Store.Tree) "the workbook holds what the plan planned"
     Expect.equal (canonical afterUndo) (canonical seeded) "reversed: the inverses fold back to the seed"
-    Expect.equal (Undo.posture witness h) UndoVerdict.Reversible "every edit is exactly inverted"
+    Expect.equal (Undo.posture QueryPosture.PureRead witness h) UndoVerdict.Reversible "every edit is exactly inverted"
 
     let first, second, performedFirst, performedBoth = runAndReplay h
     Expect.isTrue first.Outcome.Committed "the durable run commits"
@@ -506,7 +506,10 @@ let classBTests =
               let marking =
                   handler "mark-orders" [ ForRegion("orders", 10, "r", [ Set("{r}.seen", "yes") ]) ]
 
-              Expect.equal (Undo.posture witness marking) UndoVerdict.Reversible "every edit is exactly inverted"
+              Expect.equal
+                  (Undo.posture QueryPosture.PureRead witness marking)
+                  UndoVerdict.Reversible
+                  "every edit is exactly inverted"
 
               // From the record: two rows marked, two inverses performed.
               let outcome, afterRun, afterUndo = runAndReverse marking
@@ -820,7 +823,7 @@ let valueChannelTests =
                   "errored"
 
               Expect.equal
-                  (Undo.posture witness double)
+                  (Undo.posture QueryPosture.PureRead witness double)
                   UndoVerdict.Reversible
                   "the binding is not an edit; every edit beneath it is exactly inverted"
           } ]

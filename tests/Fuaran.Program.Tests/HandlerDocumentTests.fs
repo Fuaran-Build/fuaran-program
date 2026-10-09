@@ -104,7 +104,7 @@ let private addressOf (handler: VerbHandler) =
 /// The registration's demanded document, recomputed: the full harvest walk
 /// (reach, replay and undo postures) with the host's policy joined on.
 let private projectionOf (registry: ServerEffectRegistry) (handler: VerbHandler) =
-    (Harvest.ofRegistration witness [ handler ]).Projection
+    (Harvest.ofRegistration (ServerEffectRegistry.queryPosture registry) witness [ handler ]).Projection
     |> ServerDemanded.withConstraints registry
 
 [<Tests>]

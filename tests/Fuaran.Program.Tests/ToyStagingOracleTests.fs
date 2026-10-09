@@ -1366,7 +1366,9 @@ let private runUndoCase (u: UndoCase) (failAt: int option) : UndoRun =
         | Staging.ROk out -> Ok(productionShaped out)
         | Staging.RErr reason -> Error reason
 
-    { Posture = Fuaran.Program.Server.Undo.posture w c.Handler, Fuaran.Program.Server.Undo.reasons w c.Handler
+    { Posture =
+        Fuaran.Program.Server.Undo.posture QueryPosture.PureRead w c.Handler,
+        Fuaran.Program.Server.Undo.reasons QueryPosture.PureRead w c.Handler
       ModelPosture =
         global.Undo.posture mw cls (BoundedActions.reversible w) (c.Handler.Stages |> List.map modelStage),
         global.Undo.reasons mw cls (BoundedActions.reversible w) (c.Handler.Stages |> List.map modelStage)

@@ -321,13 +321,26 @@ module HandlerWire =
     /// value, which is what keeps this package free of a second `Action` match
     /// AND keeps this rule literally identical to the one the conformance
     /// corpus's own emitter applies.
+    ///
+    /// `query` is the HOST's declaration of its query evaluator
+    /// (`ServerEffectRegistry.queryPosture`) — the one input that is not the
+    /// declared form (D44). A read answered by an evaluator the host could not
+    /// declare a pure read is staged like a host call (D34), and the durable
+    /// interpreter journals it as one, so it reports `staged-query`; under a
+    /// pure read, and under the in-memory fold, a read reports nothing, as it
+    /// always has. A required parameter rather than a default, so a host
+    /// cannot publish a posture without saying which evaluator it runs.
     let replayReasons
+        (query: QueryPosture)
         (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (handler: Handler<'Action, 'Op>)
         : ReplayReason list =
         let ofEffect effect =
             match effect with
-            | ServerEffect.RunQuery _ -> []
+            | ServerEffect.RunQuery _ ->
+                match query with
+                | QueryPosture.Reaching -> [ ReplayDefect.StagedQuery ]
+                | QueryPosture.PureRead -> []
             | ServerEffect.ApplyOps ops
             | ServerEffect.EmitPatch ops -> ops |> List.collect (ProgramWire.replayDefectsOfOp witness)
             // Both reach outside: one commits somewhere this host does not own,
@@ -365,10 +378,11 @@ module HandlerWire =
     /// walk that drifted from it would be a set of explanations for a verdict
     /// nobody reached.
     let replaySafety
+        (query: QueryPosture)
         (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (handler: Handler<'Action, 'Op>)
         : ReplaySafety =
-        replayReasons witness handler |> ProgramWire.verdictOfReasons
+        replayReasons query witness handler |> ProgramWire.verdictOfReasons
 
     // ─── the outcome report ──────────────────────────────────────────────────
 

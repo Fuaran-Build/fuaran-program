@@ -46,12 +46,19 @@ open Fuaran.Program.Bounded
 //  is undone to the entry state — is `undo_run_restores`.
 //
 //  ── What is deliberately NOT undone ─────────────────────────────────────────
-//  A server read lands a table in a query slot of the binding store. It is a
+//  A server read lands a table in a query slot of the binding store. Under the
+//  in-memory fold, or an evaluator its host declares a pure read, it is a
 //  read: it reaches nothing and the slot is the host's cache, which the
 //  re-resolution of a restored tree still reads. The undo leaves it as the
-//  run left it, and a read contributes no reason to the posture. A deployer
-//  reading `reversible` reads it of the state axis, the world and the fold's
-//  writes; a landed read is none of those.
+//  run left it, and such a read contributes no reason to the posture. A
+//  deployer reading `reversible` reads it of the state axis, the world and the
+//  fold's writes; a landed read is none of those.
+//
+//  A read the host could NOT declare a pure read is staged like a host call
+//  (D34): the run records it as `Reached` and the undo refuses there. The
+//  posture says so before the run, as `staged-query`, read off the host's
+//  declared query posture (D44) — the one input to this classification that
+//  is not the declared form.
 // ============================================================================
 
 /// WHY a handler is not provably reversible — a closed vocabulary of derived
@@ -69,6 +76,10 @@ type UndoDefect =
     | OpaqueHostCall
     /// A notification: it shipped.
     | OutboundNotification
+    /// A read answered by an evaluator the host could not declare a pure read:
+    /// staged like a host call (D34), it reached somewhere this host does not
+    /// own, and the run's trail records it as `Reached` (D44).
+    | StagedQuery
     /// A patch, emitted for the host to apply after return: whether it can be
     /// undone is the host's to say.
     | EmittedPatch
@@ -124,7 +135,7 @@ module Undo =
 
     // ─── the classification ──────────────────────────────────────────────────
 
-    /// The grade one defect forces. Three defects are PROOFS that a step cannot
+    /// The grade one defect forces. Four defects are PROOFS that a step cannot
     /// be undone at all; one that it can be undone only in effect; two are
     /// places this walk does not decide. The model's `grade`.
     let gradeOfDefect (defect: UndoDefect) : UndoVerdict =
@@ -132,7 +143,8 @@ module Undo =
         | UndoDefect.CompensatedOp -> UndoVerdict.Compensable
         | UndoDefect.OneWayOp
         | UndoDefect.OpaqueHostCall
-        | UndoDefect.OutboundNotification -> UndoVerdict.OneWay
+        | UndoDefect.OutboundNotification
+        | UndoDefect.StagedQuery -> UndoVerdict.OneWay
         | UndoDefect.EmittedPatch
         | UndoDefect.ComputeOutsideFragment -> UndoVerdict.Unknown
 
@@ -191,10 +203,13 @@ module Undo =
             | OpView.Let(_, _, body) -> defectsOfOps state body)
 
     /// The defects of one stage. A compute stage is read through Phase 1976's
-    /// reversible fragment; a read lands a table and reaches nothing; the op
-    /// arm reads the member; a host call and a notification reached the
-    /// world; a patch is the host's to apply. The model's `stage_defects`.
+    /// reversible fragment; a read lands a table and reaches nothing, unless
+    /// the host's evaluator is staged (D44); the op arm reads the member; a
+    /// host call and a notification reached the world; a patch is the host's
+    /// to apply. The model's `stage_defects` at a pure read: the model has no
+    /// staged evaluator, so it is the `PureRead` case this function reduces to.
     let defectsOfStage
+        (query: QueryPosture)
         (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (stage: HandlerStage<'Action, 'Op>)
         : UndoDefect list =
@@ -206,7 +221,10 @@ module Undo =
                 [ UndoDefect.ComputeOutsideFragment ]
         | Effect effect ->
             match effect with
-            | ServerEffect.RunQuery _ -> []
+            | ServerEffect.RunQuery _ ->
+                match query with
+                | QueryPosture.Reaching -> [ UndoDefect.StagedQuery ]
+                | QueryPosture.PureRead -> []
             | ServerEffect.ApplyOps ops -> defectsOfOps witness.State ops |> List.distinct
             | ServerEffect.HostCall _ -> [ UndoDefect.OpaqueHostCall ]
             | ServerEffect.EmitPatch _ -> [ UndoDefect.EmittedPatch ]
@@ -216,12 +234,13 @@ module Undo =
     /// distinct within a stage, as the replay reasons are. The model's
     /// `reasons`.
     let reasons
+        (query: QueryPosture)
         (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (handler: Handler<'Action, 'Op>)
         : UndoReason list =
         handler.Stages
         |> List.mapi (fun index stage ->
-            defectsOfStage witness stage
+            defectsOfStage query witness stage
             |> List.map (fun defect ->
                 { UndoReason.Stage = index
                   Defect = defect }))
@@ -232,10 +251,11 @@ module Undo =
     /// The model's `posture`; `undo_run_restores` is what makes `Reversible`
     /// a claim about the run.
     let posture
+        (query: QueryPosture)
         (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (handler: Handler<'Action, 'Op>)
         : UndoVerdict =
-        reasons witness handler |> verdictOfReasons
+        reasons query witness handler |> verdictOfReasons
 
     /// The wire spelling of a verdict — a stable token, carried in the demanded
     /// document.
@@ -253,6 +273,7 @@ module Undo =
         | UndoDefect.OneWayOp -> "one-way-op"
         | UndoDefect.OpaqueHostCall -> "opaque-host-call"
         | UndoDefect.OutboundNotification -> "outbound-notification"
+        | UndoDefect.StagedQuery -> "staged-query"
         | UndoDefect.EmittedPatch -> "emitted-patch"
         | UndoDefect.ComputeOutsideFragment -> "compute-outside-fragment"
 
@@ -261,10 +282,11 @@ module Undo =
     /// One handler's undo posture, as the demanded-projection document carries
     /// it (version 6).
     let postureOf
+        (query: QueryPosture)
         (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (handler: Handler<'Action, 'Op>)
         : UndoPosture =
-        let reasons = reasons witness handler
+        let reasons = reasons query witness handler
 
         { Handler = handler.Name
           Undo = verdictTag (verdictOfReasons reasons)
@@ -279,6 +301,7 @@ module Undo =
     /// returned unchanged, because attaching a posture would turn "not asked"
     /// into "asked".
     let withPostures
+        (query: QueryPosture)
         (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (handlers: Handler<'Action, 'Op> seq)
         (projection: DemandedProjection)
@@ -286,7 +309,7 @@ module Undo =
         match projection.Server with
         | None -> projection
         | Some server ->
-            let postures = handlers |> Seq.map (postureOf witness) |> List.ofSeq
+            let postures = handlers |> Seq.map (postureOf query witness) |> List.ofSeq
 
             Demanded.withServer
                 { server with
@@ -298,12 +321,13 @@ module Undo =
     /// both from the same reachability, so the document cannot describe one
     /// handler set in its capabilities and another in either posture.
     let ofTreeAndHandlers
+        (query: QueryPosture)
         (witness: FullWitness<'Node, 'Action, 'Expr, 'Store, 'Op, 'Effect>)
         (handlers: Map<string, Handler<'Action, 'Op>>)
         (root: 'Node)
         : DemandedProjection =
-        Replay.ofTreeAndHandlers witness handlers root
-        |> withPostures witness (ServerDemanded.reachable witness handlers root)
+        Replay.ofTreeAndHandlers query witness handlers root
+        |> withPostures query witness (ServerDemanded.reachable witness handlers root)
 
     // ─── the undo run ────────────────────────────────────────────────────────
 

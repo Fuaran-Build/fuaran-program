@@ -63,6 +63,7 @@
     <Compile Include="WithdrawnCoverageTests.fs" />
     <!-- Phase 1905: the query evaluator seam (DECISIONS.md D34). -->
     <Compile Include="QueryEvaluatorTests.fs" />
+    <Compile Include="StagedQueryPostureTests.fs" />
     <!-- Phase 2165 (D39): the durable tier's entry read, the op prefix, per-kind facets, composed contracts. -->
     <Compile Include="DurableInterpreterTests.fs" />
     <Compile Include="OpaqueLeafTests.fs" />

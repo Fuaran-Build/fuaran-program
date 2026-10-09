@@ -96,6 +96,10 @@ type private Vector =
         Reject: string option
         ReplaySafety: string option
         ReplayReasons: (int * string) list option
+        /// The host's query posture the vector's derived values are read
+        /// under (§7.4, D44): the manifest's `queryEvaluator`, absent being
+        /// the in-memory fold — a pure read.
+        Query: QueryPosture
     }
 
 let private str (name: string) (value: JVal) : string =
@@ -117,6 +121,16 @@ let private reasonsOf (entry: JVal) : (int * string) list option =
             | _ -> failwith "a manifest reason is not a stage ordinal and a defect token")
         |> Some
     | Some _ -> failwith "a manifest vector's replayReasons is not an array"
+
+/// The host's query posture a vector declares. An UNKNOWN spelling FAILS
+/// rather than reading as the fold: a posture this reader could not parse
+/// would otherwise certify a staged read as a pure one.
+let private queryOf (entry: JVal) : QueryPosture =
+    match ProgramWire.tryString "queryEvaluator" entry with
+    | None
+    | Some "pure-read" -> QueryPosture.PureRead
+    | Some "reaching" -> QueryPosture.Reaching
+    | Some other -> failwithf "a manifest vector's queryEvaluator '%s' is not a posture §7.4 names" other
 
 let private manifest: Lazy<JVal> =
     lazy
@@ -148,7 +162,8 @@ let private everyVector () : Vector list =
               Subject = ProgramWire.tryString "subject" entry
               Reject = ProgramWire.tryString "reject" entry
               ReplaySafety = ProgramWire.tryString "replaySafety" entry
-              ReplayReasons = reasonsOf entry })
+              ReplayReasons = reasonsOf entry
+              Query = queryOf entry })
     | _ -> failwith "the corpus manifest declares no vector array"
 
 /// §10.7 — the documents carrying no referenced vocabulary, which a toy-subject
@@ -218,9 +233,10 @@ let private decodeHandler (bytes: string) : Result<Handler<ToyAction, ToyOp>, Wi
     ProgramWire.parseDocument bytes
     |> Result.bind (HandlerWire.decodeHandlerJson wireWitness)
 
-/// The reasons this host derives for a handler, in the manifest's spelling.
-let private derivedReasons (handler: Handler<ToyAction, ToyOp>) : (int * string) list =
-    HandlerWire.replayReasons wireWitness handler
+/// The reasons this host derives for a handler under a query posture, in the
+/// manifest's spelling.
+let private derivedReasons (query: QueryPosture) (handler: Handler<ToyAction, ToyOp>) : (int * string) list =
+    HandlerWire.replayReasons query wireWitness handler
     |> List.map (fun reason -> reason.Stage, ProgramWire.replayDefectTag reason.Defect)
 
 /// The verdict a round-trip harness reaches on one vector's bytes: green only
@@ -266,6 +282,18 @@ let private hostConstructedCases: (string * Handler<ToyAction, ToyOp>) list =
     [ "relative-addressing",
       { Name = "title.blank"
         Stages = [ Effect(ServerEffect.ApplyOps [ Relabel("", "Blank") ]) ] } ]
+
+/// Arms reached from an ordinary document under a HOST's declaration rather
+/// than from the document alone (§7.4, D44), each with the posture that
+/// reaches it. `staged-query`: a read under an evaluator the host could not
+/// declare a pure read. Discriminated here as well as by the corpus's
+/// `toy-handler/staged-query` vector, so this suite's coverage of the arm does
+/// not hang on which revision of the corpus a machine holds.
+let private hostDeclaredCases: (string * QueryPosture * Handler<ToyAction, ToyOp>) list =
+    [ "staged-query",
+      QueryPosture.Reaching,
+      { Name = "orders.read"
+        Stages = [ Effect(ServerEffect.RunQuery("orders", Ref "orders", [])) ] } ]
 
 [<Tests>]
 let tests =
@@ -388,7 +416,7 @@ let tests =
                           // RECOMPUTED, over the toy's own views: a value read
                           // back off the manifest certifies nothing.
                           let derived =
-                              ProgramWire.replaySafetyTag (HandlerWire.replaySafety wireWitness handler)
+                              ProgramWire.replaySafetyTag (HandlerWire.replaySafety v.Query wireWitness handler)
 
                           Expect.equal derived v.ReplaySafety.Value $"{v.Id} classifies as declared"
                           v.Id)
@@ -415,7 +443,7 @@ let tests =
                       | Ok handler ->
                           // An ORDERED sequence: the ordinal is half a reason.
                           Expect.equal
-                              (derivedReasons handler)
+                              (derivedReasons v.Query handler)
                               v.ReplayReasons.Value
                               $"{v.Id} reports the reasons it declares, in order"
 
@@ -435,12 +463,12 @@ let tests =
           test "an arm reachable at the toy only from a host-built value is discriminated here" {
               for token, handler in hostConstructedCases do
                   Expect.equal
-                      (derivedReasons handler)
+                      (derivedReasons QueryPosture.PureRead handler)
                       [ 0, token ]
                       $"the host-constructed case for {token} reports exactly that reason"
 
                   Expect.equal
-                      (ProgramWire.replaySafetyTag (HandlerWire.replaySafety wireWitness handler))
+                      (ProgramWire.replaySafetyTag (HandlerWire.replaySafety QueryPosture.PureRead wireWitness handler))
                       "unknown"
                       $"…and the verdict it carries is the one {token} forces"
 
@@ -459,6 +487,25 @@ let tests =
                       "an op that names no target does not decode under the toy's vocabulary"
           }
 
+          test "an arm reached under a host's declaration is discriminated here, and only under it" {
+              for token, query, handler in hostDeclaredCases do
+                  Expect.equal
+                      (derivedReasons query handler)
+                      [ 0, token ]
+                      $"the host-declared case for {token} reports exactly that reason under its posture"
+
+                  Expect.equal
+                      (ProgramWire.replaySafetyTag (HandlerWire.replaySafety query wireWitness handler))
+                      "unsafe"
+                      $"…and the verdict it carries is the one {token} forces"
+
+                  // The same document under the fold is a read and nothing
+                  // else: the token is the host's declaration, never the form's.
+                  Expect.isEmpty
+                      (derivedReasons QueryPosture.PureRead handler)
+                      $"under a pure read the {token} document reports nothing"
+          }
+
           test "every arm of the defect vocabulary is discriminated by something, or excused by name" {
               // DISCRIMINATED, not merely present: a vector whose reasons name
               // two tokens covers neither.
@@ -471,7 +518,11 @@ let tests =
                       | _ -> None)
                   |> Set.ofList
 
-              let discriminatedByHost = hostConstructedCases |> List.map fst |> Set.ofList
+              let discriminatedByHost =
+                  Set.union
+                      (hostConstructedCases |> List.map fst |> Set.ofList)
+                      (hostDeclaredCases |> List.map (fun (token, _, _) -> token) |> Set.ofList)
+
               let covered = Set.union discriminatedByCorpus discriminatedByHost
 
               Expect.isEmpty
@@ -572,7 +623,7 @@ let tests =
                                "undecidable-action"))
 
                   Expect.notEqual
-                      (derivedReasons handler)
+                      (derivedReasons classified.Query handler)
                       corrupted
                       $"a corrupted expectation on {classified.Id} is not reproduced"
           }
