@@ -593,7 +593,7 @@ let valueChannelTests =
             Handler.runWith
                 witness
                 narrow
-                (OpPerformance.performedBy book.Performer)
+                (OpPerformance.performedWithDetail book.Performer)
                 DataFrame.noResolve
                 "grid"
                 h
@@ -692,7 +692,7 @@ let valueChannelTests =
                   Handler.runWith
                       witness
                       (over [ "r2c3"; "r2c4" ])
-                      (OpPerformance.performedBy book.Performer)
+                      (OpPerformance.performedWithDetail book.Performer)
                       DataFrame.noResolve
                       "grid"
                       scale
@@ -722,7 +722,7 @@ let valueChannelTests =
                       services
                       "inv"
                       registry
-                      (OpPerformance.performedBy book.Performer)
+                      (OpPerformance.performedWithDetail book.Performer)
                       DataFrame.noResolve
                       "grid"
                       scale
