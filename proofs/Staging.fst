@@ -272,6 +272,15 @@ type res (a: Type0) =
   | ROk : value: a -> res a
   | RErr : reason: string -> res a
 
+/// F#: `ExprResolution` — the answer a state-axis value gives against the
+/// planned state (Phase 2186, D42), the same three outcomes a dispatch-axis
+/// expression gives against the store (`BoundedFold.resolution`): resolved
+/// to a value, not resolved, or errored with a message.
+type resolution (v: Type0) =
+  | Resolved : value: v -> resolution v
+  | NotResolved : resolution v
+  | Errored : message: string -> resolution v
+
 /// F#: `List.append` / `xs @ ys`.
 let rec app (#a: Type0) (xs: list a) (ys: list a) : Tot (list a) (decreases xs) =
   match xs with
@@ -388,6 +397,17 @@ type op_view (v: Type0) (o: Type0) =
   /// collection ONCE, through `w_read_extent`, against the state as of the
   /// op's position, and checks the ceiling before the first element.
   | OEachOf : collection: string -> ceiling: nat -> extent: list v -> elements: list (list (op_view v o)) -> op_view v o
+  /// F#: `OpView.Let of placeholder * StateValue<'Node> ({Name; Resolve}) *
+  /// body` (Phase 2186, D42) — the value channel on the state axis, seen
+  /// SUBSTITUTED over the value the host resolved: `name` is the name the
+  /// demanded projection and the journal use, `value` what the state
+  /// resolved under it, and `body` the ops beneath the binding with the
+  /// value substituted for the placeholder by `StateWitness.Substitute`.
+  /// The plan resolves the value ONCE, through `w_resolve`, against the
+  /// state as of the op's position: resolved, the body plans as a
+  /// sequence; unresolved or errored, the plan is refused before the first
+  /// op of the body, the errored message verbatim.
+  | OLetOf : name: string -> value: v -> body: list (op_view v o) -> op_view v o
 
 /// F#: the members of `ProgramWitness` the handler reads, plus the
 /// query evaluator it calls. Since Phase 1974 they sit on two axes:
@@ -413,6 +433,13 @@ noeq type witness (t: Type0) (b: Type0) (v: Type0) (o: Type0) (q: Type0) (a: Typ
   /// identifies, applied to the state at the op's position. On the STATE
   /// axis. A domain that cannot enumerate a collection answers `ONone`.
   w_read_extent: string -> t -> opt (list v);
+  /// The value the state holds under this name (Phase 2186, D42):
+  /// `StateValue.Resolve` of the value the name identifies, applied to the
+  /// state at the op's position — `ExprWitness.Resolve` with the state as
+  /// the store. On the STATE axis. Three outcomes, as a dispatch-axis
+  /// expression's: a domain that cannot resolve answers `NotResolved` or
+  /// `Errored`, and the plan refuses rather than defaults.
+  w_resolve: string -> t -> resolution v;
   /// `StoreWitness.Assign`.
   w_assign: string -> v -> b -> b;
   /// The landing-slot refusal: `OSome reason` refuses the slot while
@@ -616,6 +643,13 @@ and trail_view (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: 
        if length xs <= ceiling then trail_each w elements tree
        else RErr "the collection's extent is over its declared ceiling"
      | ONone -> RErr "the state holds no collection under that name")
+  // The value channel (Phase 2186): the value resolved against the state
+  // as of this op; resolved, the substituted body walks as a sequence.
+  | OLetOf name _ body ->
+    (match w.w_resolve name tree with
+     | Resolved _ -> trail_views w body tree
+     | NotResolved -> RErr (strcat "the value did not resolve: " name)
+     | Errored reason -> RErr reason)
 
 and trail_repeat (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
                  (w: witness t b v o q a eff d) (body: list (op_view v o)) (n: nat) (tree: t)
@@ -745,6 +779,17 @@ and plan_view (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: T
        if length xs <= ceiling then plan_each w cap stage elements tree staged
        else RErr "the collection's extent is over its declared ceiling"
      | ONone -> RErr "the state holds no collection under that name")
+  // The value channel (Phase 2186, D42): the value is resolved ONCE,
+  // against the state as of this op, before the first op of the body.
+  // Resolved, the substituted body plans exactly as a sequence does —
+  // `let_of_plans_as_body_when_resolved`; unresolved or errored, the plan
+  // is refused with nothing moved or staged, the errored message verbatim
+  // — `let_of_unresolved_plans_nothing`, `let_of_errored_plans_nothing`.
+  | OLetOf name _ body ->
+    (match w.w_resolve name tree with
+     | Resolved _ -> plan_views w cap stage body tree staged
+     | NotResolved -> RErr (strcat "the value did not resolve: " name)
+     | Errored reason -> RErr reason)
 
 and plan_repeat (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
                 (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
@@ -1491,6 +1536,26 @@ let trail_view_each_of (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type
           else RErr "the collection's extent is over its declared ceiling"
         | ONone -> RErr "the state holds no collection under that name")) = ()
 
+let plan_view_let_of (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                     (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
+                     (name: string) (value: v) (body: list (op_view v o)) (tree: t) (staged: list (staged_call v p))
+  : Lemma
+      (plan_view w cap stage (OLetOf name value body) tree staged ==
+       (match w.w_resolve name tree with
+        | Resolved _ -> plan_views w cap stage body tree staged
+        | NotResolved -> RErr (strcat "the value did not resolve: " name)
+        | Errored reason -> RErr reason)) = ()
+
+let trail_view_let_of (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
+                      (w: witness t b v o q a eff d)
+                      (name: string) (value: v) (body: list (op_view v o)) (tree: t)
+  : Lemma
+      (trail_view w (OLetOf name value body) tree ==
+       (match w.w_resolve name tree with
+        | Resolved _ -> trail_views w body tree
+        | NotResolved -> RErr (strcat "the value did not resolve: " name)
+        | Errored reason -> RErr reason)) = ()
+
 let plan_each_nil (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
                   (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
                   (tree: t) (staged: list (staged_call v p))
@@ -1616,6 +1681,12 @@ and plan_view_unstaged (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type
     (match w.w_read_extent collection tree with
      | OSome xs -> if length xs <= ceiling then plan_each_unstaged w cap stage elements tree staged else ()
      | ONone -> ())
+  | OLetOf name value body ->
+    plan_view_let_of w cap stage name value body tree staged;
+    (match w.w_resolve name tree with
+     | Resolved _ -> plan_views_unstaged w cap stage body tree staged
+     | NotResolved -> ()
+     | Errored _ -> ())
 
 and plan_repeat_unstaged (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
                          (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
@@ -2009,6 +2080,64 @@ let each_of_over_ceiling_plans_nothing (#t: Type0) (#b: Type0) (#v: Type0) (#o: 
   plan_view_each_of w cap stage collection ceiling extent elements tree staged;
   trail_view_each_of w collection ceiling extent elements tree
 
+/// **`let_of_plans_as_body_when_resolved`** (Phase 2186, D42). When the
+/// state, as of the binding's position, resolves the value under its name,
+/// a `Let` plans exactly as the SEQUENCE of its substituted body — state and
+/// staged list — and walks the same undo trail; so every sequence law
+/// reaches it, and nothing downstream learns a new shape. Conditional on
+/// the body being the substitution over the value the state resolved: the
+/// differential host's obligation, stated (`proofs.json`,
+/// `let-of-lowered-over-the-resolved-value`). The value the state answers is
+/// what the body was substituted over, so the theorem binds `value` to it.
+let let_of_plans_as_body_when_resolved (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                                       (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
+                                       (name: string) (value: v)
+                                       (body: list (op_view v o)) (tree: t) (staged: list (staged_call v p))
+  : Lemma
+      (requires w.w_resolve name tree == Resolved value)
+      (ensures
+        plan_view w cap stage (OLetOf name value body) tree staged ==
+        plan_views w cap stage body tree staged /\
+        trail_view w (OLetOf name value body) tree == trail_views w body tree) =
+  plan_view_let_of w cap stage name value body tree staged;
+  trail_view_let_of w name value body tree
+
+/// **`let_of_unresolved_plans_nothing`** (Phase 2186). When the state does
+/// not resolve the value, the plan is refused with the value named, before
+/// the first op of the body: no state moved, nothing staged — and the undo
+/// walk refuses alike. An operand that cannot be read is a defect, never a
+/// default.
+let let_of_unresolved_plans_nothing (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                                    (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
+                                    (name: string) (value: v)
+                                    (body: list (op_view v o)) (tree: t) (staged: list (staged_call v p))
+  : Lemma
+      (requires w.w_resolve name tree == NotResolved)
+      (ensures
+        plan_view w cap stage (OLetOf name value body) tree staged ==
+        RErr (strcat "the value did not resolve: " name) /\
+        trail_view w (OLetOf name value body) tree ==
+        RErr (strcat "the value did not resolve: " name)) =
+  plan_view_let_of w cap stage name value body tree staged;
+  trail_view_let_of w name value body tree
+
+/// **`let_of_errored_plans_nothing`** (Phase 2186). When the state's
+/// resolution ERRORS, the plan is refused with the domain's message
+/// VERBATIM — the typed refusal reaches the diagnostic through the arrow
+/// the contract already had (D19) — before the first op of the body, and
+/// the undo walk refuses alike.
+let let_of_errored_plans_nothing (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
+                                 (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
+                                 (name: string) (value: v) (message: string)
+                                 (body: list (op_view v o)) (tree: t) (staged: list (staged_call v p))
+  : Lemma
+      (requires w.w_resolve name tree == Errored message)
+      (ensures
+        plan_view w cap stage (OLetOf name value body) tree staged == RErr message /\
+        trail_view w (OLetOf name value body) tree == RErr message) =
+  plan_view_let_of w cap stage name value body tree staged;
+  trail_view_let_of w name value body tree
+
 /// What `staged_from_the_final_state` says of one planned step: either it
 /// moved nothing and staged nothing, or the head of the staged list it
 /// answers was staged from the state it answers. Ghost.
@@ -2080,6 +2209,12 @@ and handed_view (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a:
     (match w.w_read_extent collection tree with
      | OSome xs -> if length xs <= ceiling then handed_each w cap f elements tree staged else ()
      | ONone -> ())
+  | OLetOf name value body ->
+    plan_view_let_of w cap (OSome f) name value body tree staged;
+    (match w.w_resolve name tree with
+     | Resolved _ -> handed_views w cap f body tree staged
+     | NotResolved -> ()
+     | Errored _ -> ())
 
 and handed_repeat (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
                   (w: witness t b v o q a eff d) (cap: string) (f: t -> o -> (p & v))

@@ -193,6 +193,7 @@ let private modelWitness: Staging.witness<ToyNode, ToyStore, JVal, ToyOp, obj, o
       w_apply = fun _ _ -> failwith "the replay differential plans nothing"
       w_op_view = fun _ -> failwith "the replay differential plans nothing"
       w_read_extent = fun _ _ -> failwith "the replay differential plans nothing"
+      w_resolve = fun _ _ -> failwith "the replay differential plans nothing"
       w_assign = fun _ _ bindings -> bindings
       w_slot_refused = fun _ -> failwith "the replay differential plans nothing" }
 

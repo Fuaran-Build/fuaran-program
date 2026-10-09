@@ -184,7 +184,11 @@ module Undo =
             // the class of an op whose address is a placeholder is the
             // domain's answer for that shape, and the undo trail records every
             // lowered edit the run actually planned.
-            | OpView.Each(Collection.Stored _, _, body) -> defectsOfOps state body)
+            | OpView.Each(Collection.Stored _, _, body) -> defectsOfOps state body
+            // A value the state holds (Phase 2186) is not in the tree either:
+            // its body is read once, with the placeholder standing, on the
+            // store-bound collection's terms.
+            | OpView.Let(_, _, body) -> defectsOfOps state body)
 
     /// The defects of one stage. A compute stage is read through Phase 1976's
     /// reversible fragment; a read lands a table and reaches nothing; the op

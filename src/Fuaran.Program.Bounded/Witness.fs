@@ -214,6 +214,30 @@ type StateCollection<'Node> =
 
     override this.GetHashCode() : int = hash this.Name
 
+/// A VALUE the planned STATE holds (Phase 2186, DECISIONS.md D42): the op-axis
+/// source of a `Let` — the value channel on the state axis. `Name` is what
+/// the demanded projection states ("resolves THIS value") and what the
+/// durable journal subjects the read under; `Resolve` is the domain's own
+/// resolution against the state the plan holds at the op's position — the
+/// state axis (D20) — with the three outcomes an `Assign`'s `from` has
+/// (`ExprResolution`): `Resolved` binds, and an unresolved or errored value
+/// REFUSES the plan, never defaults. Built through `ExprWitness.value` from
+/// the domain's own expression witness over its state, so the resolution is
+/// `ExprWitness.Resolve` with the state as the store and no member of the
+/// state witness was added for it. Two values are the SAME value when they
+/// are the same name, on `StateCollection`'s terms.
+[<CustomEquality; NoComparison>]
+type StateValue<'Node> =
+    { Name: string
+      Resolve: 'Node -> ExprResolution }
+
+    override this.Equals(other: obj) : bool =
+        match other with
+        | :? StateValue<'Node> as that -> this.Name = that.Name
+        | _ -> false
+
+    override this.GetHashCode() : int = hash this.Name
+
 /// The SOURCE of an `Each`'s collection (Phase 1991, D36): a LITERAL list in
 /// the tree (Phase 1990, D29 — its length is the bound, fixed by the tree,
 /// and no store is consulted) or one the STORE holds, read ONCE when the
@@ -246,6 +270,23 @@ type IterationDemand =
         Collection: string
         /// The most elements the loop will ever walk.
         Ceiling: int
+    }
+
+/// What a `Let` over ops DEMANDS (Phase 2186, D42): the value it resolves
+/// from the planned state at run time, by the name the projection states —
+/// which spells what the expression READS — and the targets the ops beneath
+/// it address with the value standing, so the demanded projection, and the
+/// signed effect envelope over it (D15), read "writes THESE from THIS". A
+/// literal operand demands nothing: its value is in the tree. State axis
+/// only: a dispatch-axis derived write already names its reads and its key
+/// under `StateNamespaces`.
+type ValueDemand =
+    {
+        /// The value, by the name the projection states.
+        Value: string
+        /// The absolute targets of the ops beneath the binding, with the
+        /// placeholder standing — every op that names one.
+        Targets: string list
     }
 
 /// A PLACEHOLDER read where no `Each` binds it (Phase 1990, DECISIONS.md
@@ -307,8 +348,9 @@ module OpReach =
 
 /// What one op IS to the handler (Phase 1974, the third witness's F-GUARD;
 /// Phase 1976, the two flow shapes the second witness's re-run found
-/// missing; Phase 1990, per-element iteration). Five shapes, and the
-/// handler's `ApplyOps` arm names all five. One level, like `ActionView`: a
+/// missing; Phase 1990, per-element iteration; Phase 2186, the value
+/// channel). Six shapes, and the handler's `ApplyOps` arm names all six.
+/// One level, like `ActionView`: a
 /// branch's arms are ops, and the handler re-views each as it reaches it;
 /// the obligation that `View` unfolds a FINITE tree sits on the witness, as
 /// it does for the action view.
@@ -375,6 +417,30 @@ type OpView<'Node, 'Op> =
     /// policy and the projection read the body with the placeholder
     /// STANDING, and the projection names the collection and its ceiling.
     | Each of collection: Collection<StateCollection<'Node>> * placeholder: string * body: 'Op list
+    /// The VALUE CHANNEL on the state axis (Phase 2186, D42): `value` is
+    /// resolved ONCE against the planned state AS OF THIS POSITION — the
+    /// state the ops before it produced — through the domain's own
+    /// `StateValue.Resolve`, with the three outcomes an `Assign`'s `from`
+    /// has: `Resolved v` substitutes `v` for `placeholder` in every op of
+    /// `body` through the state witness's `Substitute`, and the body plans
+    /// as a sequence from the same state; `NotResolved` and `Errored` REFUSE
+    /// the effect before the first op of the body plans, an errored value's
+    /// message the reason verbatim (never a default — an operand that cannot
+    /// be read is a defect). The resolved value is journaled so a replay is
+    /// SERVED it, as a store-bound extent is. What plans is the substituted
+    /// body: nothing downstream learns a new shape, which is D1's lowering
+    /// and D29's binding rule (`let_of_plans_as_body_when_resolved` in
+    /// `proofs/Staging.fst`). The binding is lexical: a body reading a
+    /// placeholder no enclosing `Each` or `Let` binds is refused at
+    /// validation (`OpView.scopeDefects`), and a `Let` that rebinds a name
+    /// an enclosing binder holds is refused as a shadow. The argument policy
+    /// and the demanded projection read the body with the placeholder
+    /// STANDING (`beneath`), as they read a store-bound loop's, and the
+    /// value's reads through the binding op's own reach; the projection
+    /// names the value and the body's targets (`values`); the replay
+    /// classifier reports `non-literal-write` for it exactly as for an
+    /// `Assign` with `from`.
+    | Let of placeholder: string * value: StateValue<'Node> * body: 'Op list
 
 module OpView =
     /// A state witness whose ops are all edits — a domain with no op-channel
@@ -423,6 +489,11 @@ module OpView =
         // STANDING: the policy sees the shape of every address the loop will
         // write, and the demanded projection names the collection beside it.
         | OpView.Each(Collection.Stored _, _, body) -> body @ (body |> List.collect (beneath view substitute))
+        // A value the state holds (Phase 2186) is not in the tree either, so
+        // the ops beneath the binding are its body with the placeholder
+        // STANDING: the policy sees the shape of every address the body
+        // writes, and the demanded projection names the value beside it.
+        | OpView.Let(_, _, body) -> body @ (body |> List.collect (beneath view substitute))
 
     /// The SCOPE defects of an op sequence (Phase 1990), decided from the
     /// tree alone: every placeholder an op's own operands read that no
@@ -455,7 +526,10 @@ module OpView =
                     @ (whenTrue @ whenFalse |> List.collect (go bound))
                     @ (Option.toList exit |> List.collect (go bound))
                 | OpView.Repeat(_, body) -> body |> List.collect (go bound)
-                | OpView.Each(_, placeholder, body) ->
+                // An `Each` and a `Let` (Phase 2186) bind alike: one name,
+                // lexically, over the body; a rebinding is a shadow.
+                | OpView.Each(_, placeholder, body)
+                | OpView.Let(placeholder, _, body) ->
                     (if Set.contains placeholder bound then
                          [ ScopeDefect.ShadowedPlaceholder placeholder ]
                      else
@@ -483,6 +557,39 @@ module OpView =
             | OpView.Each(Collection.Stored(collection, ceiling), _, body) ->
                 { Collection = collection.Name
                   Ceiling = ceiling }
+                :: (body |> List.collect go)
+            | OpView.Let(_, _, body) -> body |> List.collect go
+
+        ops |> List.collect go |> List.distinct
+
+    /// The VALUE demands of an op sequence (Phase 2186, D42): every value the
+    /// state holds that a `Let` beneath these ops resolves at run time, by
+    /// name, with the absolute targets of the ops beneath the binding — read
+    /// with the placeholder standing, every op `beneath` the body included,
+    /// so a target inside a nested loop is named. Decided from the tree
+    /// alone, walked to exhaustion through the view. A literal operand
+    /// demands nothing. Distinct, in walk order; the demanded projection
+    /// states them.
+    let values
+        (view: 'Op -> OpView<'Node, 'Op>)
+        (substitute: string -> JVal -> 'Op -> 'Op)
+        (absoluteTarget: 'Op -> string option)
+        (ops: 'Op list)
+        : ValueDemand list =
+        let rec go (op: 'Op) : ValueDemand list =
+            match view op with
+            | OpView.Edit
+            | OpView.Require -> []
+            | OpView.Choose(_, whenTrue, whenFalse, _) -> (whenTrue @ whenFalse) |> List.collect go
+            | OpView.Repeat(_, body)
+            | OpView.Each(_, _, body) -> body |> List.collect go
+            | OpView.Let(_, value, body) ->
+                { Value = value.Name
+                  Targets =
+                    body
+                    |> List.collect (fun op -> op :: beneath view substitute op)
+                    |> List.choose absoluteTarget
+                    |> List.distinct }
                 :: (body |> List.collect go)
 
         ops |> List.collect go |> List.distinct
@@ -590,6 +697,10 @@ module StateWitness =
     /// `OpView.iterations` through the state witness.
     let iterations (state: StateWitness<'Node, 'Op>) (ops: 'Op list) : IterationDemand list =
         OpView.iterations state.View ops
+
+    /// `OpView.values` through the state witness (Phase 2186).
+    let values (state: StateWitness<'Node, 'Op>) (ops: 'Op list) : ValueDemand list =
+        OpView.values state.View state.Substitute state.AbsoluteTarget ops
 
 // ═══ THE WALK AXIS — optional (§3.2) ════════════════════════════════════════
 
@@ -872,6 +983,32 @@ module ExprWitness =
                 | BindingUse.Query _ -> None)
 
         "bindings:" + String.concat "," keys
+
+    /// The NAME of a state-axis value (Phase 2186, D42): the state keys its
+    /// expression reads, through `Uses`, under one spelling — what the
+    /// demanded projection states as the value and what the durable journal
+    /// subjects the read with, so the document and the record name one
+    /// thing, and the name spells the reads. A name, never a payload.
+    let valueName (expr: ExprWitness<'Expr, 'Store>) (source: 'Expr) : string =
+        let keys =
+            expr.Uses source
+            |> List.choose (fun u ->
+                match u with
+                | BindingUse.State key -> Some key
+                | BindingUse.Query _ -> None)
+
+        "state:" + String.concat "," keys
+
+    /// A `StateValue` over the domain's own expression witness INSTANTIATED
+    /// AT ITS STATE (Phase 2186, D42): the resolution is `Resolve` with the
+    /// planned state as the store — the one arrow the contract already had
+    /// for a derived value, with its three outcomes — and the name is
+    /// `valueName`. A domain whose expressions read its state builds every
+    /// `OpView.Let`'s value through this, so no member of the state witness
+    /// carries an expression type.
+    let value (expr: ExprWitness<'Expr, 'Node>) (source: 'Expr) : StateValue<'Node> =
+        { Name = valueName expr source
+          Resolve = fun node -> expr.Resolve node source }
 
 /// The binding store the fold writes: the STATE CHANNEL of K4, which since
 /// Phase 1974 is a dispatch-axis fact — a domain whose state is its tree, or

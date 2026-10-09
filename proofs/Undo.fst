@@ -168,6 +168,10 @@ and view_defect (#t: Type0) (#v: Type0) (#o: Type0) (cls: o -> undo_class t o) (
   // form, exactly as a literal one — the form carries the elements the
   // extent lowered to, and which of them runs is the plan's.
   | OEachOf _ _ _ elements -> view_defects_each cls elements
+  // The value channel (Phase 2186): the defects of the substituted body —
+  // the form carries the body the value substituted into, and whether it
+  // runs is the plan's.
+  | OLetOf _ _ body -> view_defects cls body
 
 and view_defects_each (#t: Type0) (#v: Type0) (#o: Type0) (cls: o -> undo_class t o) (elements: list (list (op_view v o)))
   : Tot (list defect) (decreases %[elements; 1]) =
@@ -526,6 +530,13 @@ and trail_agrees_view (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0
     (match w.w_read_extent collection tree with
      | OSome xs -> if length xs <= ceiling then trail_agrees_each w cap stage elements tree staged else ()
      | ONone -> ())
+  | OLetOf name value body ->
+    plan_view_let_of w cap stage name value body tree staged;
+    trail_view_let_of w name value body tree;
+    (match w.w_resolve name tree with
+     | Resolved _ -> trail_agrees_views w cap stage body tree staged
+     | NotResolved -> ()
+     | Errored _ -> ())
 
 and trail_agrees_each (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
                       (w: witness t b v o q a eff d) (cap: string) (stage: opt (t -> o -> (p & v)))
@@ -651,6 +662,12 @@ and trail_chain_view (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0)
     (match w.w_read_extent collection tree with
      | OSome xs -> if length xs <= ceiling then trail_chain_each w elements tree else ()
      | ONone -> ())
+  | OLetOf name value body ->
+    trail_view_let_of w name value body tree;
+    (match w.w_resolve name tree with
+     | Resolved _ -> trail_chain_views w body tree
+     | NotResolved -> ()
+     | Errored _ -> ())
 
 and trail_chain_each (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
                      (w: witness t b v o q a eff d) (elements: list (list (op_view v o))) (tree: t)
@@ -1023,6 +1040,12 @@ and defects_clear_view (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type
     (match w.w_read_extent collection tree with
      | OSome xs -> if length xs <= ceiling then defects_clear_each w cls elements tree else ()
      | ONone -> ())
+  | OLetOf name value body ->
+    trail_view_let_of w name value body tree;
+    (match w.w_resolve name tree with
+     | Resolved _ -> defects_clear_views w cls body tree
+     | NotResolved -> ()
+     | Errored _ -> ())
 
 and defects_clear_each (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0)
                        (w: witness t b v o q a eff d) (cls: o -> undo_class t o)
