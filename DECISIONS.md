@@ -2808,3 +2808,110 @@ before. This decision gives an honest witness a way to disclose; it does not det
 The first instantiation does not declare any leaf opaque yet: its in-process message arm adopts this in
 fuaran#2194, after this draft is released and that tier's pin is raised. Until then no shipped tree's
 document carries an opaque leaf, and the disclosure exists in the core only.
+
+## D41 — A plan's read of the world is TYPED: `Read.Available` decoded by the store's own named codec, or `Read.Unavailable` naming the read and why; the run's unavailable reads are enumerable before its first performed op; a read's decode is memoised by the CONTENT read; builds on D39 and changes no existing read arm (2026-10-09)
+
+**Context.** The first consumer to move a store-reading verb family toward Program reported two
+findings about the reads such a verb makes. First, a read that could not answer had no type of its
+own. A consumer whose guards turned a load error into "no finding" silently dropped what it could not
+read. The sharpest instance was a protective record that failed to parse and was read as ABSENT, so a
+protection disappeared with nothing raised. A second instance of the same class: three readers of one
+store went through a generic JSON reader instead of the store's own codec. Every well-formed record
+carrying a `null` member, which the wire value model cannot represent, was refused by the generic
+reader and read as nothing, with no error. Second, a verb that reads the same store several times in
+one invocation should decode it once, and the obvious memo key, (path, length, write time), is
+unsound. On a coarse file clock a same-length rewrite inside one tick reads as unchanged, and the memo
+serves the old decode.
+
+**Premises checked against the tree first.** No read in Program carried a typed unavailable case,
+and no handler memoised a read. But the shard's framing, "Program's read effects return a value or
+fail", describes the RIGHT behaviour for the arms Program owns, not the defect. Each existing read arm
+is fail-closed. A `RunQuery` the evaluator cannot answer halts the handler with a `QueryFault` (D34),
+and a store-bound extent that cannot be read halts the fold before its first element (D36). An empty
+table and an empty extent are answers of their own, so neither arm can confuse "could not read" with
+"read nothing". The conversion the finding describes happens in exactly one place: the read a domain
+makes INSIDE its plan, through D39's `EntryReader`, whose answer is a `Result<JVal, string>` the
+host's own `Apply` decodes and is free to default. That is where this decision acts, and nowhere else.
+The toy witness's 2165 fixture shows the class in miniature: its world answers a slot it does not hold
+with the empty object, and its `Apply` reads the empty object as `no-match`.
+
+**The choice — a typed, codec-named layer over the entry reader (`Reads`), not a change to any arm.**
+
+- *The type.* `Read<'T> = Available of 'T | Unavailable of ReadUnavailable`. `ReadUnavailable` names
+  the read's SUBJECT (the journal's, the host's own name for it) and its `ReadCause`: `NotRead reason`
+  (the store could not be read, in the host's words) or `Undecodable(codec, reason)` (the store
+  answered and its own codec refused). The two causes are kept apart because their remedies differ.
+  There is no third case: "could not read" has no spelling as an empty value.
+- *The codec.* A read NAMES the codec that decodes its answer: `ReadCodec<'T>`, a name and a pure
+  `Decode: string -> Result<'T, string>` over the content read. It answers the codec's value, or
+  `Unavailable` carrying the codec's name and the codec's own reason. "Parsed some JSON and found
+  nothing" is not an answer the type can give. The tests pin the recorded instance with the real
+  generic reader: `Json.parse` refuses a record whose `note` member is `null`, and a codec that knows the
+  store's shape reads it.
+- *The journal record.* `Reads.Read` performs the raw read (the store's content, or the host's reason
+  there was none) and journals THAT through the run's entry reader as a `ReadRecord` (`{"content": …}`
+  or `{"unavailable": …}`), under D39's `ReadEntry` capability with the read's subject. An unavailable
+  read is therefore a COMPLETED answer, journaled like any other. A resume meets the same
+  unavailability rather than re-reading a world that has since moved, and a run that refused on it
+  replays the same refusal. The decode is not journaled: the codec is a pure function of the content,
+  so a resume decodes the recorded content and gets the recorded value. An `Error` from `Read` is the
+  TIER's, never the store's: D39's `durable-entry-read-diverged`, or a served record that is not a
+  `ReadRecord` (`ReadRecord.Malformed`). The plan halts on it.
+- *Degraded reads before the first op.* `Reads` keeps the run's unavailable reads, distinct, in read
+  order (`Degraded`), and `Refusal ()` is the refusal a plan returns for them:
+  `read-unavailable: <subject> (<cause>); …`. Every op is performed after the plan completes (D8), so
+  any `Apply` of the plan phase precedes the first performed op. A plan whose commit step refuses on
+  `Refusal ()` halts with nothing performed, naming each read it could not make, and the durable tier
+  records the run as uncommitted like any other refusal.
+- *Content-keyed memoisation.* The DECODE is memoised for the run, keyed by the codec's name and a
+  SHA-256 over the content read. A second read of an unchanged store decodes nothing; a same-length
+  rewrite inside one tick decodes the new content. The falsifier test holds the store's (length, write
+  time) equal across the rewrite and asserts the answer moved; changing the key to the content's
+  length turns that test red. The raw read is never memoised: each read is its own journaled answer at
+  its own ordinal, so the memo can only ever serve a decode of the bytes THIS read answered. On a
+  resume those are the journaled bytes, never the live world's, and never a memo of different content.
+
+**How each existing read arm takes the shape.**
+
+- `ReadEntry` (D39): unchanged in type and record. `Reads` is a layer over it, so a host on the raw
+  reader keeps working, and a typed read is an entry read whose completed value is a `ReadRecord`.
+- `ReadExtent` (D36): unchanged. Its `Error` halts the fold before the first element and an empty
+  extent is `Ok []`, so the bounded tier already carries the distinction, and an `Each` body has no
+  branch at which an unavailable extent could be met as a value.
+- `RunQuery` (D34): unchanged. A `QueryFault` halts the handler, and an empty table is a table.
+- `HostCall` with `into`: a performed effect whose refusal halts the handler, not a plan-phase read.
+
+Turning either fail-closed halt into a value a plan may carry past would WEAKEN the default for every
+host, to offer a choice no consumer has asked for.
+
+**Alternatives considered and rejected.**
+
+- *Change `EntryReader`'s signature to answer `Read<JVal>`.* Rejected: it moves a draft seam every 2165
+  host already builds over, and the raw reader is still the right primitive for a read whose answer
+  the host encodes itself. A layer costs no one anything.
+- *Type `RunQuery` and the extent read too.* Rejected above: both are fail-closed by construction.
+- *A Program-run gate that refuses before the perform phase whenever any read was unavailable* (the
+  first consumer's own host-side shape: one refusal per verb before its first write). Rejected as the
+  default. Whether a degraded read is fatal is the plan's call, since a plan may read an optional store
+  and carry on without it. The gate would also have to sit inside the handler's plan-to-perform seam,
+  which the durable interpreter deliberately does not fork. The ledger plus `Refusal ()` gives a plan
+  that gate in one line, at its own commit step.
+- *Decode into a generic `JVal` and let the host decode that.* Rejected: it is the generic-reader
+  defect itself, because the wire value model cannot represent every well-formed record a store holds.
+- *Memoise the raw read, or key the memo on metadata.* Rejected: a raw-read memo would serve a content
+  different from the one the read journaled, and a metadata key is refuted by the falsifier above.
+- *No memo, leaving it to the host.* Rejected because the content key is cheap and sound here. The
+  content is already in hand (it is what the journal records), and a host memo beside Program is the
+  machinery this phase exists to remove.
+
+**Version.** Additive: new types, modules and one class; no existing type, member or case moves. It
+rides the `0.8.0` draft, which is already breaking (`STABILITY.md`).
+
+**What this forecloses, and what it leaves.** A plan's read is typed when the host reads through
+`Reads`. A host that reads through the raw entry reader, or live, is exactly as before, and the choice
+is visible in its code. The journal records the content read, so a host whose reads are large pays the
+journal for them, as it already did for a raw entry read's answer; a digest-only record would be
+smaller and could not be served on a resume. The typed WRITE side (a performed op's receipt as a typed
+value) and a typed finding effect are separate phases (fuaran#2197, fuaran#2195); nothing here
+forecloses either. The memo's scope is one run: a host that wants decodes shared across invocations
+keys its own cache the same way, by content.

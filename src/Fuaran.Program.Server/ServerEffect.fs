@@ -1151,3 +1151,95 @@ module OpPerformance =
     /// wire value has no null — which no contract can be declared over.
     let performedWithoutReceipt (perform: 'Node -> 'Op -> Result<unit, string>) : OpPerformance<'Node, 'Op> =
         OpPerformance.Performed(fun _ state op -> perform state op |> Result.map (fun () -> Fuaran.Core.JObj []))
+
+// ============================================================================
+//  A READ the plan makes of the world is TYPED (Phase 2175, D41): it is either
+//  available, decoded through the store's OWN codec, or unavailable with a
+//  reason — never a default standing in for a read that did not happen.
+//
+//  The arms the effect vocabulary already has are fail-closed and stay so: a
+//  `RunQuery` the evaluator cannot answer halts the handler (`QueryFault`), and
+//  a store-bound extent that cannot be read halts the fold before its first
+//  element. Neither can be mistaken for "read, and found nothing", because an
+//  empty table and an empty extent are answers of their own. The read this
+//  vocabulary types is the one a domain makes INSIDE its plan — through the
+//  run's `EntryReader` — where a host's own guard is free to turn a load error
+//  into "no finding", and a protection that failed to parse is read as absent.
+//  `Read<'T>` takes that conversion away: the plan meets `Unavailable` as a case
+//  it must match, and the run's unavailable reads are enumerable before its
+//  first performed op (`Reads`, beside the entry reader).
+// ============================================================================
+
+/// Why a read could not answer (Phase 2175, D41). The two causes are kept apart
+/// because they have different remedies: the store could not be reached, or it
+/// answered and its own codec refused what it answered.
+[<RequireQualifiedAccess>]
+type ReadCause =
+    /// The store could not be read at all — absent, unreachable, refused. The
+    /// reason is the HOST's, as a host performer's refusal is.
+    | NotRead of reason: string
+    /// The store answered, and the codec the read names refused the content.
+    /// The reason is the CODEC's own, never a generic parser's.
+    | Undecodable of codec: string * reason: string
+
+/// A read that could not answer: WHICH read — the subject the journal records,
+/// the host's own name for it — and why.
+type ReadUnavailable = { Subject: string; Cause: ReadCause }
+
+/// What a plan's read of the world answered (Phase 2175, D41): the value the
+/// store's codec decoded, or `Unavailable` with the reason. There is no third
+/// case: "could not read" is never spelled as an empty value.
+[<RequireQualifiedAccess>]
+type Read<'T> =
+    | Available of 'T
+    | Unavailable of ReadUnavailable
+
+/// The codec a read decodes its answer through — the STORE's own, named, so a
+/// refusal says which codec refused and a record the codec accepts is never
+/// dropped by a generic reader that does not know the store's shape (a member
+/// a generic JSON reader cannot represent, a `null`, is the recorded instance).
+/// `Decode` is a pure function of the content: the same content decodes the
+/// same way every time, which is what lets a run decode a content once.
+type ReadCodec<'T> =
+    { Name: string
+      Decode: string -> Result<'T, string> }
+
+module ReadCause =
+
+    /// The cause as a log-safe line: every word in it is the host's or its
+    /// codec's own.
+    let describe (cause: ReadCause) : string =
+        match cause with
+        | ReadCause.NotRead reason -> "not-read: " + reason
+        | ReadCause.Undecodable(codec, reason) -> "codec " + codec + ": " + reason
+
+module ReadUnavailable =
+
+    /// The halt-reason prefix of a plan that refuses on its unavailable reads.
+    [<Literal>]
+    let Code = "read-unavailable"
+
+    /// One unavailable read, named: `<subject> (<cause>)`.
+    let describe (unavailable: ReadUnavailable) : string =
+        unavailable.Subject + " (" + ReadCause.describe unavailable.Cause + ")"
+
+    /// The refusal a plan returns for a run's unavailable reads, naming each
+    /// and why in the order they were read — `None` when every read answered.
+    let refusal (degraded: ReadUnavailable list) : string option =
+        match degraded with
+        | [] -> None
+        | reads -> Some(Code + ": " + (reads |> List.map describe |> String.concat "; "))
+
+module Read =
+
+    /// The value, when the read answered.
+    let toOption (read: Read<'T>) : 'T option =
+        match read with
+        | Read.Available value -> Some value
+        | Read.Unavailable _ -> None
+
+    /// The decoded value mapped; an unavailable read stays unavailable.
+    let map (f: 'T -> 'U) (read: Read<'T>) : Read<'U> =
+        match read with
+        | Read.Available value -> Read.Available(f value)
+        | Read.Unavailable why -> Read.Unavailable why

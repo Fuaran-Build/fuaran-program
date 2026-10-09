@@ -285,6 +285,46 @@ them. **A witness that starts declaring a leaf opaque** changes what its hosts' 
 host reports the escape until it calls `HostCoverage.acceptingOpaque` with the class — the adopting
 change states that migration for its hosts.
 
+### Rides the draft: a plan's read is typed `Unavailable`, decoded by the store's own codec, memoised by content, and visible to the commit step (Phase 2175)
+
+**Class: additive.** Every member below is new; no existing type gains a field or a case, no
+signature moves, and no behaviour of an existing call changes. The class is read off the diff by
+hand — no existing type, member or case is touched — because the shipped gate carries no surface
+differ. The draft is already breaking, so an additive change rides `0.8.0` and moves no number.
+`DECISIONS.md` D41 records what was decided; this entry records what a consumer pays.
+
+#### What was added
+
+- **The vocabulary (`ServerEffect.fs`):** `Read<'T>` (`Available of 'T` | `Unavailable of
+  ReadUnavailable`), `ReadUnavailable` (`Subject`, `Cause`), `ReadCause` (`NotRead of reason` — the
+  store could not be read, in the host's words — | `Undecodable of codec * reason` — the store
+  answered and its own codec refused it), `ReadCodec<'T>` (`Name`, `Decode: string -> Result<'T,
+  string>`), and the modules `ReadCause.describe`, `ReadUnavailable.Code` = `"read-unavailable"`,
+  `ReadUnavailable.describe`, `ReadUnavailable.refusal`, `Read.toOption`, `Read.map`.
+- **The run's typed reads (`Durable.fs`):** `Reads`, built per run over the run's `EntryReader`
+  (`Reads.Over reader`): `Read(codec, subject, read)` journals the raw read — the content, or the
+  host's reason there was none — through the entry reader under `ReadEntry`, and answers the codec's
+  decode as `Read.Available` or the cause as `Read.Unavailable`; `Degraded` enumerates the run's
+  unavailable reads and `Refusal ()` is the refusal a plan returns for them; `Decodes` counts the
+  decodes the codecs ran. `ReadRecord` is the journal record's shape (`ContentMember`,
+  `UnavailableMember`, `Malformed`, `encode`, `decode`).
+
+#### What did not move
+
+- **`EntryReader` keeps its shape and its journal record**, so a host on 2165's raw entry read is
+  unchanged; `Reads` is a layer over it. `RunQuery` and the store-bound extent read keep their
+  fail-closed halts (D41 says why). The journal port gains no case and no capability: a typed read is
+  an entry read whose completed value is a `ReadRecord`. The wire — the program wire specification,
+  its corpus, every handler-document and demanded-document byte — is untouched, and so is every proof
+  statement: a typed read is an entry read to the durable model.
+
+**What a consumer does about it:** nothing, unless it adopts the typed read. A host whose plan reads a
+store builds `Reads.Over reader` inside the `witnessOf` it hands `Durable.runReading`, names the
+store's codec as a `ReadCodec`, reads through `Read(codec, subject, read)` — returning `Error reason`
+from the raw read when the store could not be read, never a default — and refuses at the plan's
+commit step on `Refusal ()`. A journal a host wrote with the raw entry reader at the same subject is
+not a typed read, and a typed resume over it is refused with `ReadRecord.Malformed`.
+
 ## After 0.7.1 — the UI adapters leave this repository (fuaran#2012, DECISIONS.md D32) — BREAKING for the package set
 
 **The package set loses two packages; the four that remain do not move.** `Fuaran.Program.UI` and

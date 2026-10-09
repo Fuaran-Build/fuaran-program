@@ -159,6 +159,20 @@ seam; it is the seam both other placements already have, used deliberately.
 > receipts before me" no longer reads them back from the host's own journal; the idempotency facet is
 > declared per effect kind, so a vocabulary that mixes a content-addressed write with a push declares
 > them apart; and several contracts over one performer are composed by Program, first declared first.
+>
+> **And a plan's read is TYPED, since [D41](../DECISIONS.md) (Phase 2175).** A read the plan makes
+> through the entry reader can now answer `Read.Unavailable` — the store could not be read, or its own
+> codec refused what it answered — as a case the plan must match, never as a default standing in for a
+> read that did not happen. `Reads`, built per run over the run's entry reader, journals the raw read
+> (the content, or the host's reason there was none) as the read's completed value, so an unavailable
+> read is journaled like any answer: a resume meets the same unavailability rather than re-reading a
+> world that has since moved, and a run that refused on it replays the same refusal. Its `Degraded`
+> ledger is what makes a refusal before the first performed op a property of the plan rather than of
+> the host: every op is performed after the plan completes (§1), so an `Apply` that refuses on
+> `Refusal ()` refuses with nothing performed, naming each read it could not make. A read's decode is
+> memoised for the run by the codec's name and a digest of the content read, never by metadata about
+> the store, and the raw read is never memoised, so on a resume the memo can only serve a decode of the
+> journaled bytes.
 
 **What remains open.**
 

@@ -155,6 +155,130 @@ module EntryReader =
     [<Literal>]
     let Capability = "ReadEntry"
 
+/// How a TYPED read is journaled through the entry reader (Phase 2175, D41):
+/// the raw read's answer — the content read, or the host's reason there was
+/// none — as the read's completed value, so an unavailability is journaled
+/// like any answer and a resume meets it again. Never the decoded value: the
+/// codec is a pure function of the content, so a resume decodes the recorded
+/// content and the memo's key and the journal's record are one thing.
+module ReadRecord =
+
+    /// The member a recorded read's content is journaled under.
+    [<Literal>]
+    let ContentMember = "content"
+
+    /// The member a recorded unavailability's reason is journaled under.
+    [<Literal>]
+    let UnavailableMember = "unavailable"
+
+    /// The tier's refusal of a served record that is not a typed read — the
+    /// journal holds, at this read's ordinal, something a `Reads` did not
+    /// write.
+    [<Literal>]
+    let Malformed = "the journal's recorded read is not a typed read"
+
+    /// The record of a raw read.
+    let encode (raw: Result<string, string>) : Fuaran.Core.JVal =
+        match raw with
+        | Ok content -> Fuaran.Core.JObj [ ContentMember, Fuaran.Core.JStr content ]
+        | Error reason -> Fuaran.Core.JObj [ UnavailableMember, Fuaran.Core.JStr reason ]
+
+    /// The raw read a record holds, or `Malformed`.
+    let decode (recorded: Fuaran.Core.JVal) : Result<Result<string, string>, string> =
+        match recorded with
+        | Fuaran.Core.JObj [ name, Fuaran.Core.JStr content ] when name = ContentMember -> Ok(Ok content)
+        | Fuaran.Core.JObj [ name, Fuaran.Core.JStr reason ] when name = UnavailableMember -> Ok(Error reason)
+        | _ -> Error Malformed
+
+/// **The typed, codec-named reads of ONE run** (Phase 2175, D41), over the
+/// run's `EntryReader` — so every read is journaled at its ordinal and served
+/// on replay exactly as 2165's entry read is (D39), and a resumed run decodes
+/// what the dead run READ, never the live world.
+///
+/// A host builds one per run, inside the `witnessOf` it hands
+/// `Durable.runReading` (or over `EntryReader.live` outside a durable run),
+/// and its state witness's `Apply` reads through it:
+///
+///   * `Read(codec, subject, read)` performs the raw read — the store's
+///     CONTENT, or the host's reason it could not read — journals that as the
+///     read's answer (`ReadRecord`), and decodes the content through the named
+///     codec. It answers `Read.Available` with the codec's value, or
+///     `Read.Unavailable` naming the subject and the cause: the host's reason,
+///     or the codec's own refusal. An `Error` is the TIER's, never the
+///     store's — the entry read diverged on a resume, or the journal served a
+///     record that is not a typed read — and the plan halts on it.
+///   * `Degraded` enumerates the run's unavailable reads, in read order, and
+///     `Refusal ()` is the refusal a plan returns for them. The plan's step
+///     that precedes its first performed op — any `Apply` of the plan phase,
+///     since every op is performed after the plan completes (D8) — can
+///     therefore refuse "this run could not read X" without host machinery.
+///   * The DECODE is memoised for the run, keyed by the codec's name and a
+///     SHA-256 over the content read — never by metadata about the store, which
+///     a same-length rewrite inside one tick of a coarse clock leaves
+///     unchanged. A second read of an unchanged store decodes nothing; a read
+///     whose content moved decodes the new content. The raw read itself is
+///     never memoised: each read is its own journaled answer, so the memo can
+///     only ever serve a decode of the bytes this read answered — on a resume,
+///     the journaled bytes. `Decodes` counts what the codecs actually ran.
+///
+/// Mutable for the reason the run's cursor is: the plan fold it is threaded
+/// through does not know it exists. It is deterministic under replay — the
+/// same served answers, in the same order, rebuild the same ledger and memo.
+[<Sealed>]
+type Reads(reader: EntryReader) =
+    let memo = System.Collections.Generic.Dictionary<string, obj>()
+    let degraded = ResizeArray<ReadUnavailable>()
+    let mutable decodes = 0
+
+    let unavailable (subject: string) (cause: ReadCause) =
+        let why = { Subject = subject; Cause = cause }
+
+        if not (degraded.Contains why) then
+            degraded.Add why
+
+        why
+
+    /// The run's typed reads over `reader`.
+    static member Over(reader: EntryReader) : Reads = Reads reader
+
+    /// Read `subject` through `read` — the store's content, or the host's
+    /// reason it could not be read — and decode it through `codec`.
+    member _.Read
+        (codec: ReadCodec<'T>, subject: string, read: unit -> Result<string, string>)
+        : Result<Read<'T>, string> =
+        reader subject (fun () -> Ok(ReadRecord.encode (read ())))
+        |> Result.bind ReadRecord.decode
+        |> Result.map (fun raw ->
+            match raw with
+            | Error reason -> Read.Unavailable(unavailable subject (ReadCause.NotRead reason))
+            | Ok content ->
+                let key = codec.Name + "|" + Fuaran.Core.Hash.sha256Hex content
+
+                let decoded =
+                    match memo.TryGetValue key with
+                    | true, (:? Result<'T, string> as known) -> known
+                    | _ ->
+                        decodes <- decodes + 1
+                        let fresh = codec.Decode content
+                        memo[key] <- box fresh
+                        fresh
+
+                match decoded with
+                | Ok value -> Read.Available value
+                | Error reason -> Read.Unavailable(unavailable subject (ReadCause.Undecodable(codec.Name, reason))))
+
+    /// The run's unavailable reads so far, distinct, in the order first read.
+    member _.Degraded: ReadUnavailable list = List.ofSeq degraded
+
+    /// The refusal a plan returns for the run's unavailable reads
+    /// (`read-unavailable: <subject> (<cause>); …`), or `None` when every
+    /// read so far answered.
+    member _.Refusal() : string option =
+        ReadUnavailable.refusal (List.ofSeq degraded)
+
+    /// How many decodes the codecs actually ran this run — the memo's evidence.
+    member _.Decodes: int = decodes
+
 /// A step re-invoked despite the journal being unable to say whether it already
 /// ran.
 ///
