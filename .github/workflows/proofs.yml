@@ -78,20 +78,10 @@ jobs:
         with:
           path: Fuaran/Fuaran-Program
 
-      - name: Check whether the corpus credential is granted here
-        id: cred
-        shell: bash
-        env:
-          HAS_TOKEN: ${{ secrets.PROGRAM_SPEC_TOKEN != '' }}
-        run: echo "granted=$HAS_TOKEN" >> "$GITHUB_OUTPUT"
-
       - name: Checkout the program wire corpus
-        if: steps.cred.outputs.granted == 'true'
-        continue-on-error: true
         uses: actions/checkout@v4
         with:
-          repository: Fuaran-Build/fuaran-program-spec
-          token: ${{ secrets.PROGRAM_SPEC_TOKEN }}
+          repository: Fuaran-Core/fuaran-program-specification
           path: Fuaran/Fuaran-UI/fuaran-program-spec
 
       - name: Corpus status
@@ -103,7 +93,8 @@ jobs:
             echo "::notice title=Conformance corpus present::The FULL proof leg runs, differential hosts included."
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "::warning title=Conformance corpus ABSENT - the differential hosts did NOT run::The proofs, the extractions, the byte-diffs and the oracle build all ran. The differential hosts did not, because they compare the oracle against production over the program wire corpus, which this runner could not fetch. Cause: the PROGRAM_SPEC_TOKEN repository secret is unset or invalid, or this is a pull request from a fork (fork PRs receive no secrets, by design). This run asserts that the models CHECK; it asserts nothing about whether they describe the shipped code."
+            echo "::error title=Conformance corpus ABSENT::The program wire corpus could not be fetched from its public repository (Fuaran-Core/fuaran-program-specification). It is a build input, and a conformance check without its oracle is not run as a pass."
+            exit 1
           fi
 
       - name: Setup .NET
