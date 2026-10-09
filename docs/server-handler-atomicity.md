@@ -173,6 +173,19 @@ seam; it is the seam both other placements already have, used deliberately.
 > memoised for the run by the codec's name and a digest of the content read, never by metadata about
 > the store, and the raw read is never memoised, so on a resume the memo can only serve a decode of the
 > journaled bytes.
+>
+> **And a performed write's receipt is TYPED, since [D43](../DECISIONS.md) (Phase 2197).** An op
+> performer RETURNS an `OpReceipt`: the writes it performed, each a target and a SHA-256 digest of the
+> exact bytes written, beside a free-form detail. The durable tier journals that receipt, encoded, as
+> the op stage's completed value, and decodes it whether it was performed or served — so a resumed run
+> is handed, in the next performer's prefix and in the outcome's `Receipts`, the very writes and digests
+> the dead run's performers returned, with nothing re-performed. What an invocation changed is the
+> union of its receipts (`HandlerOutcome.changed`), and a commit stage accounts what it would stage
+> against them (`Receipts.accountAll`), refusing a write no receipt names, or one whose content is not
+> what the invocation last wrote there, as `foreign-write`. The exactly-once claim thereby extends to
+> the record of what was written: a host no longer keeps a receipt book beside the effect to know it. A
+> journaled value that is not an encoded receipt — a journal written before receipts were typed — is
+> refused on resume as `op-receipt-malformed`, never read as a receipt that wrote nothing.
 
 **What remains open.**
 

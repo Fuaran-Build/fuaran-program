@@ -48,7 +48,7 @@ let private planned (book: Workbook) (h: GridHandler) =
     Handler.runPlanned
         witness
         registry
-        (OpPerformance.performedBy book.Performer)
+        (OpPerformance.performedWithDetail book.Performer)
         DataFrame.noResolve
         "grid"
         h
@@ -65,7 +65,7 @@ let private runAndReverse (h: GridHandler) =
         Undo.run
             witness
             registry
-            (OpPerformance.performedBy book.Performer)
+            (OpPerformance.performedWithDetail book.Performer)
             DataFrame.noResolve
             "grid"
             plan
@@ -91,7 +91,7 @@ let private runAndReplay (h: GridHandler) =
             services
             "inv"
             registry
-            (OpPerformance.performedBy book.Performer)
+            (OpPerformance.performedWithDetail book.Performer)
             DataFrame.noResolve
             "grid"
             h
@@ -243,7 +243,7 @@ let classATests =
                   Handler.runWith
                       witness
                       narrow
-                      (OpPerformance.performedBy book.Performer)
+                      (OpPerformance.performedWithDetail book.Performer)
                       DataFrame.noResolve
                       "grid"
                       long
@@ -270,7 +270,7 @@ let classATests =
                   Handler.runWith
                       witness
                       registry
-                      (OpPerformance.performedBy book.Performer)
+                      (OpPerformance.performedWithDetail book.Performer)
                       DataFrame.noResolve
                       "grid"
                       (handler "stray" [ Set("r2c3", "x"); ForRange(2, 3, "i", []); Copy("r{i}c3", "r{i}c4") ])
@@ -376,7 +376,7 @@ let classBTests =
                       services
                       invocation
                       registry
-                      (OpPerformance.performedBy book.Performer)
+                      (OpPerformance.performedWithDetail book.Performer)
                       DataFrame.noResolve
                       "grid"
                       marking
@@ -404,7 +404,7 @@ let classBTests =
                   Handler.runWith
                       witness
                       registry
-                      (OpPerformance.performedBy book.Performer)
+                      (OpPerformance.performedWithDetail book.Performer)
                       DataFrame.noResolve
                       "grid"
                       (handler "new-order" [ AppendRow("orders", "o3") ])
@@ -462,7 +462,7 @@ let classBTests =
                   Handler.runWith
                       witness
                       registry
-                      (OpPerformance.performedBy book.Performer)
+                      (OpPerformance.performedWithDetail book.Performer)
                       DataFrame.noResolve
                       "grid"
                       tight
@@ -533,7 +533,7 @@ let classBTests =
                   Handler.runWith
                       witness
                       registry
-                      (OpPerformance.performedBy book.Performer)
+                      (OpPerformance.performedWithDetail book.Performer)
                       DataFrame.noResolve
                       "grid"
                       (handler "new-order" [ AppendRow("orders", "o3") ])
@@ -546,7 +546,7 @@ let classBTests =
                   Undo.run
                       witness
                       registry
-                      (OpPerformance.performedBy book.Performer)
+                      (OpPerformance.performedWithDetail book.Performer)
                       DataFrame.noResolve
                       "grid"
                       plan

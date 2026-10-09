@@ -199,7 +199,7 @@ let private readThenCommitThenAudit: Handler<ToyAction, ToyOp> =
 
 /// The op performer: counts, and runs `sideEffect` per op it performs.
 let private performing (performed: int ref) (sideEffect: unit -> unit) : OpPerformance<ToyNode, ToyOp> =
-    OpPerformance.performedBy (fun _ _ ->
+    OpPerformance.performedWithDetail (fun _ _ ->
         performed.Value <- performed.Value + 1
         sideEffect ()
         Ok(JObj []))

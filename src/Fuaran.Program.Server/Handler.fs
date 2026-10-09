@@ -263,7 +263,35 @@ type HandlerOutcome<'Node, 'Store, 'Op, 'Effect> =
         /// document the program wire specification describes is byte-identical
         /// (DECISIONS.md D25).
         Flow: FlowDecision list
+        /// The receipts the op stages answered (Phase 2197, D43), in perform
+        /// order — each the performer's RETURN VALUE, a served stage's recorded
+        /// receipt under the durable interpreter. What the invocation changed
+        /// is their union (`HandlerOutcome.changed`), derived from them alone.
+        ///
+        /// On an uncommitted outcome it names the receipts of the op stages
+        /// that performed before the failure — the writes `Performed` says
+        /// were not rolled back — and is empty when the plan halted, since
+        /// nothing was performed. Empty for a placement that performs its ops
+        /// in memory.
+        ///
+        /// HOST-SIDE ONLY, as `Flow` is: no outcome document carries it.
+        Receipts: OpReceipt list
     }
+
+/// What an invocation changed, read off its outcome (Phase 2197, D43).
+module HandlerOutcome =
+
+    /// The targets the invocation's receipts name — the union of what its
+    /// performers returned.
+    let changed (outcome: HandlerOutcome<'Node, 'Store, 'Op, 'Effect>) : Set<string> = Receipts.changed outcome.Receipts
+
+    /// Whether the invocation's receipts account for everything a commit
+    /// stage would stage (`Receipts.accountAll`).
+    let account
+        (outcome: HandlerOutcome<'Node, 'Store, 'Op, 'Effect>)
+        (staged: WriteReceipt list)
+        : Result<unit, ForeignWrite list> =
+        Receipts.accountAll outcome.Receipts staged
 
 /// One step of the PLAN an undo reads (Phase 1977, DECISIONS.md D22),
 /// recorded by the plan phase in plan order. The model's `step`
@@ -326,6 +354,10 @@ type HandlerTally<'Node, 'Op> =
         /// each handler's in its own plan order, the handlers in invocation
         /// order.
         Flow: FlowDecision list
+        /// The op receipts of every handler the event invoked (Phase 2197,
+        /// D43), each handler's in its own perform order, the handlers in
+        /// invocation order — the event's changed set is their union.
+        Receipts: OpReceipt list
     }
 
 module HandlerTally =
@@ -339,7 +371,8 @@ module HandlerTally =
           Patches = []
           Notifications = []
           Diagnostics = []
-          Flow = [] }
+          Flow = []
+          Receipts = [] }
 
 module Handler =
 
@@ -369,7 +402,7 @@ module Handler =
     /// fold appends for the stages after it.
     type private StagedCall =
         { Capability: string
-          Perform: Fuaran.Core.JVal list -> Result<Landing * Fuaran.Core.JVal option, string> }
+          Perform: OpReceipt list -> Result<Landing * OpReceipt option, string> }
 
     /// The state threaded through the stage fold. Lists accumulate reversed and
     /// are flipped once at the end, so a long handler does not quadratically
@@ -386,8 +419,9 @@ module Handler =
             Externally: string list
             /// The receipts the op stages of the perform phase answered so far
             /// (Phase 2165, D39), reversed like every other list here: what the
-            /// next op stage is handed as its prefix.
-            Receipts: Fuaran.Core.JVal list
+            /// next op stage is handed as its prefix. Typed since Phase 2197
+            /// (D43), and what the outcome's `Receipts` reports.
+            Receipts: OpReceipt list
             Staged: StagedCall list
             Patches: 'Op list
             Notifications: (string * Fuaran.Core.JVal) list
@@ -441,7 +475,7 @@ module Handler =
     /// perform phase ran before this one, which only the perform phase knows,
     /// so they reach the closure as its argument rather than being closed over.
     let private stagedOp
-        (perform: OpPrefix<'Node> -> 'Node -> 'Op -> Result<Fuaran.Core.JVal, string>)
+        (perform: OpPrefix<'Node> -> 'Node -> 'Op -> Result<OpReceipt, string>)
         (capability: string)
         (before: 'Node)
         (state: 'Node)
@@ -1047,7 +1081,8 @@ module Handler =
               Notifications = []
               ClientEffects = []
               Diagnostics = List.rev final.Diagnostics
-              Flow = List.rev final.Flow },
+              Flow = List.rev final.Flow
+              Receipts = List.rev final.Receipts },
             plan
         else
             { Store = final.Store
@@ -1060,7 +1095,8 @@ module Handler =
               Notifications = List.rev final.Notifications
               ClientEffects = List.rev final.ClientEffects
               Diagnostics = List.rev final.Diagnostics
-              Flow = List.rev final.Flow },
+              Flow = List.rev final.Flow
+              Receipts = List.rev final.Receipts },
             plan
 
     /// `runPlanned` without the plan: the outcome alone. The signature every

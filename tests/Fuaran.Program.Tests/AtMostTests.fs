@@ -27,7 +27,7 @@ let private runIn (registry: ServerEffectRegistry) (world: World) (handler: Hand
     Handler.runWith
         witness
         registry
-        (OpPerformance.performedBy (world.Performer None))
+        (OpPerformance.performedWithDetail (world.Performer None))
         DataFrame.noResolve
         "verb"
         handler

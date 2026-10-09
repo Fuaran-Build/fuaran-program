@@ -20,6 +20,55 @@ what a consumer pays to adopt it and why.
 This document starts at `0.6.0`. The slots before it are recorded where they were cut, in the
 comments beside `<Version>` in `Directory.Build.props`, and are not restated here.
 
+## 0.9.0 — DRAFT — a performed write's receipt is its return value, typed (Phase 2197)
+
+**Class: breaking.** `v0.8.0` is TAGGED, so this ADVANCES `<Version>` to `0.9.0` rather than riding
+it; a later breaking or additive change rides this draft until it is tagged. A DU case's payload, a
+record field's type and two records' members change, and every consumer that registers an op
+performer, declares an op contract or constructs a `HandlerOutcome` or `HandlerTally` literal meets
+it at compile time. `DECISIONS.md` D43 records what was decided; this entry records what a consumer
+pays.
+
+### What changed shape
+
+- **An op performer RETURNS `OpReceipt`, not `JVal`.** `OpPerformance.Performed` carries
+  `OpPrefix<'Node> -> 'Node -> 'Op -> Result<OpReceipt, string>`. `OpReceipt` is `{ Writes:
+  WriteReceipt list; Detail: JVal }`: the writes performed, each `{ Target: string; Digest:
+  ContentDigest }`, and the 0.8.0 receipt kept verbatim as the detail.
+- **`OpPerformance.performedBy` takes a performer answering `OpReceipt`.** A 0.8.0 performer that
+  answers a `JVal` moves to the new `performedWithDetail`, unchanged in body, and its receipt names no
+  write. `performedWithPrefix` and `performedChecked` take `OpReceipt`-answering performers; a 0.8.0
+  body maps its answer through `OpReceipt.ofDetail`. `performedWithoutReceipt` keeps its signature
+  and answers `OpReceipt.none`.
+- **`OpPrefix.Receipts` is `OpReceipt list`** (it was `JVal list`): 2165's untyped prefix is TYPED,
+  not replaced. A performer that read a prior receipt's JVal reads its `.Detail`.
+- **`OpContract.Holds` and `OpContract.at` take the `OpReceipt`.** A 0.8.0 contract over the JVal
+  reads `receipt.Detail`.
+- **`HandlerOutcome` and `HandlerTally` gain `Receipts: OpReceipt list`** (FS0764 on a full
+  literal): the receipts the op stages answered, in perform order, and on an uncommitted outcome those
+  of the stages that performed before the failure.
+- **The durable journal records an op stage's completed value as `OpReceipt.encode`**:
+  `{"writes":[{"target":…,"digest":…}],"detail":…}`. A journal written by 0.8.0 holds the bare
+  receipt there and is REFUSED on resume as `op-receipt-malformed` — a run in flight across the
+  upgrade is resumed under the version that started it, or abandoned. No wire byte and no
+  specification document moves: the journal is a host's store, not the program wire.
+
+### What was added
+
+- `ContentDigest` (`ofBytes`, `ofText`, `parse`, `.Text`; private representation, SHA-256 over the
+  exact bytes, `sha256:` + 64 lowercase hex), `WriteReceipt` (`ofBytes`, `ofText`), `OpReceipt`
+  (`none`, `ofDetail`, `ofWrites`, `encode`, `decode`, `MalformedCode`).
+- The union: `Receipts.writes`, `final`, `changed`, `account`, `accountAll`;
+  `HandlerOutcome.changed` and `HandlerOutcome.account`; the refusal shape `ForeignWrite`,
+  `ForeignCause` (`Unreceipted`, `DigestDiffers`), `ForeignWrite.describe`, `refusal` and `Code`
+  (`foreign-write`).
+
+### What did not move
+
+- An in-memory placement is unchanged: it stages no op, so its outcome's `Receipts` is empty.
+- The prefix's order, the contract composition and the perform fold are 2165's, unchanged; only the
+  receipt's type moved.
+
 ## 0.8.0 — RELEASED (tagged `v0.8.0`, 2026-10-09) — the query evaluator seam on `RunQuery` (Phase 1905), and what rode the draft (Phases 1991, 1993, 2018, 2019, 2130, 2165, 2175)
 
 **Class: breaking**, by this file's own rule, for a consumer that constructs a

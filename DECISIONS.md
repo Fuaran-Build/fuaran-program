@@ -2915,3 +2915,132 @@ smaller and could not be served on a resume. The typed WRITE side (a performed o
 value) and a typed finding effect are separate phases (fuaran#2197, fuaran#2195); nothing here
 forecloses either. The memo's scope is one run: a host that wants decodes shared across invocations
 keys its own cache the same way, by content.
+
+## D43 — A performed write's receipt is the performer's RETURN VALUE, typed: `OpReceipt` names each write's target and a SHA-256 digest of the bytes written; D39's prefix receipts are TYPED, not replaced; an invocation's changed set is the union of its receipts, and a commit stage refuses a write no receipt accounts for (2026-10-09)
+
+**2026-10-09. Phase 2197.** D39 (Phase 2165) gave an op performer and its contracts the run's
+PREFIX: the pre-op state and the receipts of the op stages before it. A stage whose act is "the
+receipts before me" therefore stopped reading them back from the host's journal. Those receipts were
+an untyped `JVal list` (`OpPrefix.Receipts`), because the receipt itself was a `JVal` (Phase 1981):
+the paths a performer wrote, a sha it committed, or the empty object. An amendment to 2165's
+F-RECEIPTS, written while 2165 was in flight, asked for more than what shipped. A consumer that
+commits only what an invocation wrote has to know WHAT it wrote. With an untyped receipt, the only way
+to know is a per-invocation receipt book that each writer records into BESIDE the effect. This
+decision exists to make that book deletable.
+
+**Premises checked against the tree first.** The prefix works as D39 describes. The handler's perform
+fold threads the receipts its staged calls answer. Under the durable interpreter, a served op stage's
+journaled completed value stands in for the performer's answer at the same ordinal. A resumed run
+therefore already hands the next performer the dead run's receipts. Nothing typed them, though.
+Program could not tell a performer answering `JObj []` from one answering a list of paths. No outcome
+reported the receipts (they lived only inside the fold), and no Program function could say what an
+invocation changed. The F* models (`proofs/Staging.fst`, `proofs/EffectGate.fst`) take the receipt
+as an abstract value `v` and are untouched. At the toy witness, the oracle bridges production's typed
+receipt to the model's value through the receipt's detail. The durable oracle states the remaining
+gap: production journals `encode (ofDetail v)` where the model journals `v`.
+
+**1. The receipt type.** `OpReceipt = { Writes: WriteReceipt list; Detail: JVal }`, and
+`WriteReceipt = { Target: string; Digest: ContentDigest }`.
+
+- *The target* is the host's own name for the place written (a path, a key), compared ordinally.
+  Program gives it no structure, just as it gives a read's subject none (D39).
+- *The digest* is SHA-256 over the EXACT BYTES written, rendered `sha256:` + 64 lowercase hex. This is
+  the estate's one digest convention, already used by the content address (D9) and the typed read's
+  memo (D41). Text is digested as its UTF-8 bytes, with no byte-order mark and no newline or Unicode
+  normalisation: the digest covers the bytes the store holds, not a reading of them.
+  `ContentDigest.ofText` equals `"sha256:" + Hash.sha256Hex`, and a test pins that equality. The
+  representation is private. A digest is computed from content (`ofBytes`, `ofText`) or parsed from
+  its rendering (`parse`), never spelled by hand. `parse` refuses uppercase, an abbreviation and any
+  other algorithm.
+- *The detail* is the 0.8.0 receipt, kept verbatim: anything else the performer says it did, such as
+  a commit's sha or an id the store assigned. Nothing in Program reads it; a contract may.
+
+**2. A performer returns the receipt as its RETURN VALUE.** `OpPerformance.Performed` carries
+`OpPrefix -> 'Node -> 'Op -> Result<OpReceipt, string>`. `performedBy`, `performedWithPrefix` and
+`performedChecked` take performers that answer `OpReceipt`. `performedWithDetail` is the 0.8.0
+shape: a performer answering a `JVal`, lifted to a receipt that names no write.
+`performedWithoutReceipt` answers `OpReceipt.none`. The detail-only form gets its own name, rather
+than staying `performedBy`, so that the obvious registration is the typed one. If the easy name
+produced write-less receipts, a writing performer registered the obvious way would contribute nothing
+to the changed set. That fails closed (the commit refuses its writes), but the failure would surface
+at a commit rather than at registration.
+
+**3. 2165's `OpPrefix.Receipts` is TYPED, not replaced.** It becomes `OpReceipt list`. Its order
+(perform order), its population (the op stages performed before this one) and its durable reading (a
+served stage's recorded receipt counts among them) are unchanged. Replacing it would have added a
+second channel beside the prefix, when the prefix is already how a later stage sees what the run did.
+The typed receipt rides it instead. `OpContract.Holds` and `OpContract.at` take the typed receipt; a
+0.8.0 contract reads `.Detail`.
+
+**4. The union, and the refusal shape.**
+
+- *What the outcome carries.* `HandlerOutcome` and `HandlerTally` gain `Receipts: OpReceipt list`,
+  the receipts the op stages answered, in perform order. On an uncommitted outcome these are the
+  receipts of the stages that performed before the failure: the writes `Performed` already says were
+  not rolled back. Like `Flow` (D25), they are host-side only, and no outcome document carries them.
+- *The union.* `Receipts.changed` (and `HandlerOutcome.changed`) is the set of targets the receipts
+  name. `Receipts.final` maps each target to its LAST receipted digest, so a target written twice
+  holds what was written last.
+- *The check.* `Receipts.account` and `accountAll` (and `HandlerOutcome.account`) check a write a
+  commit stage would stage against the receipts. A write that fails answers
+  `ForeignWrite { Target; Digest; Cause }`. `Cause` is `Unreceipted` when no receipt names the target,
+  and `DigestDiffers receipted` when one does but the content differs. The causes stay apart because
+  their remedies differ: the first is a write the invocation never made, the second is content that
+  moved since.
+- *The refusal text.* `ForeignWrite.refusal` is what a commit stage's performer answers:
+  `foreign-write: <target> (<cause>); …`. It names targets and digests, never content.
+- *Where the check runs.* A commit stage that is itself an op stage reads the receipts before it from
+  its prefix, so the check needs nothing kept beside the run. A host that commits after the run reads
+  the outcome.
+
+**Not built: a Program-run gate that refuses a commit on its own.** What a commit stages is the
+host's act, and Program sees only what the host returns. The refusal is therefore a shape a commit
+stage applies, as D41's `Refusal ()` is a shape a plan applies.
+
+**5. The journal.** The durable wrapper journals an op stage's receipt as `OpReceipt.encode`:
+`{"writes":[{"target":…,"digest":…},…],"detail":…}`, with the writes in perform order. The record
+sits at the stage's ordinal, under `ApplyOps`, with the op's content address as its subject, which is
+how D23 already identified the stage. The wrapper DECODES the value whether it was just performed or
+served from the journal. A resumed run therefore gets the dead run's receipts (the same writes, the
+same digests) in the next performer's prefix and in its outcome, with nothing re-performed.
+
+A served value that is not an encoded receipt is refused as `op-receipt-malformed`. It is never read
+as a receipt with no writes. A journal written by 0.8.0 holds a bare receipt in that position, and
+reading it as "wrote nothing" would make a resumed commit refuse the dead run's writes as foreign, or
+worse, stage nothing.
+
+The journal port gains no case and no capability; only the shape of the completed value moves. A
+journal is a host's store, not the program wire, so this involves no specification act.
+
+**Alternatives considered and rejected.**
+
+- *Replace the `JVal` receipt with `WriteReceipt list` and drop the detail.* A commit's sha or an
+  assigned id is not a write a commit stage stages. Forcing it into a fake write would make the
+  changed set lie, and dropping it would break every contract over today's receipts with nothing to
+  migrate to.
+- *Keep `JVal` and add a typed reading of it (a codec for `{"writes":…}`).* The type would be a
+  convention nothing enforces. A performer could answer anything, and a misspelled member would read
+  as "no writes".
+- *One receipt per performed op stage, naming a single target.* A stage that renders a document or
+  commits several files writes more than one target. Splitting it into ops to fit the receipt would
+  let the receipt's shape dictate the domain's ops.
+- *Digest a canonical JSON rendering of the content.* A write leaves bytes, and canonicalising them
+  would let two different files that read the same share a digest.
+
+**Version.** This is breaking, and `v0.8.0` is tagged, so it ADVANCES `<Version>` to `0.9.0`. Later
+changes ride that draft (`STABILITY.md`).
+
+**What this forecloses, and what it leaves.**
+
+- A host that keeps a receipt book beside its performers is now building what Program provides. The
+  book can be deleted once its writers return receipts.
+- A performer registered through `performedWithDetail` contributes nothing to the changed set, and
+  its registration shows that.
+- NOTHING checks that a receipt is TRUE. A performer that writes one file and receipts another is
+  believed. The receipt is the performer's own account, as D24 says of a host function's result. The
+  route to checking that the receipted targets lie within what the op declared is an `OpContract`
+  over the op's reach (D19).
+- The typed finding effect belongs to fuaran#2195, and nothing here forecloses it.
+- The first instantiation's server tests (the UI tier's `Fuaran.UI.Program.Server.Tests`) register op
+  performers and contracts over `JVal` receipts. They adopt this draft when that tier raises its pin.
+  The migration is mechanical (`performedWithDetail`, `.Detail`) and belongs to the adopting phase.

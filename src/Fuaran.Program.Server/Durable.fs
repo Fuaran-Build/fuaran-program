@@ -697,6 +697,13 @@ module Durable =
         // while one inside a push is refused, in one vocabulary. The prefix
         // (F-RECEIPTS) rides through the wrapper untouched: it is the handler's
         // perform fold's, and a served stage's recorded receipt joins it there.
+        // The receipt is TYPED (Phase 2197, D43): journaled as its encoding
+        // with the stage's ordinal, capability and op subject, and decoded
+        // whether it was just performed or served, so a resumed run's stages
+        // answer the dead run's receipts — writes and digests — without
+        // re-performing. A served value that is not an encoded receipt (a
+        // journal written before receipts were typed) is refused as
+        // `op-receipt-malformed`, never read as a receipt with no writes.
         let performing =
             match performance with
             | OpPerformance.InMemory -> OpPerformance.InMemory
@@ -707,8 +714,9 @@ module Durable =
                         (Some(opSubject witness.State op))
                         (PerformerFacets.opFacetOf (opKinds witness.State op) services.Performers)
                         opRefusal
-                        (fun _ -> perform prefix state op)
-                        (Fuaran.Core.JObj []))
+                        (fun _ -> perform prefix state op |> Result.map OpReceipt.encode)
+                        (Fuaran.Core.JObj [])
+                    |> Result.bind OpReceipt.decode)
 
         let outcome =
             Handler.runWith witness journalling performing resolve nodeId handler store
@@ -866,6 +874,7 @@ module Durable =
                               Patches = tally.Patches @ outcome.Patches
                               Notifications = tally.Notifications @ outcome.Notifications
                               Flow = tally.Flow @ outcome.Flow
+                              Receipts = tally.Receipts @ outcome.Receipts
                               Diagnostics = tally.Diagnostics @ outcome.Diagnostics } } }
 
     /// This interpreter's answer to a call action the shared fold recognised —

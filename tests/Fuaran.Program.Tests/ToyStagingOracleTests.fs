@@ -271,7 +271,10 @@ let private modelRegistry
         // performers this oracle stages read none of it, so the model's side
         // hands the entry prefix — `proofs.json`, `op-prefix-out-of-model`.
         | OpPerformance.Performed perform ->
-            Staging.OSome(fun state op -> (fun (_: JVal) -> perform (OpPrefix.atEntry state) state op), JObj []) }
+            // The model's receipt is the DETAIL (Phase 2197, D43): the
+            // performers this oracle stages name no typed write.
+            Staging.OSome(fun state op ->
+                (fun (_: JVal) -> perform (OpPrefix.atEntry state) state op |> Result.map _.Detail), JObj []) }
 
 let private productionDiagnostic (diagnostic: Staging.diagnostic<BoundedDiagnostic>) : ServerDiagnostic =
     match diagnostic with
@@ -296,7 +299,10 @@ let private productionShaped (outcome: ModelOutcome) : ToyOutcome =
       Diagnostics = outcome.oc_diagnostics |> List.map productionDiagnostic
       // The model carries no flow decisions (DECISIONS.md D25), and the
       // projection below does not compare them.
-      Flow = [] }
+      Flow = []
+      // Nor any typed receipts (Phase 2197, D43): its performers return a
+      // detail, and the projection below does not compare them.
+      Receipts = [] }
 
 /// The comparable projection: the tree by the toy codec's canonical bytes
 /// (labels included), the store — whose one channel is where the toy lands a
@@ -401,7 +407,7 @@ let private witnessOf (case: StagingCase) : ToyWitness =
 
 let private performanceOf (case: StagingCase) (s: Scripted) : OpPerformance<ToyNode, ToyOp> =
     if case.PerformOps then
-        OpPerformance.performedBy s.Op
+        OpPerformance.performedWithDetail s.Op
     else
         OpPerformance.InMemory
 
@@ -2002,7 +2008,7 @@ let private receiptFor (state: ToyNode) (op: ToyOp) : JVal = JStr(receiptText st
 let private opContractName = "names-the-planned-op"
 
 let private plannedOpContract: OpContract<ToyNode, ToyOp> =
-    OpContract.at opContractName (fun state op receipt -> receipt = receiptFor state op)
+    OpContract.at opContractName (fun state op receipt -> receipt.Detail = receiptFor state op)
 
 let private modelOpContract: EffectGate.op_contract<ToyNode, ToyOp, JVal> =
     { EffectGate.oc_name = opContractName
@@ -2122,9 +2128,10 @@ let private keyedProduction (c: KeyedCase) (side: KeyedSide) =
 
     let performance =
         if c.Contracted then
-            OpPerformance.performedChecked [ plannedOpContract ] (fun _ -> side.Op)
+            OpPerformance.performedChecked [ plannedOpContract ] (fun _ state op ->
+                side.Op state op |> Result.map OpReceipt.ofDetail)
         else
-            OpPerformance.performedBy side.Op
+            OpPerformance.performedWithDetail side.Op
 
     registry, performance
 
@@ -2320,6 +2327,13 @@ let private runKeyedDurably (c: KeyedCase) : DurableKeyedRun =
                  | Staging.OSome s -> Some s
                  | Staging.ONone -> None),
                 (match answer with
+                 // Production journals an op stage's TYPED receipt as its
+                 // encoding (Phase 2197, D43); the model's receipt is the
+                 // detail of a receipt naming no write, so the bridge is
+                 // `encode (ofDetail v)` at an op stage and the identity at a
+                 // host call.
+                 | Staging.ROk v when call.sc_capability = OpPerformance.RegistrationKey ->
+                     Ok(OpReceipt.encode (OpReceipt.ofDetail v))
                  | Staging.ROk v -> Ok v
                  | Staging.RErr r -> Error r))
 
@@ -2666,7 +2680,7 @@ let effectGateTests =
                               let production: OpContract<ToyNode, ToyOp> =
                                   OpContract.at vLabel (fun s o r ->
                                       productionSeen.Add(render s, witness.State.Stream.Encode o)
-                                      verdict s o r)
+                                      verdict s o r.Detail)
 
                               let model: EffectGate.op_contract<ToyNode, ToyOp, JVal> =
                                   { EffectGate.oc_name = vLabel
@@ -2678,7 +2692,13 @@ let effectGateTests =
                               let modelPerform (s: ToyNode) (o: ToyOp) = behaviour s o |> modelRes
 
                               let expected =
-                                  OpContract.check production (fun _ -> behaviour) (OpPrefix.atEntry state) state op
+                                  OpContract.check
+                                      production
+                                      (fun _ s o -> behaviour s o |> Result.map OpReceipt.ofDetail)
+                                      (OpPrefix.atEntry state)
+                                      state
+                                      op
+                                  |> Result.map _.Detail
                                   |> modelRes
 
                               let actual = EffectGate.check_op model modelPerform state op
@@ -2769,7 +2789,7 @@ let effectGateTests =
                   if outcome.Committed then
                       for state, op, receipt in run.ProductionReceipts do
                           Expect.isTrue
-                              (plannedOpContract.Holds (OpPrefix.atEntry state) state op receipt)
+                              (plannedOpContract.Holds (OpPrefix.atEntry state) state op (OpReceipt.ofDetail receipt))
                               (sprintf "%s: a committed run landed a receipt its contract rejects" where)
 
                   match List.tryLast outcome.Diagnostics with

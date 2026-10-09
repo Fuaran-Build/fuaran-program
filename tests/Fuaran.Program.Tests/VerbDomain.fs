@@ -503,7 +503,7 @@ module Receipt =
             let declared (argument: string) =
                 (reach op).Arguments |> List.filter (fun (a, _) -> a = argument) |> List.map snd
 
-            match claimed "paths" receipt, claimed "targets" receipt with
+            match claimed "paths" receipt.Detail, claimed "targets" receipt.Detail with
             | Some ps, Some ts ->
                 ps |> List.forall (fun p -> List.contains p (declared "path"))
                 && ts |> List.forall (fun t -> List.contains t (declared "target"))
