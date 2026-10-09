@@ -59,10 +59,31 @@ open Fuaran.Program.Bounded
 //  both. The state handed beside the op is never the subject — it is the
 //  planned state, recomputed on replay, not the thing performed.
 //
+//  ── The plan's ENTRY READ is journaled too (Phase 2165, D39) ────────────────
+//  "Recomputed, deterministically, from the entry state" has a premise of its
+//  own: that the plan reads nothing but the entry state. A verb whose plan
+//  reads the WORLD — a store its state witness's `Apply` consults before
+//  deciding what to perform — breaks it the moment its own perform phase
+//  moves what it read: killed after the op and re-entered, the re-plan reads
+//  the moved world, plans differently, and reaches the journaled stages
+//  never, or holding other calls. Phase 1905 (a staged query) and Phase 1991
+//  (a store-bound `Each`'s extent) already journal two plan-phase reads at
+//  their ordinals through this file's one wrapper; the entry read is the
+//  third, for the read a domain performs inside its own witness: `runReading`
+//  hands the witness an `EntryReader` bound to this run, the read is
+//  journaled under `ReadEntry` with the read's name as its subject and the
+//  value the host answered as its completed value, and a replay is SERVED
+//  that value and consults the live world for none of it. A resumed plan
+//  therefore observes what the dead run's entry saw, so it stages the same
+//  calls and the journaled stages are served; and a resume whose plan would
+//  read something else at that ordinal is refused under
+//  `durable-entry-read-diverged`, naming the read, before any stage.
+//
 //  The consequence a reader should carry away is the one the facets state: this
-//  interpreter's exactly-once claim is about what IT performs. What a caller
-//  does with a returned notification is the caller's own delivery posture, and
-//  the composition joins the two.
+//  interpreter's exactly-once claim is about what IT performs — and, since
+//  Phase 2165, about what its plan READ. What a caller does with a returned
+//  notification is the caller's own delivery posture, and the composition
+//  joins the two.
 //
 //  ── The step ordinal is DERIVED from the fold, not declared ─────────────────
 //  A journal entry is addressed by the ordinal of the performer invocation
@@ -96,6 +117,43 @@ module DurableCode =
     /// answer is safe to serve.
     [<Literal>]
     let ReplayDivergence = "durable-replay-divergence"
+
+    /// The resumed PLAN reached an ordinal with an entry read the recorded run
+    /// did not hold there, or reached another call where the recorded run read
+    /// (Phase 2165, D39): the resume would plan differently from the run it
+    /// resumes. Refused before any stage, with the read named after the
+    /// colon — `durable-entry-read-diverged:<subject>` — so the refusal says
+    /// which read moved rather than the domain's own "nothing matched".
+    [<Literal>]
+    let EntryReadDiverged = "durable-entry-read-diverged"
+
+    /// The refusal text for an entry read that diverged, naming the read.
+    let entryReadDiverged (subject: string) : string = EntryReadDiverged + ":" + subject
+
+/// How a plan READS THE WORLD at entry (Phase 2165, D39): handed the read's
+/// NAME — the subject the journal records, a host's own vocabulary, log-safe
+/// — and the live read, it answers the value the plan should see. Under the
+/// direct interpreter, and under the durable one outside a run, that is the
+/// live read (`EntryReader.live`); `Durable.runReading` hands the witness one
+/// bound to the run, which journals the read at its ordinal and serves the
+/// record on replay. The same shape as `ExtentReader` (Phase 1991), for the
+/// same reason: the read is the host's, the record is Program's.
+///
+/// A domain uses it inside its state witness — `Apply` of the op that reads
+/// — so Program never sees the read's type: the host encodes the answer as a
+/// `JVal` for the journal and decodes the served one, and a value the host
+/// cannot decode is the host's own refusal of the plan.
+type EntryReader = string -> (unit -> Result<Fuaran.Core.JVal, string>) -> Result<Fuaran.Core.JVal, string>
+
+module EntryReader =
+
+    /// The reader that performs the live read — every non-durable placement,
+    /// and a witness built outside a durable run.
+    let live: EntryReader = fun _ read -> read ()
+
+    /// The capability an entry read is journaled under.
+    [<Literal>]
+    let Capability = "ReadEntry"
 
 /// A step re-invoked despite the journal being unable to say whether it already
 /// ran.
@@ -191,6 +249,14 @@ module DurableServices =
         { services with
             Performers = PerformerFacets.declareOpPerformer facet services.Performers }
 
+    /// Declare what repeating the registered OP performer does for ONE effect
+    /// kind (Phase 2165, D39, F-FACET) — an argument name the op's reach
+    /// declares — so a domain declares its writes idempotent and its push not,
+    /// and the wrapper reads each op as the meet over the kinds it names.
+    let declaringOpKind (kind: string) (facet: IdempotencyFacet) (services: DurableServices) : DurableServices =
+        { services with
+            Performers = PerformerFacets.declareOpKind kind facet services.Performers }
+
     /// **The named opt-in.** Re-invoke a step the journal cannot decide, taking
     /// the duplicate hazard rather than the loss. Naming it is the
     /// configuration, and it is what the override record attaches to.
@@ -230,6 +296,21 @@ module Durable =
     [<Literal>]
     let QueryStageCapability = "RunQuery"
 
+    /// The capability a plan's entry read is journaled under (Phase 2165,
+    /// D39) — `EntryReader.Capability`, restated beside the other two.
+    [<Literal>]
+    let EntryReadCapability = EntryReader.Capability
+
+    /// The EFFECT KINDS an op names (Phase 2165, D39): the argument names its
+    /// reach declares, Program's own `destination` argument aside, distinct
+    /// and in declaration order — what `PerformerFacets.opFacetOf` is keyed
+    /// by.
+    let opKinds (state: StateWitness<'Node, 'Op>) (op: 'Op) : string list =
+        ServerArgumentPolicy.reachOfOp state op
+        |> List.map fst
+        |> List.filter (fun name -> name <> ServerArgumentPolicy.DestinationArgument)
+        |> List.distinct
+
     /// **Run one handler under deterministic replay, performing its ops as the
     /// placement declares.**
     ///
@@ -256,8 +337,14 @@ module Durable =
     /// served stage never asks it — the journal's answer stands — so a resumed
     /// run serves its recorded prefix and refuses the first stage it did not
     /// record. `runWith` passes the refusal that never refuses.
+    ///
+    /// `witnessOf` builds the witness over this run's ENTRY READER (Phase
+    /// 2165, D39): a witness that reads the world in its plan phase closes
+    /// over the reader it is handed, so the read is journaled at its ordinal
+    /// and served on replay; a witness that reads nothing ignores it, which is
+    /// what `runWith` passes.
     let internal runGuarded
-        (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
+        (witnessOf: EntryReader -> ProgramWitness<'Node, 'Op, 'Walk, 'Position>)
         (services: DurableServices)
         (invocation: string)
         (registry: ServerEffectRegistry)
@@ -267,7 +354,9 @@ module Durable =
         (nodeId: string)
         (handler: Handler<'Action, 'Op>)
         (store: ServerStore<'Node, 'Store>)
-        : DurableOutcome<'Node, 'Store, 'Op, 'Effect> =
+        : DurableOutcome<'Node, 'Store, 'Op, 'Effect>
+              when 'Position :> IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>
+        =
         let recorded = services.Journal.Read invocation
 
         // The ordinal of the next performer invocation. Mutable because the
@@ -346,8 +435,10 @@ module Durable =
                     beforeInvoking ()
                     invoke step capability subject performer args
 
+            let previous = Journal.capabilityOf recorded step
+
             let diverged =
-                match Journal.capabilityOf recorded step, Journal.subjectOf recorded step with
+                match previous, Journal.subjectOf recorded step with
                 | Some previous, Some previousSubject -> previous <> capability || previousSubject <> subject
                 | _ -> false
 
@@ -356,8 +447,19 @@ module Durable =
                 // recorded run did — another arm, or the same arm over another
                 // op. Serving the recorded answer would be delivering one call's
                 // result to another; refusing is the only safe reading, and the
-                // handler rolls back around it.
-                Error DurableCode.ReplayDivergence
+                // handler rolls back around it. Where either side is the plan's
+                // ENTRY READ (Phase 2165), the resume would PLAN differently
+                // from the run it resumes, and the refusal names the read.
+                if capability = EntryReadCapability then
+                    Error(DurableCode.entryReadDiverged (subject |> Option.defaultValue ""))
+                elif previous = Some EntryReadCapability then
+                    Error(
+                        DurableCode.entryReadDiverged (
+                            Journal.subjectOf recorded step |> Option.flatten |> Option.defaultValue ""
+                        )
+                    )
+                else
+                    Error DurableCode.ReplayDivergence
             else
                 match Journal.stepOf recorded step with
                 | JournaledStep.Value value ->
@@ -423,6 +525,29 @@ module Durable =
                 | Fuaran.Core.JArr extent -> Ok extent
                 | _ -> Error "the journal's recorded extent is not a list")
 
+        // The plan's ENTRY READ (Phase 2165, D39) through the same wrapper:
+        // journaled at its ordinal under `ReadEntry`, the subject the read's
+        // name, the recorded value what the host answered — so a replay is
+        // SERVED what the recorded run's entry saw and the live world is not
+        // consulted, which is what lets a resumed plan stage the same calls
+        // the dead run staged. A read is idempotent by its own shape, so an
+        // indeterminate window over it closes by re-reading: nothing has been
+        // performed yet at a plan-phase ordinal, so the re-read is a first
+        // read. A recomputation that reads another subject here, or reaches a
+        // stage where the record holds a read, is the divergence the wrapper
+        // refuses, naming the read.
+        let journalEntry: EntryReader =
+            fun subject read ->
+                wrapAt
+                    EntryReadCapability
+                    (Some subject)
+                    IdempotencyFacet.Idempotent
+                    (fun () -> None)
+                    (fun _ -> read ())
+                    (Fuaran.Core.JObj [])
+
+        let witness = witnessOf journalEntry
+
         let journalling =
             { registry with
                 HostFunctions = registry.HostFunctions |> Map.map wrap
@@ -441,19 +566,24 @@ module Durable =
         // refusal `return-contract:<name>` and is journaled as `Refused`, never
         // as a completed performance; a replay serves that refusal as it
         // serves any other.
+        // What repeating THIS op does (Phase 2165, D39, F-FACET): the meet over
+        // the effect kinds its reach names, under the per-kind declarations,
+        // falling back to the whole-performer one — read per op, so a crash
+        // inside a content-addressed write closes its window by re-invoking
+        // while one inside a push is refused, in one vocabulary. The prefix
+        // (F-RECEIPTS) rides through the wrapper untouched: it is the handler's
+        // perform fold's, and a served stage's recorded receipt joins it there.
         let performing =
             match performance with
             | OpPerformance.InMemory -> OpPerformance.InMemory
             | OpPerformance.Performed perform ->
-                let declared = PerformerFacets.opPerformerFacet services.Performers
-
-                OpPerformance.Performed(fun state op ->
+                OpPerformance.Performed(fun prefix state op ->
                     wrapAt
                         OpStageCapability
                         (Some(opSubject witness.State op))
-                        declared
+                        (PerformerFacets.opFacetOf (opKinds witness.State op) services.Performers)
                         opRefusal
-                        (fun _ -> perform state op)
+                        (fun _ -> perform prefix state op)
                         (Fuaran.Core.JObj []))
 
         let outcome =
@@ -491,7 +621,43 @@ module Durable =
         (handler: Handler<'Action, 'Op>)
         (store: ServerStore<'Node, 'Store>)
         : DurableOutcome<'Node, 'Store, 'Op, 'Effect> =
-        runGuarded witness services invocation registry performance (fun () -> None) resolve nodeId handler store
+        runGuarded
+            (fun _ -> witness)
+            services
+            invocation
+            registry
+            performance
+            (fun () -> None)
+            resolve
+            nodeId
+            handler
+            store
+
+    /// **`runWith` for a witness whose PLAN reads the world** (Phase 2165,
+    /// D39, F-ENTRY). `witnessOf` is handed this run's `EntryReader` and
+    /// builds the witness over it — the state witness's `Apply` reads the
+    /// world through the reader, under a name of the host's own — so the read
+    /// is journaled at its ordinal like a host call's answer and a re-entry of
+    /// the same invocation is SERVED it: the resumed plan observes what the
+    /// dead run's entry saw, never the live world, stages the same calls, and
+    /// the journaled stages are served. Nothing is asked of the host beyond
+    /// building its witness over the reader; a host that re-supplied the dead
+    /// run's read itself may stop. Outside a durable run the same witness is
+    /// built over `EntryReader.live`.
+    let runReading
+        (witnessOf: EntryReader -> ProgramWitness<'Node, 'Op, 'Walk, 'Position>)
+        (services: DurableServices)
+        (invocation: string)
+        (registry: ServerEffectRegistry)
+        (performance: OpPerformance<'Node, 'Op>)
+        (resolve: string -> Result<Fuaran.Core.Table, Fuaran.Compute.EvalError>)
+        (nodeId: string)
+        (handler: Handler<'Action, 'Op>)
+        (store: ServerStore<'Node, 'Store>)
+        : DurableOutcome<'Node, 'Store, 'Op, 'Effect>
+              when 'Position :> IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>
+        =
+        runGuarded witnessOf services invocation registry performance (fun () -> None) resolve nodeId handler store
 
     /// `runWith` at `OpPerformance.InMemory`: ops are performed by being
     /// applied, which is every placement before Phase 1967 and the UI tier
@@ -551,7 +717,7 @@ module Durable =
                     // by the journal exactly as its host calls are.
                     let durable =
                         runGuarded
-                            host.Witness
+                            (fun _ -> host.Witness)
                             services
                             (sprintf "%s/%d" invocation ordinal)
                             (ServerServices.effects host)
@@ -780,7 +946,17 @@ module DurableControls =
         let opRefusal = Controls.opStageRefusal refusals.Add state
 
         { Durable =
-            Durable.runGuarded witness services invocation controlled performance opRefusal resolve nodeId handler store
+            Durable.runGuarded
+                (fun _ -> witness)
+                services
+                invocation
+                controlled
+                performance
+                opRefusal
+                resolve
+                nodeId
+                handler
+                store
           Controls = state
           Refusals = List.ofSeq refusals }
 

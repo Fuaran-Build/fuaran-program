@@ -2633,3 +2633,106 @@ correction §9.5 already required; the `0.8.0` draft carries no entry for it.
 codec while the fold refuses it: the two read one view. A domain that hides a call inside a leaf hides
 it from both, as it always did. The document check's referenced spelling remains in the generic codec
 until that subject's decoder carries it.
+
+## D39 — The durable tier journals the plan's ENTRY READ through the run's `EntryReader`, so a re-entry plans against what the dead run saw and a resume that would plan differently is refused naming the read; the op performer and its contracts see the run's prefix; a facet is declared per effect kind; contracts compose (2026-10-09)
+
+**Context.** D12 made the durable interpreter journal the arms that reach outside, and D23 extended
+that to a performed op stage, on one premise both state: the plan phase is a function of the entry
+state, so a re-run recomputes the same staged list and the journaled stages are served at the same
+ordinals. A verb whose plan READS THE WORLD breaks the premise the moment its own perform phase moves
+what it read. The first consumer to run a mutating verb on `Durable.runWith` — a verb whose plan reads
+a store inside its state witness's `Apply` before deciding what to perform, performs an op that
+retires what it read, and is interrupted after the op and before the stage after it — found that the
+re-entry re-planned against the moved store, was refused by the domain's own "nothing matched" before
+any journaled stage, and the stage after the op stayed undone. The resume held only because that
+consumer's test host re-supplied the dead run's read by hand, which is machinery beside Program that
+Program's claim was supposed to make unnecessary. Until this, no verb whose plan reads what it later
+moves was durable on Program, which is every verb that reads its store before writing it. Three
+smaller findings travelled with it from the same consumer: the op performer and its contract were
+handed the state as of the op and the op, but not the state before it nor the receipts of the earlier
+op stages, so a stage whose act is "the receipts before me" read them back from the host's journal;
+one idempotency facet covered the whole op performer, so idempotent writes and a non-idempotent push
+could not be declared apart; and `performedChecked` took one contract, so several were nested by hand.
+
+**Premises checked against the tree first.** The finding reproduces at the toy witness without any
+consumer: a witness whose `Apply` reads a slot of a world, an op performer that retires the slot, a
+journal that dies at the host call's attempt, and a re-entry under a live-reading witness — refused
+`Failed("ApplyOps", "no-match: …")` from the plan phase, nothing served, the host call never run
+(`DurableInterpreterTests`, the first case). 1905 and 1991 had already journaled two plan-phase reads
+(a staged query, a store-bound `Each`'s extent) through the one wrapper at their ordinals; the entry
+read is the third of that family, not a new mechanism. The durable model's parameters the theorems
+assume: the journal snapshot is read once at entry (`durable-journal-read-once`), the read's subject is
+the host's name for it, the read and the staged calls take their ordinals from one cursor in
+plan-then-perform order (stated as a model-bridge assumption, pinned by the host), and what the plan
+does with the served value is the host's `Apply`, opaque as `w_apply` already is.
+
+**The choice — (a) a journaled plan-phase read, through a reader the run hands the witness.** The
+shard named two routes. (b), an entry-state record on the journal port — the invocation records the
+world it planned against and a re-entry plans against the record — is not available to Program as it
+stands: the state witness has `Canonical` and `Diff` but no decoder, so a recorded entry state could be
+compared with but never reconstructed, and the read the finding is about happens inside `Apply`, not
+at the store handed to the run, so recording the entry store would have recorded the wrong thing.
+(a) is taken, in the shape 1991 already cut for the extent: `EntryReader` is `ExtentReader`'s shape
+over one `JVal` — handed the read's NAME and the live read, answering what the plan should see.
+`Durable.runReading` takes the witness as a FUNCTION of this run's reader, so a domain closes its
+`Apply` over it and nothing is asked of Program's core or of the witness types; the read goes through
+`wrapAt` at an ordinal of its own under `ReadEntry`, the subject the read's name, the completed value
+the host's answer, declared idempotent (a read repeats freely; an undecided read at a plan-phase
+ordinal has performed nothing yet, so re-reading is a first read) and asked no operator refusal. On
+re-entry the read is served, the plan stages the same calls, and the op stages are served at the
+ordinals they were recorded at. `runWith`, `run`, `arm`, `stepVia` and the controls-aware forms are
+`runReading` over a witness that ignores the reader, unchanged. **Two alternatives to the reader's
+delivery were rejected:** a mutable handle the run installs into (a read outside a run would have to
+be refused at run time, and the cursor it shares is already the one mutable cell this file apologises
+for) and a reader on the effect registry (the witness is built before the run wraps the registry, so
+it would close over the unwrapped reader).
+
+**The refusal is typed and names the read.** With the read served, a resume cannot plan differently
+by reading the world; it can plan differently only by reaching, at the read's ordinal, a different
+read or a stage, or by reaching a stage where the record holds a read — the resumed program is not
+the recorded one, or the entry store handed in differs. That is the wrapper's divergence check, and
+where either side of it is an entry read the refusal is `durable-entry-read-diverged:<subject>`
+rather than `durable-replay-divergence`, so the halt a caller reads says which read moved rather
+than the domain's "nothing matched". An op-stage or host-call divergence keeps its code, so the
+Phase 1980 differential is untouched.
+
+**The three smaller findings, in the same vocabulary.** (F-RECEIPTS) `OpPerformance.Performed` is
+handed `OpPrefix` first — the planned state the op was applied TO and the receipts of the op stages
+performed before it, in perform order; the handler's perform fold threads the receipts, so under the
+durable interpreter a served stage's RECORDED receipt is in the next performer's prefix exactly as a
+performed one's would be, which is what makes a resumed commit see the dead run's receipts without
+the host reading them back. `OpContract.Holds` takes the prefix too, so a contract can state what an
+op owed; `OpContract.at` is the prefix-blind shape every contract had. (F-FACET) `PerformerFacets`
+gains `OpKinds`, a facet per effect KIND, a kind being an argument name the op's reach declares — the
+vocabulary a domain already declares per op for the policy, so no second classification is asked of
+it. What repeating one op does is the MEET over its kinds, a kind nobody declared reading as the
+whole-performer declaration; the durable wrapper reads it per op. The static derivation, which is
+handed no witness, reads the arm as the meet over everything declared — sound, coarser than the
+wrapper's per-op reading, and a deliberate choice over threading the witness through
+`Facets.ofEffect` and every caller: the derivation is a handler-level lower bound and the wrapper is
+where the decision is taken. Revisit if a host needs a write-only handler to derive idempotent
+beside a declared push. (F-CONTRACTS) `performedChecked` takes a list, composed by
+`OpContract.checkAll` with the first declared innermost, so the first that rejects names the refusal
+and a host that nested by hand reads the same one.
+
+**What this phase deliberately did not do — the finding effect.** The shard's fifth item, a typed
+"report a finding" effect journaled into the trace so a host derives an invocation's outcome from it,
+widens the closed `ServerEffect` vocabulary D3 says is widened by host act and not by a new arm, puts
+a case on the handler document's wire form and so on the program wire specification and its corpus,
+and reaches `HandlerWire`, `ServerDemanded` and the undo classification. That is a design with a
+specification act in it, held by other work this tier, and it is deferred to a phase of its own rather
+than half-cut here; nothing in this entry forecloses it, and the `Notify` arm is the obvious first
+candidate for its shape.
+
+**Version.** Rides the `0.8.0` draft, which is already breaking: a DU case's payload and a record
+field's type change (`STABILITY.md` says what a consumer pays). The journal port gains no case — a
+capability value, as 1905 and 1991 — so no recorded journal and no wire byte moves.
+
+**What this forecloses, and what it leaves.** A plan's read of the world is now something Program
+records, so a host that persists the entry read beside the journal is building what Program provides.
+A read a domain performs OUTSIDE the reader — a witness that ignores it and reads live — is not
+journaled and is exactly as durable as before, which is the host's choice and is visible in the
+journal's capabilities. The one-cursor assumption (the read's ordinal precedes the staged list's) is
+a property of `wrapAt` the model states and the host pins rather than proves; a second plan-phase
+arm through the wrapper inherits it as the two before it did.
+

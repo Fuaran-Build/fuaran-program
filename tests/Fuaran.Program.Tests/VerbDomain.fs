@@ -499,17 +499,15 @@ module Receipt =
     /// before anything performed; this is the check that what was done
     /// stayed inside it.
     let withinReach: OpContract<FileMap, FileOp> =
-        { Name = "within-reach"
-          Holds =
-            fun _ op receipt ->
-                let declared (argument: string) =
-                    (reach op).Arguments |> List.filter (fun (a, _) -> a = argument) |> List.map snd
+        OpContract.at "within-reach" (fun _ op receipt ->
+            let declared (argument: string) =
+                (reach op).Arguments |> List.filter (fun (a, _) -> a = argument) |> List.map snd
 
-                match claimed "paths" receipt, claimed "targets" receipt with
-                | Some ps, Some ts ->
-                    ps |> List.forall (fun p -> List.contains p (declared "path"))
-                    && ts |> List.forall (fun t -> List.contains t (declared "target"))
-                | _ -> false }
+            match claimed "paths" receipt, claimed "targets" receipt with
+            | Some ps, Some ts ->
+                ps |> List.forall (fun p -> List.contains p (declared "path"))
+                && ts |> List.forall (fun t -> List.contains t (declared "target"))
+            | _ -> false)
 
 /// The WORLD the verb's performer acts on — what the plan is performed
 /// against once the handler commits. Mutable on purpose: a performer is an

@@ -799,7 +799,7 @@ module Controls =
         : OpPerformance<'Node, 'Op> =
         match performance, opPerformerRevocation state with
         | OpPerformance.Performed _, Some(actor, reason) ->
-            OpPerformance.Performed(fun _ _ -> Error(refuseOpStage record actor reason))
+            OpPerformance.Performed(fun _ _ _ -> Error(refuseOpStage record actor reason))
         | _ -> performance
 
     /// This host's server-tier coverage **with the controls in force** — what a

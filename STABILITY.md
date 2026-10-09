@@ -161,6 +161,90 @@ that branched on the op performer's withdrawal as `ServerGateRefusesCapability "
 `coverage.Gate "ApplyOps"` to detect it, reads `ServerCapabilityWithdrawn "ApplyOps"` /
 `coverage.Withdrawn` instead.
 
+### Rides the draft: the durable tier journals the plan's entry read; the op performer and its contracts see the run's prefix; a facet per effect kind; contracts compose (Phase 2165)
+
+**Class: breaking**, which is the class the draft already carries, so it rides `0.8.0` rather than
+advancing it (no `v0.8*` tag exists). The surface guard would class this breaking on its own: a DU
+case changes its payload type and a record field its type, which every consumer that constructs or
+reads them meets at compile time. `DECISIONS.md` D39 records what was decided; this entry records
+what a consumer pays.
+
+#### What changed shape
+
+- **`OpPerformance.Performed` carries `OpPrefix<'Node> -> 'Node -> 'Op -> Result<JVal, string>`** —
+  the run's PREFIX is handed first (F-RECEIPTS). `OpPrefix<'Node>` is new: `Before`, the planned
+  state the op was applied to, and `Receipts`, the receipts of the op stages performed before it in
+  the run, in perform order — under the durable interpreter a served stage's recorded receipt among
+  them. `OpPerformance.performedBy` keeps its signature and lifts a prefix-blind performer;
+  `performedWithoutReceipt` likewise; `performedWithPrefix` is the new form that reads it. A consumer
+  that constructs `Performed` directly, or pattern-matches it to call the closure, adds the argument.
+- **`OpContract.Holds` is `OpPrefix<'Node> -> 'Node -> 'Op -> JVal -> bool`**, so a contract can
+  state what an op owed. `OpContract.at name holds` builds a contract over the planned state, the op
+  and the receipt alone — the shape every contract had. `OpContract.check` takes and returns a
+  prefix-aware performer.
+- **`OpPerformance.performedChecked` takes a LIST of contracts** (F-CONTRACTS), composed by Program
+  through the new `OpContract.checkAll`: checked in declaration order, the first that rejects names
+  the refusal, the empty list being the performer unchecked. A consumer that passed one contract
+  wraps it in a list; one that nested `OpContract.check` by hand lists them instead, first declared
+  first.
+- **`PerformerFacets` gains `OpKinds: Map<string, IdempotencyFacet>`** (F-FACET). `PerformerFacets.none`
+  carries the empty map; a full record literal adds `OpKinds = Map.empty` (FS0764 names it).
+  `PerformerFacets.isOpPerformerDeclared` is also true when any kind is declared, and
+  `PerformerFacets.opPerformerFacet` — the ARM's static reading — is the meet over every kind
+  declared and the whole-performer declaration where one was made, so a host that declares a
+  non-idempotent kind reads the arm as non-idempotent for the derivation whatever the other kinds
+  say.
+
+#### What was added
+
+- **The entry read (F-ENTRY):** `EntryReader` (`string -> (unit -> Result<JVal, string>) -> Result<JVal, string>`,
+  the shape of `ExtentReader`), `EntryReader.live`, `EntryReader.Capability` = `"ReadEntry"`,
+  `Durable.EntryReadCapability`, and **`Durable.runReading`** — `runWith` whose witness argument is a
+  function of this run's `EntryReader`. A state witness whose `Apply` reads the world builds itself
+  over the reader; the read is journaled at its ordinal in the one cursor sequence under `ReadEntry`
+  with the read's name as subject and the host's answer as its completed value, and a re-entry of the
+  same invocation is served it. **The journal port gains no case:** `JournalEntry` is unchanged and a
+  journal written before this phase replays unchanged; what is new is a CAPABILITY value the entries
+  carry, which is the same route `RunQuery` (1905) and `ReadExtent` (1991) took. `DurableCode.EntryReadDiverged`
+  = `"durable-entry-read-diverged"` and `DurableCode.entryReadDiverged subject`: the refusal a resume
+  meets when its plan would read another subject at a recorded read's ordinal, or reach a stage where
+  the record holds a read — naming the read, before any stage. `runWith`, `run`, `arm`, `stepVia`
+  and the controls-aware forms are `runReading` over a witness that ignores the reader, and are
+  unchanged in signature and behaviour.
+- **Per-kind facets:** `DurableServices.declaringOpKind`, `PerformerFacets.declareOpKind`,
+  `PerformerFacets.opFacetOf kinds`, `PerformerFacets.meet`, `Durable.opKinds` (the argument names an
+  op's reach declares, Program's `destination` aside). The durable wrapper reads each op stage's facet
+  as `opFacetOf (opKinds state op)`, so a crash inside a write declared idempotent closes its window by
+  re-invoking while one inside a push declared non-idempotent is refused, under one declaration. A host
+  that declared the whole performer and no kinds is read exactly as before.
+- **The prefix at the performer:** `OpPrefix`, `OpPrefix.atEntry`, `OpPerformance.performedWithPrefix`,
+  `OpContract.at`, `OpContract.checkAll`.
+- **Proofs:** `Staging.fst` gains `entry_read` and the theorems `entry_read_served`,
+  `entry_read_diverged_refused`, `entry_read_unrun_is_live`, `resumed_plan_observes_entry`;
+  `proofs/oracle/Staging.fs` is re-extracted (additive); `proofs.json` gains their rows and two stated
+  model-bridge assumptions; `DurableInterpreterTests` is the host.
+
+#### What did not move
+
+- **A host whose plan reads nothing pays nothing at run time:** `runWith` journals no read, the
+  ordinals are what they were, every recorded journal decodes and replays unchanged, and the wire —
+  the program wire specification, its corpus, every handler-document and demanded-document byte — is
+  untouched.
+- **A host that re-supplied the dead run's entry read itself keeps working** and is no longer
+  required to: under `runReading` the record is Program's.
+- **The facet derivation (`Facets.ofEffect` and the declaration check) keeps its signatures.** With
+  no kind declared it derives exactly as before.
+
+#### What a consumer does about it
+
+Add the prefix argument where `Performed` is constructed or its closure called; wrap a single
+contract in a list at `performedChecked`; add `OpKinds = Map.empty` to a full `PerformerFacets`
+literal; rewrite a contract literal as `OpContract.at`, or add the prefix argument to its `Holds`.
+A host whose plan reads the world moves to `runReading`, builds its witness over the reader under a
+name of its own for the read, and drops any re-supply of the dead run's read it did by hand; a host
+whose op vocabulary mixes idempotent and non-idempotent effects declares them apart with
+`declaringOpKind` and names each op's kinds in its reach.
+
 ## After 0.7.1 — the UI adapters leave this repository (fuaran#2012, DECISIONS.md D32) — BREAKING for the package set
 
 **The package set loses two packages; the four that remain do not move.** `Fuaran.Program.UI` and

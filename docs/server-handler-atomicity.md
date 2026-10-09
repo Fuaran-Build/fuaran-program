@@ -138,6 +138,27 @@ seam; it is the seam both other placements already have, used deliberately.
 > replayable record: a resume recomputes the invocation from its entry state and reads the journal
 > only at the perform phase, and nothing in it is an artefact from which a host re-issues the
 > invocation. Which is why the journal extension is not a specification act (D23 item 5).
+>
+> **And the plan's ENTRY READ, since [D39](../DECISIONS.md) (Phase 2165).** "Recomputes the
+> invocation from its entry state" has a premise: that the plan reads nothing but the entry state. A
+> verb whose plan reads the world — inside its state witness's `Apply`, before deciding what to
+> perform — breaks it the moment its own perform phase moves what it read: killed after the op and
+> re-entered, the re-plan reads the moved world and is refused by the domain before any journaled
+> stage is reached. `Durable.runReading` hands the witness an `EntryReader` bound to the run: the
+> read is journaled at its own ordinal, in the same cursor sequence as the staged calls, under
+> `ReadEntry` with the read's name as its subject and the host's answer as its completed value, and a
+> re-entry of the same invocation is SERVED it — the resumed plan observes what the dead run's entry
+> saw, never the live world, so it stages the same calls and the journaled stages are served
+> (`entry_read_served`, `resumed_plan_observes_entry` in `proofs/Staging.fst`). A resume whose plan
+> would read something else at that ordinal is refused under `durable-entry-read-diverged` naming the
+> read, before any stage. The exactly-once claim therefore covers what a plan READ as well as what it
+> performed; it is still a step record and not a replayable invocation, and still not a
+> specification act — the journal port gained no case, only a capability value. The op performer and
+> its contracts are also handed the run's PREFIX — the pre-op state and the receipts of the earlier op
+> stages, a served stage's recorded receipt among them on a resume — so a stage whose act is "the
+> receipts before me" no longer reads them back from the host's own journal; the idempotency facet is
+> declared per effect kind, so a vocabulary that mixes a content-addressed write with a push declares
+> them apart; and several contracts over one performer are composed by Program, first declared first.
 
 **What remains open.**
 

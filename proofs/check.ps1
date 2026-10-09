@@ -145,6 +145,8 @@ $modules = @(
                Subject = "the handler loop's and the durable interpreter's staging shapes, every plan-phase halt, the op performer and the op-channel guard, at every failure position of a scripted performer, against Handler.runWith at the toy witness" }
             @{ Project = "Fuaran.Program.Tests"; List = "Phase 1980 - the proved durable replay as oracle at the toy witness"; MinCases = 13
                Subject = "every journal shape the crash fixtures leave, against Durable.runWith at the toy witness, with three go-red bends" }
+            @{ Project = "Fuaran.Program.Tests"; List = "Phase 2165 - the durable tier at the toy witness: the entry read, the prefix, per-kind facets and composed contracts"; MinCases = 22
+               Subject = "the plan's entry read journaled, served on resume and refused naming the read, the extracted entry_read beside the reader runReading hands a witness over six journal shapes with a go-red bend, the op prefix at the performer and the contract, per-kind facets, composed contracts" }
         )
     }
     @{

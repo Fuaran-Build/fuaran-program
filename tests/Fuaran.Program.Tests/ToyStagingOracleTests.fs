@@ -267,7 +267,11 @@ let private modelRegistry
       r_op_perform =
         match performance with
         | OpPerformance.InMemory -> Staging.ONone
-        | OpPerformance.Performed perform -> Staging.OSome(fun state op -> (fun (_: JVal) -> perform state op), JObj []) }
+        // The prefix (Phase 2165) is outside the Staging model's token: the
+        // performers this oracle stages read none of it, so the model's side
+        // hands the entry prefix — `proofs.json`, `op-prefix-out-of-model`.
+        | OpPerformance.Performed perform ->
+            Staging.OSome(fun state op -> (fun (_: JVal) -> perform (OpPrefix.atEntry state) state op), JObj []) }
 
 let private productionDiagnostic (diagnostic: Staging.diagnostic<BoundedDiagnostic>) : ServerDiagnostic =
     match diagnostic with
@@ -397,7 +401,7 @@ let private witnessOf (case: StagingCase) : ToyWitness =
 
 let private performanceOf (case: StagingCase) (s: Scripted) : OpPerformance<ToyNode, ToyOp> =
     if case.PerformOps then
-        OpPerformance.Performed s.Op
+        OpPerformance.performedBy s.Op
     else
         OpPerformance.InMemory
 
@@ -1998,8 +2002,7 @@ let private receiptFor (state: ToyNode) (op: ToyOp) : JVal = JStr(receiptText st
 let private opContractName = "names-the-planned-op"
 
 let private plannedOpContract: OpContract<ToyNode, ToyOp> =
-    { Name = opContractName
-      Holds = fun state op receipt -> receipt = receiptFor state op }
+    OpContract.at opContractName (fun state op receipt -> receipt = receiptFor state op)
 
 let private modelOpContract: EffectGate.op_contract<ToyNode, ToyOp, JVal> =
     { EffectGate.oc_name = opContractName
@@ -2119,9 +2122,9 @@ let private keyedProduction (c: KeyedCase) (side: KeyedSide) =
 
     let performance =
         if c.Contracted then
-            OpPerformance.performedChecked plannedOpContract side.Op
+            OpPerformance.performedChecked [ plannedOpContract ] (fun _ -> side.Op)
         else
-            OpPerformance.Performed side.Op
+            OpPerformance.performedBy side.Op
 
     registry, performance
 
@@ -2661,11 +2664,9 @@ let effectGateTests =
                               let modelSeen = ResizeArray<string * string>()
 
                               let production: OpContract<ToyNode, ToyOp> =
-                                  { Name = vLabel
-                                    Holds =
-                                      fun s o r ->
-                                          productionSeen.Add(render s, witness.State.Stream.Encode o)
-                                          verdict s o r }
+                                  OpContract.at vLabel (fun s o r ->
+                                      productionSeen.Add(render s, witness.State.Stream.Encode o)
+                                      verdict s o r)
 
                               let model: EffectGate.op_contract<ToyNode, ToyOp, JVal> =
                                   { EffectGate.oc_name = vLabel
@@ -2676,7 +2677,10 @@ let effectGateTests =
 
                               let modelPerform (s: ToyNode) (o: ToyOp) = behaviour s o |> modelRes
 
-                              let expected = OpContract.check production behaviour state op |> modelRes
+                              let expected =
+                                  OpContract.check production (fun _ -> behaviour) (OpPrefix.atEntry state) state op
+                                  |> modelRes
+
                               let actual = EffectGate.check_op model modelPerform state op
 
                               let label =
@@ -2765,7 +2769,7 @@ let effectGateTests =
                   if outcome.Committed then
                       for state, op, receipt in run.ProductionReceipts do
                           Expect.isTrue
-                              (plannedOpContract.Holds state op receipt)
+                              (plannedOpContract.Holds (OpPrefix.atEntry state) state op receipt)
                               (sprintf "%s: a committed run landed a receipt its contract rejects" where)
 
                   match List.tryLast outcome.Diagnostics with
