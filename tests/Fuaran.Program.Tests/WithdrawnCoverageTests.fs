@@ -43,7 +43,7 @@ let private serverHost (coverage: ServerCoverage) =
     |> HostCoverage.withServer coverage
 
 let private performed: OpPerformance<ToyNode, ToyOp> =
-    OpPerformance.performedBy (fun _ _ -> Ok(JObj []))
+    OpPerformance.performedWithDetail (fun _ _ -> Ok(JObj []))
 
 let private inMemory: OpPerformance<ToyNode, ToyOp> = OpPerformance.InMemory
 

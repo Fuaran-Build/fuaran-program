@@ -65,7 +65,7 @@ let private runIn
     Handler.runWith
         witness
         registry
-        (OpPerformance.performedBy (world.Performer failAt))
+        (OpPerformance.performedWithDetail (world.Performer failAt))
         DataFrame.noResolve
         "verb"
         handler
@@ -413,7 +413,8 @@ let tests =
               let outcome =
                   runPerforming
                       world
-                      (OpPerformance.performedChecked [ Receipt.withinReach ] (fun _ -> world.Performer None))
+                      (OpPerformance.performedChecked [ Receipt.withinReach ] (fun _ state op ->
+                          world.Performer None state op |> Result.map OpReceipt.ofDetail))
                       archive
 
               Expect.isTrue outcome.Committed "every receipt named only what its op's reach declared"
@@ -439,7 +440,8 @@ let tests =
               let outcome =
                   runPerforming
                       world
-                      (OpPerformance.performedChecked [ Receipt.withinReach ] (fun _ -> world.Escaping escape None))
+                      (OpPerformance.performedChecked [ Receipt.withinReach ] (fun _ state op ->
+                          world.Escaping escape None state op |> Result.map OpReceipt.ofDetail))
                       archive
 
               Expect.isFalse outcome.Committed "rolled back"
@@ -487,7 +489,8 @@ let tests =
               let outcome =
                   runPerforming
                       world
-                      (OpPerformance.performedChecked [ recording ] (fun _ -> world.Performer None))
+                      (OpPerformance.performedChecked [ recording ] (fun _ state op ->
+                          world.Performer None state op |> Result.map OpReceipt.ofDetail))
                       archive
 
               Expect.isTrue outcome.Committed "committed"
@@ -509,7 +512,8 @@ let tests =
               let outcome =
                   runPerforming
                       world
-                      (OpPerformance.performedChecked [ Receipt.withinReach ] (fun _ -> world.Performer(Some 2)))
+                      (OpPerformance.performedChecked [ Receipt.withinReach ] (fun _ state op ->
+                          world.Performer (Some 2) state op |> Result.map OpReceipt.ofDetail))
                       archive
 
               Expect.isFalse outcome.Committed "rolled back"
@@ -848,7 +852,7 @@ let private planned (world: World) (failAt: int option) (handler: VerbHandler) =
     Handler.runPlanned
         witness
         undoRegistry
-        (OpPerformance.performedBy (world.Performer failAt))
+        (OpPerformance.performedWithDetail (world.Performer failAt))
         DataFrame.noResolve
         "verb"
         handler
@@ -860,7 +864,7 @@ let private undoIn (world: World) (failAt: int option) plan post =
     Undo.run
         witness
         undoRegistry
-        (OpPerformance.performedBy (world.Performer failAt))
+        (OpPerformance.performedWithDetail (world.Performer failAt))
         DataFrame.noResolve
         "verb"
         plan
@@ -1099,7 +1103,7 @@ let undoTests =
                   Handler.runPlanned
                       lying
                       undoRegistry
-                      (OpPerformance.performedBy (world.Performer None))
+                      (OpPerformance.performedWithDetail (world.Performer None))
                       DataFrame.noResolve
                       "verb"
                       writing
@@ -1113,7 +1117,7 @@ let undoTests =
                   Undo.run
                       lying
                       undoRegistry
-                      (OpPerformance.performedBy (world.Performer None))
+                      (OpPerformance.performedWithDetail (world.Performer None))
                       DataFrame.noResolve
                       "verb"
                       plan

@@ -949,6 +949,263 @@ module ServerArgumentPolicy =
         | ServerConstraintDefect.OffList argument -> "argument-not-allowed:" + argument
         | ServerConstraintDefect.OverCeiling limit -> "payload-over-ceiling:" + string limit
 
+// ============================================================================
+//  A performed write's RECEIPT is the performer's RETURN VALUE, typed (Phase
+//  2197, D43): the target it wrote and a digest of the content it wrote there.
+//  An invocation's changed set is the union of its receipts, so a commit stage
+//  stages exactly its own writes and refuses a write no receipt accounts for —
+//  without a receipt book kept beside the effect.
+// ============================================================================
+
+/// A digest of the CONTENT a write put at its target (Phase 2197, D43): SHA-256
+/// over the exact bytes written, rendered `sha256:` + 64 lowercase hex — the
+/// one digest convention the content address and the typed read's memo already
+/// use. Text is digested as its UTF-8 bytes with no byte-order mark and no
+/// newline or Unicode normalisation: the bytes the store holds, not a reading
+/// of them. The representation is private, so a digest is either computed from
+/// content or parsed from its rendering, never spelled by hand; equality and
+/// order are the rendering's, ordinal.
+type ContentDigest =
+    private
+    | ContentDigest of string
+
+    /// The rendering: `sha256:` + 64 lowercase hex.
+    member this.Text =
+        let (ContentDigest text) = this
+        text
+
+    override this.ToString() = this.Text
+
+module ContentDigest =
+
+    /// The one algorithm a digest names, and the prefix its rendering carries.
+    [<Literal>]
+    let Algorithm = "sha256"
+
+    let private prefix = Algorithm + ":"
+
+    /// The digest of these exact bytes.
+    let ofBytes (bytes: byte[]) : ContentDigest =
+        let hash = System.Security.Cryptography.SHA256.HashData(bytes)
+        ContentDigest(prefix + System.Convert.ToHexString(hash).ToLowerInvariant())
+
+    /// The digest of this text's UTF-8 bytes, no byte-order mark.
+    let ofText (text: string) : ContentDigest =
+        ofBytes (System.Text.UTF8Encoding(false).GetBytes text)
+
+    /// A digest from its rendering, refused unless it is `sha256:` and exactly
+    /// 64 lowercase hex digits — an uppercase or abbreviated digest is not the
+    /// same claim, and reading it as one would let two renderings of one
+    /// content disagree.
+    let parse (text: string) : Result<ContentDigest, string> =
+        let isHex (c: char) =
+            (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')
+
+        if
+            text.StartsWith(prefix, System.StringComparison.Ordinal)
+            && text.Length = prefix.Length + 64
+            && text.Substring(prefix.Length) |> Seq.forall isHex
+        then
+            Ok(ContentDigest text)
+        else
+            Error("not a sha256 content digest: " + text)
+
+/// One write a performer performed: the TARGET it wrote — the host's own name
+/// for the place, a path or a key — and the digest of the content it left there
+/// (Phase 2197, D43).
+type WriteReceipt =
+    {
+        /// Where the write landed, in the host's vocabulary. Compared ordinally.
+        Target: string
+        /// What it wrote there.
+        Digest: ContentDigest
+    }
+
+module WriteReceipt =
+
+    /// A receipt for these bytes written at `target`.
+    let ofBytes (target: string) (bytes: byte[]) : WriteReceipt =
+        { Target = target
+          Digest = ContentDigest.ofBytes bytes }
+
+    /// A receipt for this text written at `target`, as its UTF-8 bytes.
+    let ofText (target: string) (text: string) : WriteReceipt =
+        { Target = target
+          Digest = ContentDigest.ofText text }
+
+/// What an op performer RETURNS (Phase 2197, D43): the writes it performed, in
+/// the order it performed them, and the DETAIL — anything else it has to say,
+/// the 0.8.0 receipt kept verbatim (a commit's sha, an id the store assigned),
+/// which nothing in Program reads and a contract may. Only `Writes` is read by
+/// the union: an op that writes nothing a commit stage should account for says
+/// so with an empty list, and a performer registered without writes
+/// (`OpPerformance.performedBy`) is exactly that.
+type OpReceipt =
+    {
+        /// The writes, in perform order.
+        Writes: WriteReceipt list
+        /// Everything else the performer says it did; the inert empty object
+        /// when it has nothing to say.
+        Detail: Fuaran.Core.JVal
+    }
+
+module OpReceipt =
+
+    /// The receipt of an op that wrote nothing and has nothing to say.
+    let none: OpReceipt =
+        { Writes = []
+          Detail = Fuaran.Core.JObj [] }
+
+    /// A receipt carrying only a detail — the 0.8.0 receipt, which named no
+    /// typed write.
+    let ofDetail (detail: Fuaran.Core.JVal) : OpReceipt = { Writes = []; Detail = detail }
+
+    /// A receipt for these writes, with nothing else to say.
+    let ofWrites (writes: WriteReceipt list) : OpReceipt =
+        { Writes = writes
+          Detail = Fuaran.Core.JObj [] }
+
+    /// The receipt as the durable journal records it, as a stage's completed
+    /// value: `{"writes":[{"target":…,"digest":…},…],"detail":…}`, the writes in
+    /// perform order.
+    let encode (receipt: OpReceipt) : Fuaran.Core.JVal =
+        Fuaran.Core.JObj
+            [ "writes",
+              Fuaran.Core.JArr(
+                  receipt.Writes
+                  |> List.map (fun write ->
+                      Fuaran.Core.JObj
+                          [ "target", Fuaran.Core.JStr write.Target
+                            "digest", Fuaran.Core.JStr write.Digest.Text ])
+              )
+              "detail", receipt.Detail ]
+
+    /// The refusal code a served value that is not an encoded receipt meets —
+    /// a journal written before receipts were typed, or one not written by
+    /// `encode`. Refused, never read as a receipt with no writes: a resumed
+    /// run that silently lost the dead run's writes would refuse them at its
+    /// commit as foreign, or worse, stage nothing.
+    [<Literal>]
+    let MalformedCode = "op-receipt-malformed"
+
+    /// A receipt from its journaled form. Exactly the two members, the writes
+    /// each exactly `target` and `digest`, the digest a well-formed rendering.
+    let decode (value: Fuaran.Core.JVal) : Result<OpReceipt, string> =
+        let malformed (why: string) = Error(MalformedCode + ": " + why)
+
+        let write (value: Fuaran.Core.JVal) =
+            match value with
+            | Fuaran.Core.JObj members when List.length members = 2 ->
+                match List.tryFind (fst >> (=) "target") members, List.tryFind (fst >> (=) "digest") members with
+                | Some(_, Fuaran.Core.JStr target), Some(_, Fuaran.Core.JStr digest) ->
+                    match ContentDigest.parse digest with
+                    | Ok digest -> Ok { Target = target; Digest = digest }
+                    | Error why -> malformed why
+                | _ -> malformed "a write is not exactly a string target and a string digest"
+            | _ -> malformed "a write is not exactly a target and a digest"
+
+        match value with
+        | Fuaran.Core.JObj members when List.length members = 2 ->
+            match List.tryFind (fst >> (=) "writes") members, List.tryFind (fst >> (=) "detail") members with
+            | Some(_, Fuaran.Core.JArr writes), Some(_, detail) ->
+                writes
+                |> List.fold
+                    (fun acc value ->
+                        acc
+                        |> Result.bind (fun decoded -> write value |> Result.map (fun write -> write :: decoded)))
+                    (Ok [])
+                |> Result.map (fun decoded ->
+                    { Writes = List.rev decoded
+                      Detail = detail })
+            | _ -> malformed "not exactly a writes list and a detail"
+        | _ -> malformed "not exactly a writes list and a detail"
+
+/// Why a write a commit stage would stage is FOREIGN to the invocation (Phase
+/// 2197, D43). Two causes, kept apart because their remedies differ.
+[<RequireQualifiedAccess>]
+type ForeignCause =
+    /// No receipt of the invocation names the target at all.
+    | Unreceipted
+    /// A receipt names the target, and the content the invocation last wrote
+    /// there is not the content being staged.
+    | DigestDiffers of receipted: ContentDigest
+
+/// A write no receipt accounts for — the refusal a commit stage returns.
+type ForeignWrite =
+    { Target: string
+      Digest: ContentDigest
+      Cause: ForeignCause }
+
+module ForeignWrite =
+
+    /// The code every foreign-write refusal text begins with.
+    [<Literal>]
+    let Code = "foreign-write"
+
+    /// One foreign write, as text: the target and the cause, never the content.
+    let describe (foreign: ForeignWrite) : string =
+        match foreign.Cause with
+        | ForeignCause.Unreceipted -> foreign.Target + " (unreceipted)"
+        | ForeignCause.DigestDiffers receipted ->
+            foreign.Target
+            + " (staged "
+            + foreign.Digest.Text
+            + ", receipted "
+            + receipted.Text
+            + ")"
+
+    /// The refusal a commit stage answers for these foreign writes:
+    /// `foreign-write: <target> (<cause>); …`.
+    let refusal (foreign: ForeignWrite list) : string =
+        Code + ": " + (foreign |> List.map describe |> String.concat "; ")
+
+/// The union of an invocation's receipts (Phase 2197, D43) — what it changed,
+/// derived from what its performers RETURNED and from nothing kept beside them.
+module Receipts =
+
+    /// Every write, in perform order.
+    let writes (receipts: OpReceipt list) : WriteReceipt list = receipts |> List.collect _.Writes
+
+    /// The content each changed target holds after the invocation: the LAST
+    /// receipted write to it wins, in perform order.
+    let final (receipts: OpReceipt list) : Map<string, ContentDigest> =
+        writes receipts
+        |> List.fold (fun acc write -> Map.add write.Target write.Digest acc) Map.empty
+
+    /// The targets the invocation changed.
+    let changed (receipts: OpReceipt list) : Set<string> =
+        writes receipts |> List.map _.Target |> Set.ofList
+
+    /// Whether the receipts account for this write: it names a changed target
+    /// and the content the invocation last wrote there.
+    let account (receipts: OpReceipt list) (write: WriteReceipt) : Result<unit, ForeignWrite> =
+        match Map.tryFind write.Target (final receipts) with
+        | None ->
+            Error
+                { Target = write.Target
+                  Digest = write.Digest
+                  Cause = ForeignCause.Unreceipted }
+        | Some receipted when receipted = write.Digest -> Ok()
+        | Some receipted ->
+            Error
+                { Target = write.Target
+                  Digest = write.Digest
+                  Cause = ForeignCause.DigestDiffers receipted }
+
+    /// A commit stage's check over everything it would stage: every foreign
+    /// write, in the order staged, or nothing. A commit stage that refuses on
+    /// `Error` answers `ForeignWrite.refusal` as its performer's refusal.
+    let accountAll (receipts: OpReceipt list) (staged: WriteReceipt list) : Result<unit, ForeignWrite list> =
+        match
+            staged
+            |> List.choose (fun write ->
+                match account receipts write with
+                | Ok() -> None
+                | Error foreign -> Some foreign)
+        with
+        | [] -> Ok()
+        | foreign -> Error foreign
+
 /// How this placement PERFORMS an op (Phase 1967, the second witness's F2).
 ///
 /// `ApplyOps` has always applied its ops to the in-memory tree while planning,
@@ -990,8 +1247,9 @@ type OpPrefix<'Node> =
         Before: 'Node
         /// The receipts the op stages before this one answered, in perform
         /// order; under the durable interpreter a served stage's recorded
-        /// receipt is among them.
-        Receipts: Fuaran.Core.JVal list
+        /// receipt is among them. Typed since Phase 2197 (D43): a commit
+        /// stage reads what the run wrote from here (`Receipts.accountAll`).
+        Receipts: OpReceipt list
     }
 
 module OpPrefix =
@@ -1013,18 +1271,22 @@ type OpPerformance<'Node, 'Op> =
     /// order, and a part-way failure reports exactly the ops that ran before it
     /// (D8's residual, unchanged in shape) under a `PerformFailed` naming the
     /// capability and the performer's own reason. Handed the state as of the
-    /// op, then the op, and answers a RECEIPT (Phase 1981): what it says it
-    /// did, as a `JVal` — the paths it wrote, the sha it committed, or the
-    /// inert empty object for a performer with nothing to say. The receipt
-    /// lands in no slot and reaches no wire; the durable journal records it
-    /// as the step's completed value (D23), and a contract declared at
+    /// op, then the op, and answers a RECEIPT (Phase 1981), TYPED since Phase
+    /// 2197 (D43): the writes it performed, each a target and a digest of the
+    /// content written, and a detail for anything else it says it did (the
+    /// sha it committed), the inert empty object when it has nothing to say.
+    /// The receipt is the performer's RETURN VALUE, so what an invocation
+    /// changed is the union of its receipts (`Receipts.changed`) and is kept
+    /// nowhere beside the effect. It lands in no slot and reaches no wire; the
+    /// durable journal records it, encoded (`OpReceipt.encode`), as the step's
+    /// completed value (D23), and a contract declared at
     /// registration (`performedChecked`) checks it against the planned state
     /// and the op before the op is reported as performed. Constrained on the
     /// terms a host function is (D24): the gate and the policy decide what
     /// reaches it, and the contract decides what it may claim to have done.
     /// Handed the run's PREFIX first (Phase 2165, D39): the pre-op state and
     /// the receipts of the op stages before it.
-    | Performed of (OpPrefix<'Node> -> 'Node -> 'Op -> Result<Fuaran.Core.JVal, string>)
+    | Performed of (OpPrefix<'Node> -> 'Node -> 'Op -> Result<OpReceipt, string>)
 
 /// A host-declared post-condition on an op performer's RECEIPT (Phase 1981) —
 /// `ReturnContract` keyed by the state and the op: a name, which is the host's
@@ -1049,14 +1311,14 @@ type OpContract<'Node, 'Op> =
         /// D39: the pre-op state and the earlier op stages' receipts), the
         /// planned state and the op. A contract with nothing to say about the
         /// prefix ignores its first argument — `OpContract.at` spells that.
-        Holds: OpPrefix<'Node> -> 'Node -> 'Op -> Fuaran.Core.JVal -> bool
+        Holds: OpPrefix<'Node> -> 'Node -> 'Op -> OpReceipt -> bool
     }
 
 module OpContract =
 
     /// A contract over the planned state, the op and the receipt alone — the
     /// shape every contract had before the prefix was handed (Phase 2165).
-    let at (name: string) (holds: 'Node -> 'Op -> Fuaran.Core.JVal -> bool) : OpContract<'Node, 'Op> =
+    let at (name: string) (holds: 'Node -> 'Op -> OpReceipt -> bool) : OpContract<'Node, 'Op> =
         { Name = name
           Holds = fun _ state op receipt -> holds state op receipt }
 
@@ -1072,8 +1334,8 @@ module OpContract =
     /// in that model (`proofs.json`, `op-contract-prefix-out-of-model`).
     let check
         (contract: OpContract<'Node, 'Op>)
-        (perform: OpPrefix<'Node> -> 'Node -> 'Op -> Result<Fuaran.Core.JVal, string>)
-        : OpPrefix<'Node> -> 'Node -> 'Op -> Result<Fuaran.Core.JVal, string> =
+        (perform: OpPrefix<'Node> -> 'Node -> 'Op -> Result<OpReceipt, string>)
+        : OpPrefix<'Node> -> 'Node -> 'Op -> Result<OpReceipt, string> =
         fun prefix state op ->
             match perform prefix state op with
             | Error reason -> Error reason
@@ -1090,8 +1352,8 @@ module OpContract =
     /// hand. An empty list is the performer unchecked.
     let checkAll
         (contracts: OpContract<'Node, 'Op> list)
-        (perform: OpPrefix<'Node> -> 'Node -> 'Op -> Result<Fuaran.Core.JVal, string>)
-        : OpPrefix<'Node> -> 'Node -> 'Op -> Result<Fuaran.Core.JVal, string> =
+        (perform: OpPrefix<'Node> -> 'Node -> 'Op -> Result<OpReceipt, string>)
+        : OpPrefix<'Node> -> 'Node -> 'Op -> Result<OpReceipt, string> =
         List.fold (fun inner contract -> check contract inner) perform contracts
 
 module OpPerformance =
@@ -1119,17 +1381,27 @@ module OpPerformance =
     let inMemory<'Node, 'Op> : OpPerformance<'Node, 'Op> = OpPerformance.InMemory
 
     /// Register an op performer: handed the state as of each op and the op,
-    /// answering a receipt. No contract: the receipt is recorded and nothing
-    /// checks it (`uncontracted_is_direct` in `proofs/EffectGate.fst`). The
-    /// prefix is not handed — `performedWithPrefix` is the form that reads it.
-    let performedBy (perform: 'Node -> 'Op -> Result<Fuaran.Core.JVal, string>) : OpPerformance<'Node, 'Op> =
+    /// answering its typed receipt (Phase 2197, D43). No contract: the receipt
+    /// is recorded and nothing checks it (`uncontracted_is_direct` in
+    /// `proofs/EffectGate.fst`). The prefix is not handed —
+    /// `performedWithPrefix` is the form that reads it.
+    let performedBy (perform: 'Node -> 'Op -> Result<OpReceipt, string>) : OpPerformance<'Node, 'Op> =
         OpPerformance.Performed(fun _ state op -> perform state op)
+
+    /// Register an op performer that answers only a DETAIL — the 0.8.0
+    /// receipt shape (Phase 2197, D43): its receipt names no typed write, so
+    /// nothing it does is in the invocation's changed set, and a commit stage
+    /// that accounts its writes against the receipts refuses them as foreign.
+    /// The form for a performer whose act is not a write a commit stage
+    /// stages; a performer that writes says so with `performedBy`.
+    let performedWithDetail (perform: 'Node -> 'Op -> Result<Fuaran.Core.JVal, string>) : OpPerformance<'Node, 'Op> =
+        OpPerformance.Performed(fun _ state op -> perform state op |> Result.map OpReceipt.ofDetail)
 
     /// Register an op performer that reads the run's PREFIX (Phase 2165, D39):
     /// handed the pre-op state and the earlier op stages' receipts, then the
     /// state as of the op and the op. No contract.
     let performedWithPrefix
-        (perform: OpPrefix<'Node> -> 'Node -> 'Op -> Result<Fuaran.Core.JVal, string>)
+        (perform: OpPrefix<'Node> -> 'Node -> 'Op -> Result<OpReceipt, string>)
         : OpPerformance<'Node, 'Op> =
         OpPerformance.Performed perform
 
@@ -1142,15 +1414,16 @@ module OpPerformance =
     /// contract are handed the prefix.
     let performedChecked
         (contracts: OpContract<'Node, 'Op> list)
-        (perform: OpPrefix<'Node> -> 'Node -> 'Op -> Result<Fuaran.Core.JVal, string>)
+        (perform: OpPrefix<'Node> -> 'Node -> 'Op -> Result<OpReceipt, string>)
         : OpPerformance<'Node, 'Op> =
         OpPerformance.Performed(OpContract.checkAll contracts perform)
 
-    /// Register an op performer with nothing to say: its receipt is the inert
-    /// empty object — the honest spelling of "an op lands nothing", since the
-    /// wire value has no null — which no contract can be declared over.
+    /// Register an op performer with nothing to say: its receipt is
+    /// `OpReceipt.none`, no write and the inert empty object — the honest
+    /// spelling of "an op lands nothing", since the wire value has no null —
+    /// which no contract can be declared over.
     let performedWithoutReceipt (perform: 'Node -> 'Op -> Result<unit, string>) : OpPerformance<'Node, 'Op> =
-        OpPerformance.Performed(fun _ state op -> perform state op |> Result.map (fun () -> Fuaran.Core.JObj []))
+        OpPerformance.Performed(fun _ state op -> perform state op |> Result.map (fun () -> OpReceipt.none))
 
 // ============================================================================
 //  A READ the plan makes of the world is TYPED (Phase 2175, D41): it is either

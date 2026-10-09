@@ -207,7 +207,7 @@ let private noReadThenAudit: Handler<ToyAction, ToyOp> =
 /// plan read — the slot is retired from the world — and answers the label it
 /// landed as its receipt.
 let private retiring (world: World) (performed: int ref) : OpPerformance<ToyNode, ToyOp> =
-    OpPerformance.performedBy (fun state op ->
+    OpPerformance.performedWithDetail (fun state op ->
         performed.Value <- performed.Value + 1
 
         match op with
@@ -462,12 +462,12 @@ let private twoEdits: Handler<ToyAction, ToyOp> =
 
 /// A performer that records the prefix it was handed per op and answers the
 /// label it landed.
-let private recordingPrefix (seen: System.Collections.Generic.List<string * string option * JVal list>) =
+let private recordingPrefix (seen: System.Collections.Generic.List<string * string option * OpReceipt list>) =
     OpPerformance.performedWithPrefix (fun prefix state op ->
         match op with
         | Relabel(id, label) ->
             seen.Add(id, labelOf id prefix.Before, prefix.Receipts)
-            Ok(JStr label))
+            Ok(OpReceipt.ofDetail (JStr label)))
 
 let private prefix =
     testList
@@ -490,7 +490,8 @@ let private prefix =
 
               Expect.equal
                   (List.ofSeq seen)
-                  [ "title", Some "Draft", []; "footer", Some "Plain", [ JStr "One" ] ]
+                  [ "title", Some "Draft", []
+                    "footer", Some "Plain", [ OpReceipt.ofDetail (JStr "One") ] ]
                   "the first op saw the entry state and no receipts; the second saw the first's receipt"
           }
 
@@ -509,10 +510,10 @@ let private prefix =
                                 fun prefix _ op _ ->
                                     match op with
                                     | Relabel("title", _) -> prefix.Receipts = []
-                                    | Relabel _ -> prefix.Receipts = [ JStr "One" ] } ]
+                                    | Relabel _ -> prefix.Receipts = [ OpReceipt.ofDetail (JStr "One") ] } ]
                           (fun _ _ op ->
                               match op with
-                              | Relabel(_, label) -> Ok(JStr label)))
+                              | Relabel(_, label) -> Ok(OpReceipt.ofDetail (JStr label))))
                       Fuaran.Compute.DataFrame.noResolve
                       "node"
                       twoEdits
@@ -526,7 +527,7 @@ let private prefix =
                       (registryOf [])
                       (OpPerformance.performedChecked [ owed 2 ] (fun _ _ op ->
                           match op with
-                          | Relabel(_, label) -> Ok(JStr label)))
+                          | Relabel(_, label) -> Ok(OpReceipt.ofDetail (JStr label))))
                       Fuaran.Compute.DataFrame.noResolve
                       "node"
                       twoEdits
@@ -581,7 +582,7 @@ let private prefix =
 
               Expect.equal
                   (List.ofSeq seen)
-                  [ "footer", Some "Plain", [ JStr "One" ] ]
+                  [ "footer", Some "Plain", [ OpReceipt.ofDetail (JStr "One") ] ]
                   "the second op's performer was handed the served receipt as its prefix"
           } ]
 
@@ -765,7 +766,7 @@ let private contracts =
                   Handler.runWith
                       witness
                       (registryOf [])
-                      (OpPerformance.performedChecked contracts (fun _ _ _ -> Ok(JStr "receipt")))
+                      (OpPerformance.performedChecked contracts (fun _ _ _ -> Ok(OpReceipt.ofDetail (JStr "receipt"))))
                       Fuaran.Compute.DataFrame.noResolve
                       "node"
                       (oneEdit "title")
@@ -800,7 +801,7 @@ let private contracts =
           test "checkAll is the nesting of check, so a host that composed by hand reads the same refusal" {
               let a = OpContract.at "a" (fun _ _ _ -> false)
               let b = OpContract.at "b" (fun _ _ _ -> false)
-              let perform (_: OpPrefix<ToyNode>) (_: ToyNode) (_: ToyOp) = Ok(JStr "receipt")
+              let perform (_: OpPrefix<ToyNode>) (_: ToyNode) (_: ToyOp) = Ok(OpReceipt.ofDetail (JStr "receipt"))
               let prefix = OpPrefix.atEntry baseTree
 
               Expect.equal
@@ -810,7 +811,7 @@ let private contracts =
 
               Expect.equal
                   (OpContract.checkAll [] perform prefix baseTree (Relabel("title", "x")))
-                  (Ok(JStr "receipt"))
+                  (Ok(OpReceipt.ofDetail (JStr "receipt")))
                   "the empty list is the performer"
           } ]
 
