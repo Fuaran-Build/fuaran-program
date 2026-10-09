@@ -20,7 +20,60 @@ what a consumer pays to adopt it and why.
 This document starts at `0.6.0`. The slots before it are recorded where they were cut, in the
 comments beside `<Version>` in `Directory.Build.props`, and are not restated here.
 
-## 0.9.0 — DRAFT — a performed write's receipt is its return value, typed (Phase 2197)
+## 0.9.0 — DRAFT — the value channel on the state axis (Phase 2186)
+
+**Class: breaking**, by this file's own rule, for every consumer that matches an `OpView<'Node, 'Op>`
+exhaustively, constructs a `DemandedProjection` as a full record literal, reads a demanded document
+with a pinned reader, or constructs the extracted staging model's `witness` as a full literal.
+Additive for everyone else. `v0.8.0` is tagged, so this cannot ride it: it opens the `0.9.0` draft.
+`DECISIONS.md` D42 records what was decided; this entry records what a consumer pays.
+
+### What changed shape
+
+- **`OpView<'Node, 'Op>` gains `Let of placeholder: string * value: StateValue<'Node> * body: 'Op
+  list`** — the value channel on the state axis. A domain whose `View` never answers it is
+  unaffected; a consumer that matches the view exhaustively (a performer, a walk of its own) adds the
+  arm. `StateValue<'Node>` is `{ Name: string; Resolve: 'Node -> ExprResolution }`, equal by name on
+  `StateCollection`'s terms.
+- **`DemandedProjection` gains `Values: ValueDemand list`** (`{ Value: string; Targets: string list
+  }`), distinct and sorted like every other list; `Demanded.empty` carries `[]`, and a full literal
+  adds it. The signed envelope's drift report compares it.
+- **The demanded document is at version 9**: the root gains `values` (an array of `{"value",
+  "targets"}` objects, after `opaqueLeaves`, before `server`), `Demanded.Version` is `9` and
+  `decodableVersions` is `[9]`. A reader pinned to version 8 refuses a version-9 document, as the
+  document's rule says it must; `conformance/demanded-effect-projection.json` is re-cut at version 9,
+  and the UI tier's emitter re-emits it when that tier adopts this release.
+- **The extracted staging model's `witness` gains `w_resolve: string -> t -> resolution v`** and its
+  `op_view` the arm `OLetOf name value body`; `Staging.resolution` is new. A differential host that
+  builds the model witness as a full literal adds the member.
+
+### What was added
+
+- `OpView.values` and `StateWitness.values` (the value demands of an op sequence);
+  `ExprWitness.valueName` and `ExprWitness.value` (a `StateValue` over a domain's expression witness
+  instantiated at its state — the one new arrow, a constructor); `ValueDemand`.
+- `OpView.beneath`, `OpView.scopeDefects` and `OpView.iterations` read through the new arm;
+  `ProgramWire.replayDefectsOfOp` reports `non-literal-write` for it; `Undo.defectsOfOps` reads its
+  body once with the placeholder standing; `Handler.planOps` resolves the value through the
+  placement's `ExtentReader` (a one-element extent under the value's name — journaled under
+  `ReadExtent`, served on replay) and plans the substituted body.
+- `proofs/Staging.fst`: `let_of_plans_as_body_when_resolved`, `let_of_unresolved_plans_nothing`,
+  `let_of_errored_plans_nothing`, `plan_view_let_of`, `trail_view_let_of`; `Undo.fst` and
+  `EffectGate.fst` take the arm; `proofs.json` gains four rows.
+
+### What did not move
+
+- **Every handler that carries no `Let` plans, journals, classifies and projects byte-identically**,
+  except that its demanded document now carries `"values":[]` at version 9. The program wire
+  specification and its corpus do not change, and no wire codec was touched (D42, "Why the wire does
+  not move").
+- **`ExprResolution` and its three outcomes** are what the channel resolves to; no new resolution
+  type on the .NET side.
+- **The `ExtentReader` seam and the `ReadExtent` journal capability** carry the value's resolution;
+  no new reader seam and no new capability, so a journal written before this release replays
+  unchanged.
+
+### Rides the draft: a performed write's receipt is its return value, typed (Phase 2197)
 
 **Class: breaking.** `v0.8.0` is TAGGED, so this ADVANCES `<Version>` to `0.9.0` rather than riding
 it; a later breaking or additive change rides this draft until it is tagged. A DU case's payload, a

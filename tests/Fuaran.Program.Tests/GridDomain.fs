@@ -6,7 +6,9 @@
 /// before a real spreadsheet domain depends on it: a column of fixed
 /// identities, a two-variable grid as a nested `Each`, a copy-values loop that
 /// reads one identity and writes another, `For i = a To b` over a range, and an
-/// `If` inside the loop body. No UI type anywhere, like the toy and the verb.
+/// `If` inside the loop body — and, since Phase 2186, a computed write through
+/// the value channel (`LetValue`, D42). No UI type anywhere, like the toy and
+/// the verb.
 ///
 /// Its composition is `ProgramWitness<Grid, CellOp, Unfilled, Unfilled>`: a
 /// grid's automation is a handler over its cells, reached by no event and
@@ -32,21 +34,44 @@ type Grid =
     { Cells: Map<string, string>
       Regions: Map<string, string list> }
 
+/// The grid's EXPRESSIONS (Phase 2186, D42): what a computed write reads of
+/// the plan. A cell's value, or an integer multiple of one — the smallest
+/// language that writes `Cells(i, 4) = Cells(i, 3) * 2`. The domain's own
+/// spelling: the core resolves it through the grid's `ExprWitness` over the
+/// GRID as the store (`exprWitness`), and never sees inside it.
+type CellExpr =
+    /// The cell's value: a string, as the grid holds it; an EMPTY cell does
+    /// not resolve (`ExprResolution.NotResolved`).
+    | CellValue of cell: string
+    /// `factor` times the value, read as an integer; a value that is not one
+    /// is the domain's typed refusal (`ExprResolution.Errored`).
+    | Times of expr: CellExpr * factor: int
+
 /// The grid's ops: the three cell writes a spreadsheet's automation performs
 /// (set, clear, copy one identity's value onto another), a region's growth and
-/// its inverse, a guard on a cell being filled, and three flow ops the state
+/// its inverse, a guard on a cell being filled, and four flow ops the state
 /// witness VIEWS as the core's: an `If <cell> <> ""` as `Choose`, a
-/// `For Each` over a literal collection as `Each`, and a `For i = a To b` as an
-/// `Each` over the range's integers — sugar the domain resolves in its view,
-/// with no construct of the core's for it.
+/// `For Each` over a literal collection as `Each`, a `For i = a To b` as an
+/// `Each` over the range's integers, and a computed value bound over a body
+/// as `Let` — sugar the domain resolves in its view, with no construct of
+/// the core's for it.
 type CellOp =
     | Set of cell: string * value: string
     | Clear of cell: string
     /// Copy the SOURCE cell's value onto the TARGET cell — the read the
-    /// copy-values loop needs, fused into one op because the state axis has no
-    /// channel that carries a value from one op to a later one. An empty
-    /// source clears the target, as a spreadsheet's copy does.
+    /// copy-values loop needs, fused into one op. It STAYS beside the value
+    /// channel (Phase 2186) because its empty-source case is a DEFAULT — an
+    /// empty source clears the target, as a spreadsheet's copy does — and
+    /// the channel refuses an unresolved value by design; a copy through the
+    /// channel is a `LetValue` under a `WhenFilled` (the `copy through the
+    /// channel` test), which is the same act spelled without the default.
     | Copy of source: string * target: string
+    /// `v = <expr>` over a body that reads `{v}` (Phase 2186, D42): the value
+    /// channel. Viewed as `OpView.Let`, so the core resolves the expression
+    /// against the plan as of this position, substitutes the value for the
+    /// placeholder in the body, and plans the body — the domain's `Set`
+    /// never carries an expression, and `apply` never evaluates one.
+    | LetValue of placeholder: string * expr: CellExpr * body: CellOp list
     | AppendRow of region: string * row: string
     /// Drop the region's LAST row — the exact inverse of an append.
     | DropRow of region: string
@@ -90,9 +115,22 @@ module Placeholder =
 
         text.Replace("{" + placeholder + "}", value)
 
+/// The cells an expression reads, in reading order.
+let rec exprCells (expr: CellExpr) : string list =
+    match expr with
+    | CellValue cell -> [ cell ]
+    | Times(inner, _) -> exprCells inner
+
+/// The placeholder filled in every cell an expression names.
+let rec substituteExpr (placeholder: string) (element: JVal) (expr: CellExpr) : CellExpr =
+    match expr with
+    | CellValue cell -> CellValue(Placeholder.fill placeholder element cell)
+    | Times(inner, factor) -> Times(substituteExpr placeholder element inner, factor)
+
 /// The grid's `Substitute`: the element written over the placeholder in every
 /// operand of the op and of the ops beneath it, the op's shape untouched. A
-/// nested `ForEach` or `ForRange` keeps its own collection and placeholder.
+/// nested `ForEach`, `ForRange` or `LetValue` keeps its own collection or
+/// expression and placeholder; the expression's cells are operands too.
 let rec substituteOp (placeholder: string) (element: JVal) (op: CellOp) : CellOp =
     let fill = Placeholder.fill placeholder element
     let sub = substituteOp placeholder element
@@ -108,11 +146,14 @@ let rec substituteOp (placeholder: string) (element: JVal) (op: CellOp) : CellOp
     | ForEach(collection, name, body) -> ForEach(collection, name, body |> List.map sub)
     | ForRange(first, last, name, body) -> ForRange(first, last, name, body |> List.map sub)
     | ForRegion(region, ceiling, name, body) -> ForRegion(region, ceiling, name, body |> List.map sub)
+    | LetValue(name, expr, body) -> LetValue(name, substituteExpr placeholder element expr, body |> List.map sub)
 
 /// The grid's `Placeholders`: the names an op's OWN operands read. A
 /// `WhenFilled`'s condition is an op the core asks on its own (it is the
 /// `Choose`'s entry), so the flow op itself reads nothing, as the verb's
-/// branch reads nothing.
+/// branch reads nothing. A `LetValue`'s EXPRESSION is its own operand — the
+/// cells it reads may carry an enclosing loop's placeholder — while the name
+/// it binds is the body's, and the core scopes that.
 let placeholdersOf (op: CellOp) : string list =
     match op with
     | Set(cell, value) -> Placeholder.names cell @ Placeholder.names value
@@ -121,6 +162,7 @@ let placeholdersOf (op: CellOp) : string list =
     | Copy(source, target) -> Placeholder.names source @ Placeholder.names target
     | AppendRow(region, row) -> Placeholder.names region @ Placeholder.names row
     | DropRow region -> Placeholder.names region
+    | LetValue(_, expr, _) -> exprCells expr |> List.collect Placeholder.names
     | WhenFilled _
     | ForEach _
     | ForRange _
@@ -128,11 +170,34 @@ let placeholdersOf (op: CellOp) : string list =
 
 // ─── the codec ──────────────────────────────────────────────────────────────
 
+let rec encodeExpr (expr: CellExpr) : JVal =
+    match expr with
+    | CellValue cell -> Canon.typed "CellValue" [ "cell", JStr cell ]
+    | Times(inner, factor) -> Canon.typed "Times" [ "expr", encodeExpr inner; "factor", JInt factor ]
+
+let rec decodeExpr (value: JVal) : Result<CellExpr, string> =
+    match value with
+    | JObj members ->
+        let field (name: string) =
+            members |> List.tryFind (fun (k, _) -> k = name) |> Option.map snd
+
+        match field "$type", field "cell", field "expr", field "factor" with
+        | Some(JStr "CellValue"), Some(JStr cell), _, _ -> Ok(CellValue cell)
+        | Some(JStr "Times"), _, Some inner, Some(JInt factor) ->
+            decodeExpr inner |> Result.map (fun inner -> Times(inner, int factor))
+        | Some(JStr other), _, _, _ -> Error(sprintf "'%s' is not a grid expression" other)
+        | _ -> Error "the expression carries no '$type'"
+    | _ -> Error "the expression is not a JSON object"
+
 let rec encodeOp (op: CellOp) : string =
     let ops (body: CellOp list) =
         JArr(body |> List.map (encodeOp >> JStr))
 
     match op with
+    | LetValue(placeholder, expr, body) ->
+        Canon.render (
+            Canon.typed "LetValue" [ "body", ops body; "expr", encodeExpr expr; "placeholder", JStr placeholder ]
+        )
     | Set(cell, value) -> Canon.render (Canon.typed "Set" [ "cell", JStr cell; "value", JStr value ])
     | Clear cell -> Canon.render (Canon.typed "Clear" [ "cell", JStr cell ])
     | Copy(source, target) -> Canon.render (Canon.typed "Copy" [ "source", JStr source; "target", JStr target ])
@@ -238,6 +303,15 @@ let rec decodeOp (text: string) : Result<CellOp, string> =
                     |> Result.bind (fun placeholder ->
                         ops "body" members
                         |> Result.map (fun body -> ForRegion(region, ceiling, placeholder, body)))))
+        | Some(JStr "LetValue") ->
+            match field "expr" members with
+            | Some expr ->
+                decodeExpr expr
+                |> Result.bind (fun expr ->
+                    str "placeholder" members
+                    |> Result.bind (fun placeholder ->
+                        ops "body" members |> Result.map (fun body -> LetValue(placeholder, expr, body))))
+            | None -> Error "member 'expr' is absent"
         | Some(JStr other) -> Error(sprintf "'%s' is not a grid op" other)
         | _ -> Error "the op carries no '$type'"
     | _ -> Error "the op is not a JSON object"
@@ -288,16 +362,23 @@ let apply (op: CellOp) (grid: Grid) : Result<Grid, string> =
     | WhenFilled _
     | ForEach _
     | ForRange _
-    | ForRegion _ -> Error "a flow op is planned through its view and never applied"
+    | ForRegion _
+    | LetValue _ -> Error "a flow op is planned through its view and never applied"
 
 /// What an op REACHES: the cells it reads or writes under `cell` — BOTH of a
 /// copy's, so an allow-list over cells bounds what a copy reads as well as
 /// what it writes — and a region under `region`; all local. A guard reaches
-/// the cell it reads, and no destination.
+/// the cell it reads, and no destination; so does a computed value (Phase
+/// 2186): the cells its expression reads, so an allow-list over cells bounds
+/// what a computed write READS as surely as what its body writes.
 let reach (op: CellOp) : OpReach =
     let local arguments =
         { Arguments = arguments
           Destination = EffectDestination.Local }
+
+    let reads cells =
+        { Arguments = cells |> List.map (fun cell -> "cell", cell)
+          Destination = EffectDestination.Absent }
 
     match op with
     | Set(cell, _)
@@ -305,9 +386,8 @@ let reach (op: CellOp) : OpReach =
     | Copy(source, target) -> local [ "cell", source; "cell", target ]
     | AppendRow(region, _)
     | DropRow region -> local [ "region", region ]
-    | Filled cell ->
-        { Arguments = [ "cell", cell ]
-          Destination = EffectDestination.Absent }
+    | Filled cell -> reads [ cell ]
+    | LetValue(_, expr, _) -> reads (exprCells expr)
     // A flow op reaches nothing of its own: the policy reads its arms and its
     // LOWERED body beneath it, so a placeholder cannot hide a cell.
     | WhenFilled _
@@ -389,7 +469,8 @@ let undo (op: CellOp) : UndoClass<Grid, CellOp> =
     | WhenFilled _
     | ForEach _
     | ForRange _
-    | ForRegion _ -> UndoClass.OneWay "a guard or a flow op is not an edit"
+    | ForRegion _
+    | LetValue _ -> UndoClass.OneWay "a guard or a flow op is not an edit"
 
 /// The region a loop iterates, read as a collection: what an importer resolving
 /// `For Each r In Range("orders")` at IMPORT time writes into a literal `Each`
@@ -398,9 +479,38 @@ let undo (op: CellOp) : UndoClass<Grid, CellOp> =
 let regionCollection (region: string) (grid: Grid) : JVal list =
     Map.tryFind region grid.Regions |> Option.defaultValue [] |> List.map JStr
 
+/// The grid's EXPRESSION witness over the GRID as the store (Phase 2186,
+/// D42): the dispatch axis's arrow, instantiated at the state — a cell's
+/// value resolves to its string, an empty cell does not resolve, and a
+/// multiple of a value that is not an integer is the grid's typed refusal,
+/// which reaches the handler's diagnostic verbatim. `Uses` names the cells
+/// read, so the core names the value by what it reads.
+let exprWitness: ExprWitness<CellExpr, Grid> =
+    let rec resolve (grid: Grid) (expr: CellExpr) : ExprResolution =
+        match expr with
+        | CellValue cell ->
+            match Map.tryFind cell grid.Cells with
+            | Some value -> ExprResolution.Resolved(JStr value)
+            | None -> ExprResolution.NotResolved
+        | Times(inner, factor) ->
+            match resolve grid inner with
+            | ExprResolution.Resolved(JInt n) -> ExprResolution.Resolved(JInt(n * factor))
+            | ExprResolution.Resolved(JStr s) ->
+                match System.Int32.TryParse s with
+                | true, n -> ExprResolution.Resolved(JInt(n * factor))
+                | _ -> ExprResolution.Errored(sprintf "'%s' is not a number" s)
+            | ExprResolution.Resolved other -> ExprResolution.Errored(sprintf "%s is not a number" (Canon.render other))
+            | other -> other
+
+    { Resolve = resolve
+      Uses = fun expr -> exprCells expr |> List.map BindingUse.State }
+
 let view (op: CellOp) : OpView<Grid, CellOp> =
     match op with
     | Filled _ -> OpView.Require
+    // The value channel (Phase 2186): the expression is the domain's, the
+    // resolution against the plan is the core's, through `ExprWitness.value`.
+    | LetValue(placeholder, expr, body) -> OpView.Let(placeholder, ExprWitness.value exprWitness expr, body)
     | WhenFilled(cell, body) -> OpView.Choose(Filled cell, body, [], None)
     | ForEach(collection, placeholder, body) -> OpView.Each(Collection.Literal collection, placeholder, body)
     | ForRange(first, last, placeholder, body) ->
@@ -443,7 +553,8 @@ let witness: ProgramWitness<Grid, CellOp, Unfilled, Unfilled> =
                 | WhenFilled _
                 | ForEach _
                 | ForRange _
-                | ForRegion _ -> None
+                | ForRegion _
+                | LetValue _ -> None
           Canonical = canonical
           Diff = diff
           View = view

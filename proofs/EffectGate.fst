@@ -453,6 +453,14 @@ and plan_view_admitted (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type
     (match w.w_read_extent collection tree with
      | OSome xs -> if length xs <= ceiling then plan_each_admitted w gate cap stage elements tree staged else ()
      | ONone -> ())
+  // The value channel (Phase 2186): resolved, the body prepends what a
+  // sequence prepends; unresolved or errored, nothing.
+  | OLetOf name value body ->
+    plan_view_let_of w cap stage name value body tree staged;
+    (match w.w_resolve name tree with
+     | Resolved _ -> plan_views_admitted w gate cap stage body tree staged
+     | NotResolved -> ()
+     | Errored _ -> ())
 
 and plan_repeat_admitted (#t: Type0) (#b: Type0) (#v: Type0) (#o: Type0) (#q: Type0) (#a: Type0) (#eff: Type0) (#d: Type0) (#p: Type0)
                          (w: witness t b v o q a eff d) (gate: string -> bool) (cap: string)

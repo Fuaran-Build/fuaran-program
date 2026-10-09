@@ -352,6 +352,31 @@ take the shape through the same `_each` helpers under the read. Every other theo
 clause. NOT modelled: that the durable interpreter journals the read and serves the record on replay
 — the model's arrow reads the state; `GridWitnessTests` class B and `StoredEachTests` pin it.
 
+### 11. `let_of_plans_as_body_when_resolved` / `let_of_unresolved_plans_nothing` / `let_of_errored_plans_nothing` — a `Let` over ops is the sequence of its substituted body when the state resolves its value, and nothing otherwise (Phase 2186)
+
+The value channel on the state axis (`DECISIONS.md` D42) is a shape of the op VIEW, `OLetOf name
+value body` in `Staging.fst`: the body seen SUBSTITUTED over the value the host resolved, as
+`OEachOf` carries its elements lowered over the extent the host read. `plan_view` resolves the
+value ONCE, through the witness's `w_resolve` by the value's NAME against the state as of the op's
+position — the resolution is modelled concretely, applied to the threaded state, not carried as a
+free parameter — and `let_of_plans_as_body_when_resolved` says that when the state answers
+`Resolved value`, the plan and the undo trail of the `Let` are exactly those of `plan_views` /
+`trail_views` over its body: so every sequence law reaches a binding and nothing downstream learns
+a new shape. It is CONDITIONAL on the body being the substitution over that value, the witness's
+obligation (stated under "Assumed"), and the theorem binds the carried value to what the state
+answered. `let_of_unresolved_plans_nothing` and `let_of_errored_plans_nothing` are unconditional:
+when the state answers `NotResolved` the plan is refused naming the value, when it answers `Errored
+message` the plan is refused with the message VERBATIM — the domain's typed refusal through the
+arrow the contract already had (D19) — and in both the state is unmoved, nothing is staged, and the
+trail walk refuses alike. The effect-gate ladder (`plan_view_admitted`) and the undo ladder
+(`view_defect`, `trail_agrees_view`) take the shape through the `_views` list lemmas under the
+resolution, with no change to any `decreases` clause; `BoundedFold.fst` is untouched, because the
+dispatch axis's fold does not change. NOT modelled: that the durable interpreter journals the
+resolution under `ReadExtent` as a one-element extent and serves the record on replay — the model's
+arrow reads the state; `GridWitnessTests` (Phase 2186) pins it, with the unresolved and errored
+refusals, the demanded document's `values`, the `non-literal-write` classification and the argument
+policy's read of the value's reach.
+
 ### Phase 1715's lemmas, one by one
 
 Nothing is dropped silently. Each Phase-1715 name is either kept with its statement, or restated
@@ -463,6 +488,11 @@ Over the generic tier's view, for every witness (Phase 1898):
     `each_of_reverse_is_sequence_reverse` (unconditional; `reverse` takes no store),
     `each_of_priced_within_ceiling` (Phase 1991); and on the op axis `each_of_plans_as_each_over_extent`
     / `each_of_over_ceiling_plans_nothing`.
+12. **A `Let` over ops is the sequence of its substituted body when the state resolves its value,
+    and nothing otherwise** — `let_of_plans_as_body_when_resolved` (conditional on the body being the
+    substitution over the value the state resolved, stated under "Assumed"),
+    `let_of_unresolved_plans_nothing` and `let_of_errored_plans_nothing` (unconditional), all on the
+    op axis in `Staging.fst` (Phase 2186).
 
 At the UI witness (Phase 1715's five, each a corollary of the generic theorem above it):
 
@@ -549,6 +579,15 @@ host's file citations move with the code in those commits.
   beside it over a corpus of empty, single, several, halting, nested and flow-wrapped iterations; and
   by `EachTests`, which checks an `Each` against its hand-written unrolling over generated
   collections through every walk, and that on a tree with no `Each` the arrow is never invoked.
+- **A `Let` over ops is substituted over the value the state resolves at the op's position** (Phase
+  2186). `OLetOf` carries the `value` the HOST resolved and the `body` it substituted; the model
+  resolves the name itself (`w_resolve`) against the threaded state, but cannot check that `body` is
+  the substitution OVER that value — the same gap as the row below — so
+  `let_of_plans_as_body_when_resolved` requires the state to answer the value the body was
+  substituted over. The toy's state holds no value and no toy op views as a `Let`, so the shape is
+  exercised at the grid witness (`GridWitnessTests`, Phase 2186) rather than at the staging oracle:
+  a computed-write loop run, reversed and replayed, the two refusals, and every analysis read
+  against the value.
 - **A store-bound `Each` is lowered over the extent the store answers at entry** (Phase 1991).
   `VEachOf` / `OEachOf` carry `extent` and `elements` the HOST read and lowered; the model re-reads
   the source itself (`w_as_elements`, `w_read_extent`) and checks the ceiling, but cannot check that

@@ -2916,6 +2916,142 @@ value) and a typed finding effect are separate phases (fuaran#2197, fuaran#2195)
 forecloses either. The memo's scope is one run: a host that wants decodes shared across invocations
 keys its own cache the same way, by content.
 
+## D42 — The VALUE CHANNEL on the state axis is Program's: an op's operand may be a value the planned state holds, resolved ONCE at the op's position through the expression arrow the contract already had, bound to a placeholder by a `Let` in the view and substituted into the ops beneath it; closes `docs/generic-tier.md` §3.12 G1 (2026-10-09)
+
+**2026-10-09. Phase 2186. Records the operator's ruling of 2026-10-08 on fuaran#1992's finding G1
+("the value channel is Program's, on the D18/D19 precedent, not each domain's"); the worker's
+suggested disposition — one witness needs it, so the rule of three says the domain's for now — is
+NOT taken, and this entry does not re-open it. Cites D1, D4, D18, D19 and §3.12 G1. Under D14:
+`proofs/Staging.fst` was restated and re-proved, with `Undo.fst` and `EffectGate.fst` taking the new
+shape through their list lemmas, before a `.fs` moved; `BoundedFold.fst` is untouched, because the
+fold's laws are the dispatch axis's and this phase changes none of them.**
+
+**The finding.** The grid witness (§3.12) found that an op's operands are literals of the tree and
+the placeholder's element: nothing carries a value one op READ to a later op that WRITES it, and the
+dispatch axis's `ExprWitness` resolves against the binding store, never the planned state. The grid
+covered a copy with one fused domain op, `Copy(source, target)`; a computed write — the loop a
+spreadsheet's automation writes constantly, `Cells(i, 4) = Cells(i, 3) * 2` — would have needed each
+domain to carry an expression inside its own op and evaluate it in `Apply`. That is the drift D4
+warned about and D19 reversed: an expression hidden inside a domain's op is invisible to the demanded
+projection (the op's reach is no longer a literal), to the replay classifier (`non-literal-write` is
+already a `ReplayDefect` arm, and it would never fire), and to the argument policy — so every domain
+would rebuild those analyses beside Program. Data flow between ops is control structure in D1's
+terms: the evaluator's, not vocabulary.
+
+**The decision.** The state axis gains a value channel in the VIEW, not in a member:
+
+1. **`OpView.Let of placeholder * value: StateValue<'Node> * body`** — a sixth shape beside the
+   edit, the guard, the branch, the repeat and the per-element iteration. `StateValue<'Node>` is
+   `{ Name: string; Resolve: 'Node -> ExprResolution }`, the exact analogue of Phase 1991's
+   `StateCollection<'Node>` (`{ Name; Read }`): a name the projection states and the journal subjects
+   the read with, and the domain's own read of the planned state at the op's position. Equality is by
+   name, on `StateCollection`'s terms.
+2. **Resolution goes through `ExprWitness.Resolve`, instantiated at the state.** `ExprWitness.value
+   (expr: ExprWitness<'Expr, 'Node>) source` builds the `StateValue`: its `Resolve` is `expr.Resolve`
+   with the planned state as the store, its `Name` is `ExprWitness.valueName` — the state keys
+   `Uses` names under one spelling, `state:<k1>,<k2>` — so the name spells the reads. The three
+   outcomes are `ExprResolution`'s: `Resolved v` binds, `NotResolved` refuses with the value named,
+   `Errored reason` refuses with the domain's message verbatim (D19's route for a typed refusal).
+   An operand that cannot be read is a defect, never a default.
+3. **The plan resolves ONCE, at the op's position, and substitutes.** `Handler.planOps` resolves
+   the value against the state the ops before it produced, substitutes it for the placeholder in
+   every op of the body through the state witness's `Substitute` (D29's lowering), and plans the
+   body as a sequence from the same state. What plans is the substituted body: nothing downstream
+   learns a new shape, and every sequence law reaches it (`let_of_plans_as_body_when_resolved`).
+4. **The resolution is journaled and served on replay**, through the placement's `ExtentReader` — a
+   one-element extent under the value's name — so the durable tier journals it at its ordinal under
+   `ReadExtent` exactly as a store-bound extent, and a replay is SERVED the recorded value: the live
+   plan is not consulted a second time, which is D36's third condition applied to a value. No new
+   reader seam, no new journal capability.
+5. **Every analysis sees it.** `OpView.beneath` lists the body with the placeholder STANDING (as it
+   lists a store-bound loop's), so the argument policy's `reachOfOp` and the demanded projection's
+   `Reach` read every address the body writes; the value's READS are the binding op's own `Reach`,
+   which the domain answers as it answers a guard's (the grid names the cells its expression reads
+   under `cell`), so an allow-list over cells bounds what a computed write reads as surely as what
+   it writes. `OpView.scopeDefects` binds the placeholder lexically, as an `Each` does, and refuses a
+   read outside the binding and a rebinding of an enclosing name. `ProgramWire.replayDefectsOfOp`
+   reports `non-literal-write` for a `Let` exactly as for an `Assign` with `from`: undecidable, not
+   unsafe. `Undo.defectsOfOps` reads the body once with the placeholder standing; the binding is not
+   an edit, so a grid handler's undo posture stays `reversible` and the trail records every
+   substituted edit the run planned. And the demanded document gains **`values`** at **version 9**:
+   `ValueDemand = { Value: string; Targets: string list }` — the value by name and the absolute
+   targets of every op beneath the binding — so a reader tells a computed write from a literal one;
+   "writes THESE from THIS" is what the signed envelope then says. State axis only: a dispatch-axis
+   derived write already names its reads and its key under `stateNamespaces`.
+
+**Why no new witness member.** The shard asked for the smallest change to the contract that works
+and, if a member proved unavoidable, why an existing arrow does not fit. None was needed: `View` is
+the arrow that already exposes everything the core reads of an op's shape, and Phase 1991 had
+already shown how a read of the planned state rides it without a type parameter — a named record
+with a `'Node -> …` closure, built by the domain in its own `View`. `StateWitness<'Node, 'Op>` has no
+`'Expr`, and adding one would ripple through every signature in three packages to carry a type the
+core never inspects; `ExprWitness<'Expr, 'Node>` instantiated at the state carries it inside the
+domain instead, and `ExprWitness.value` is the only new arrow — a constructor, not an obligation.
+The alternative read of the shard — an `Operands: 'Op -> StateValue<'Node> list` member on the state
+witness, each edit op resolving its own operands — was rejected: it puts the expression INSIDE the
+write op (the acceptance says "with no expression carried inside a domain op"), it needs the scope
+check to subtract operand-bound names from `Placeholders`, and it gives the trail an op whose
+recorded form differs from its declared form.
+
+**Why the wire does not move.** An op is the domain's, encoded by its own `Stream.Encode`; the
+program wire specification references the view's shapes and spells none of them (D19's argument for
+the guard), and the `ReplayDefect` vocabulary already carries `non-literal-write`. The demanded
+document is Program's own conformance artefact (`conformance/demanded-effect-projection.json`, read
+at its authority by `DemandedCorpusReadTests`), not a program-wire artefact; its version moves here as
+version 8 did (Phase 2130), and the UI tier's emitter re-emits it when that tier adopts this release.
+So the five-artefact forward-coupling rule is not engaged, and the specification's text, schemas,
+emitter and manifest are unchanged.
+
+**A premise the shard carried that is false, recorded rather than built against.** The shard says
+"the budget prices the expression at the existing `MaxExprNodes` bound". There is no such bound in
+Program: `MaxExprNodes` is a bound of the UI tier's own budget, and Program's `InteractionBudget`
+prices actions and tree nodes — the op channel has never been priced, and a dispatch-axis `from`
+expression is not priced either. A `Let` is one step plus its body, as the model prices every
+binding, and an expression's own cost is the domain's, as a repeat's count range is the domain's
+codec's (D2 on the op axis). No mechanism was built for a bound that does not exist; a budget over
+expressions on either axis is a separate decision if a witness ever pays for its absence.
+
+**What stays.** The grid's fused `Copy(source, target)` is NOT retired. Its empty-source case is a
+DEFAULT — an empty source clears the target, as a spreadsheet's copy does — and the channel refuses
+an unresolved value by design; a copy through the channel is a `LetValue` under a `WhenFilled`, the
+same act spelled without the default, and the test "a copy through the channel is Copy without its
+default" pins the difference. The fused op remains the baseline G1 described, beside the channel that
+closes it.
+
+**Assumptions kept, with the evidence that would falsify each (D18's discipline).**
+
+- *The planned state at the op's position is the right store.* A value is resolved against the state
+  the ops BEFORE it produced, never the entry state. Falsified by a witness that needs a value read
+  from a state the plan has not reached — a lookahead — which no spreadsheet loop does; that witness
+  would be asking for a different construct, not a different resolution.
+- *One resolution per binding is enough.* A `Let` binds one name to one value over one body; a body
+  that needs two values nests two bindings, and the scope check keeps the names apart. Falsified by a
+  domain whose expressions must be resolved TOGETHER (a simultaneous assignment); none is known.
+- *The resolved value is a `JVal` and substitution is total.* The value crosses into the op through
+  `Substitute`, so a domain whose operands cannot be filled from a `JVal` cannot use the channel.
+  That is D29's assumption, inherited and unchanged; the grid fills a cell identity or a cell's
+  content from a string or an integer's canonical rendering.
+- *A one-element extent is an honest journal record for a value.* The journal stores the resolution
+  as `[v]` under `ReadExtent`, subject the value's name; the plan refuses a recorded extent that is
+  not one element. Falsified if a reader of the journal must tell a value read from an extent read by
+  capability alone — then a `ReadValue` capability is one line in the durable tier and this entry's
+  item 4 is amended; nothing recorded today would be unreadable.
+- *The policy's static read of the body with the placeholder standing bounds what the body writes.*
+  A value substituted into an ADDRESS is bounded by the standing shape, exactly as a store-bound
+  element is (D36); the policy does not re-check the substituted ops at plan time. Falsified by a
+  deployer whose allow-list must bind a computed address by its VALUE; the remedy is a plan-time
+  re-check in `planOps`, which this entry does not build because no witness asked for it.
+- *`values` with the placeholder standing is the right demand under a literal loop.* The demand
+  names `state:r{i}c3` once, not three lowered values, on `iterations`'s terms rather than
+  `beneath`'s. Falsified by a consumer of the demanded document that must enumerate every lowered
+  value; the lowering is one `List.collect` in `OpView.values`, and the document's version would move.
+
+**Version.** Breaking, by `STABILITY.md`'s rule: `OpView<'Node, 'Op>` gains a case (an exhaustive
+match over it breaks), `DemandedProjection` gains `Values` (a full literal breaks), the demanded
+document is at version 9 (a pinned reader refuses it), and `Staging.witness` gains `w_resolve` (the
+oracle's model witness is a full literal). `v0.8.0` is tagged, so this advances `<Version>` to
+`0.9.0` and opens its draft.
+
 ## D43 — A performed write's receipt is the performer's RETURN VALUE, typed: `OpReceipt` names each write's target and a SHA-256 digest of the bytes written; D39's prefix receipts are TYPED, not replaced; an invocation's changed set is the union of its receipts, and a commit stage refuses a write no receipt accounts for (2026-10-09)
 
 **2026-10-09. Phase 2197.** D39 (Phase 2165) gave an op performer and its contracts the run's

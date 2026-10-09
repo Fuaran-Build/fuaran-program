@@ -145,18 +145,18 @@ let projection =
 let document =
     testList
         "Phase 2130 — the demanded document carries opaqueLeaves at version 8"
-        [ test "the version is 8, and it is the only one read" {
-              Expect.equal Demanded.Version 8 "the version"
-              Expect.equal Demanded.decodableVersions [ 8 ] "the versions read"
+        [ test "the version is 9, and it is the only one read" {
+              Expect.equal Demanded.Version 9 "the version"
+              Expect.equal Demanded.decodableVersions [ 9 ] "the versions read"
           }
 
-          test "the member is encoded between iterations and server, and round-trips" {
+          test "the member is encoded between iterations and values, and round-trips" {
               let projection = Demanded.ofAction opaqueWitness (Seq [ Hush; Beep 1 ])
               let bytes = Demanded.encode projection
 
               Expect.stringContains
                   bytes
-                  "\"iterations\":[],\"opaqueLeaves\":[{\"reason\":\"in-process\",\"name\":\"Hush\"}],\"server\":null"
+                  "\"iterations\":[],\"opaqueLeaves\":[{\"reason\":\"in-process\",\"name\":\"Hush\"}],\"values\":[],\"server\":null"
                   "the member and its place"
 
               Expect.equal (Demanded.decode bytes) (Ok projection) "decode inverts encode"
@@ -174,10 +174,10 @@ let document =
               | Ok _ -> failtest "a document without opaqueLeaves must not read as one with none"
           }
 
-          test "a version-7 document is refused by version, not read through the version-8 lens" {
+          test "a previous-version document is refused by version, not read through this version's lens" {
               let bytes =
                   Demanded.encode Demanded.empty
-                  |> fun s -> s.Replace("\"version\":8", "\"version\":7")
+                  |> fun s -> s.Replace("\"version\":9", "\"version\":8")
 
               match Demanded.decode bytes with
               | Error failure -> Expect.equal failure.Defect DemandedDefect.UnknownVersion "the class"

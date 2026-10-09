@@ -378,6 +378,14 @@ type DemandedProjection =
         /// wire DID carry, whose behaviour lives in the host. Empty for every
         /// program whose witness declares no opaque leaf.
         OpaqueLeaves: OpaqueLeaf list
+        /// The values the planned state holds that a `Let` over ops resolves
+        /// at run time (Phase 2186, D42), each by the name that spells its
+        /// reads, with the absolute targets its body writes — the value
+        /// channel on the state axis, named so a reader tells a computed
+        /// write from a literal one. "Writes THESE from THIS" is what the
+        /// signed envelope then says. Empty for every program with none,
+        /// which is every program before this phase.
+        Values: ValueDemand list
     }
 
 /// What a host offers, against which a projection is checked.
@@ -877,6 +885,13 @@ module Demanded =
             projection.OpaqueLeaves
             |> List.distinct
             |> List.sortBy (fun o -> o.Reason, o.Name)
+          Values =
+            projection.Values
+            |> List.map (fun v ->
+                { v with
+                    Targets = v.Targets |> List.distinct |> List.sort })
+            |> List.distinct
+            |> List.sortBy (fun v -> v.Value, v.Targets)
           Server =
             projection.Server
             |> Option.map (fun s ->
@@ -934,6 +949,7 @@ module Demanded =
           OpaqueHandlers = []
           Iterations = []
           OpaqueLeaves = []
+          Values = []
           Server = None }
 
     /// What ONE action can ever ask for, as a projection — the client tier only,
@@ -1014,6 +1030,7 @@ module Demanded =
               OpaqueHandlers = projections |> List.collect _.OpaqueHandlers
               Iterations = projections |> List.collect _.Iterations
               OpaqueLeaves = projections |> List.collect _.OpaqueLeaves
+              Values = projections |> List.collect _.Values
               Server = server }
 
     /// Attach (or replace) the server tier, re-normalised.
@@ -1090,6 +1107,7 @@ module Demanded =
               OpaqueHandlers = opaque
               Iterations = iterations
               OpaqueLeaves = opaqueLeaves
+              Values = []
               Server = None }
 
     // ─── the projection as a wire document ───────────────────────────────────
@@ -1104,7 +1122,7 @@ module Demanded =
     /// The version this encoder emits, and — see `decodableVersions` — the only
     /// one this reader reads.
     [<Literal>]
-    let Version = 8
+    let Version = 9
 
     // The policy clause's discriminator, written once and read once. A literal
     // spelled at the encoder and again at the reader is the drift this document
@@ -1265,6 +1283,13 @@ module Demanded =
             |> List.map (fun o -> $"""{{"reason":{q o.Reason},"name":{q o.Name}}}""")
             |> arr
 
+        let values =
+            projection.Values
+            |> List.map (fun v ->
+                let targets = v.Targets |> List.map q |> arr
+                $"""{{"value":{q v.Value},"targets":{targets}}}""")
+            |> arr
+
         let server =
             match projection.Server with
             | None -> "null"
@@ -1338,7 +1363,7 @@ module Demanded =
 
                 $"""{{"effects":{se},"capabilities":{sc},"functions":{fns},"channels":{channels},"reach":{reach},"replay":{replay},"undo":{undo},"constraints":{constraints}}}"""
 
-        $"""{{"kind":{q Kind},"version":{Version},"effects":{effects},"hostCalls":{hostCalls},"stateNamespaces":{namespaces},"opaqueHandlers":{opaque},"iterations":{iterations},"opaqueLeaves":{opaqueLeaves},"server":{server}}}"""
+        $"""{{"kind":{q Kind},"version":{Version},"effects":{effects},"hostCalls":{hostCalls},"stateNamespaces":{namespaces},"opaqueHandlers":{opaque},"iterations":{iterations},"opaqueLeaves":{opaqueLeaves},"values":{values},"server":{server}}}"""
 
     // ─── the projection as a wire document: reading one back ─────────────────
     //
@@ -1689,6 +1714,16 @@ module Demanded =
                 { Collection = collection
                   Ceiling = ceiling }))
 
+    /// A value demand (Phase 2186): the value by name, and its targets as
+    /// strings — each an absolute address the op witness answered, carried
+    /// as written.
+    let private decodeValue version path value : Result<ValueDemand, DemandedDecodeFailure> =
+        declaredOnly version path [ "value"; "targets" ] value
+        |> Result.bind (fun () -> requireString version (child path "value") "value" value)
+        |> Result.bind (fun name ->
+            requireStrings version (child path "targets") "targets" value
+            |> Result.map (fun targets -> { Value = name; Targets = targets }))
+
     /// An opaque leaf (Phase 2130): the reason class and the act's name, both
     /// carried as written — a reason class this reader has never heard of is
     /// handed back, never dropped, on the discriminators' terms above.
@@ -1879,8 +1914,9 @@ module Demanded =
                                           Constraints = constraints }))))))))
 
     /// The four members every version of this document has carried, the
-    /// fifth version 7 added (`iterations`, Phase 1991) and the sixth version 8
-    /// added (`opaqueLeaves`, Phase 2130).
+    /// fifth version 7 added (`iterations`, Phase 1991), the sixth version 8
+    /// added (`opaqueLeaves`, Phase 2130) and the seventh version 9 added
+    /// (`values`, Phase 2186).
     let private decodeClientTier version root : Result<DemandedProjection, DemandedDecodeFailure> =
         requireStrings version "effects" "effects" root
         |> Result.bind (fun effects ->
@@ -1893,14 +1929,17 @@ module Demanded =
                         requireObjects version "iterations" "iterations" root decodeIteration
                         |> Result.bind (fun iterations ->
                             requireObjects version "opaqueLeaves" "opaqueLeaves" root decodeOpaqueLeaf
-                            |> Result.map (fun opaqueLeaves ->
-                                { Effects = effects
-                                  HostCalls = hostCalls
-                                  StateNamespaces = namespaces
-                                  OpaqueHandlers = opaque
-                                  Iterations = iterations
-                                  OpaqueLeaves = opaqueLeaves
-                                  Server = None }))))))
+                            |> Result.bind (fun opaqueLeaves ->
+                                requireObjects version "values" "values" root decodeValue
+                                |> Result.map (fun values ->
+                                    { Effects = effects
+                                      HostCalls = hostCalls
+                                      StateNamespaces = namespaces
+                                      OpaqueHandlers = opaque
+                                      Iterations = iterations
+                                      OpaqueLeaves = opaqueLeaves
+                                      Values = values
+                                      Server = None })))))))
 
     /// The first member whose read value is not in the canonical order the
     /// document promises. Compared against `normalise` rather than against a
@@ -1921,6 +1960,8 @@ module Demanded =
             Some "iterations"
         elif n.OpaqueLeaves <> projection.OpaqueLeaves then
             Some "opaqueLeaves"
+        elif n.Values <> projection.Values then
+            Some "values"
         elif n.Server <> projection.Server then
             Some "server"
         else
@@ -1980,6 +2021,7 @@ module Demanded =
                       "opaqueHandlers"
                       "iterations"
                       "opaqueLeaves"
+                      "values"
                       "server" ]
                     root
                 |> Result.bind (fun () -> decodeClientTier v root)

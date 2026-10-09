@@ -2069,6 +2069,74 @@
         "document": "DECISIONS.md"
       },
       "reason": "D36 item 6: the collection source travels in the domain's own codec (the toy's and the grid's test codecs gain a case), the demanded document — which gains the member `iterations` and moves to version 7 — is deliberately ungoverned by the specification (its section 11.2), and the journal step ReadExtent is the extension D23 declared is not a specification act. The codec families and the driver scenarios pass byte for byte against the specification clone FUARAN_PROGRAM_SPEC names."
+    },
+    {
+      "id": "let-of-plans-as-body-when-resolved",
+      "level": "proved",
+      "phase": "Phase 2186",
+      "claim": "A Let over ops — the value channel on the state axis — whose value the state resolves at the op's position plans exactly as the SEQUENCE of its substituted body, state and staged list, and walks the same undo trail, so every sequence law reaches it and nothing downstream learns a new shape; when the state does not resolve the value, or its resolution errors, the plan is refused before the first op of the body with the value named (or the domain's message verbatim), nothing moved and nothing staged, and the undo walk refuses alike. The resolution is modelled concretely: w_resolve is applied to the state threaded to the op's position, and the theorem binds the carried value to what the state answered.",
+      "evidence": {
+        "theorem": "let_of_plans_as_body_when_resolved",
+        "model": "proofs/Staging.fst",
+        "prover": "proofs/fstar-pin.json",
+        "supporting": [
+          "let_of_unresolved_plans_nothing",
+          "let_of_errored_plans_nothing",
+          "plan_view_let_of",
+          "trail_view_let_of"
+        ],
+        "definitions": [
+          "plan_view",
+          "plan_views",
+          "trail_view",
+          "trail_views",
+          "resolution",
+          "witness"
+        ],
+        "note": "conditional on the body being the substitution over the value the state resolved (the let-of-lowered-over-the-resolved-value row); the read itself — w_resolve by the value's name against the state as of the op — is the model's and happens once, before the first op of the body. Undo.fst's view_defects and trail_agrees_view, and EffectGate.fst's plan_view_admitted, take the new arm through the list lemmas with no change to any decreases clause."
+      }
+    },
+    {
+      "id": "let-of-lowered-over-the-resolved-value",
+      "level": "assumed",
+      "phase": "Phase 2186",
+      "claim": "The body an OLetOf carries is the ops beneath the binding substituted — through the witness's shape-preserving Substitute — over the value the same state resolves for the name at the op's position.",
+      "class": "witness-obligation",
+      "evidence": {
+        "assumption": "let_of_plans_as_body_when_resolved requires w_resolve name tree == Resolved value for the value the body was substituted over; the model cannot check that the body is that substitution, because substitution is not a thing it can define"
+      },
+      "mitigation": "the differential host would resolve the value against the state the case starts from through production's own Resolve and lower through production's Substitute; the toy's state holds no value and no toy op views as a Let, so the op-axis shape is exercised at the grid witness (GridWitnessTests, Phase 2186) rather than at the staging oracle: a computed-write loop run, reversed and replayed, an unresolved and an errored value refused, the demanded document, the replay classification, the argument policy and the journal each read against the value."
+    },
+    {
+      "id": "let-of-exercised-at-the-grid-witness",
+      "level": "tested",
+      "phase": "Phase 2186",
+      "claim": "At the grid witness, a Let resolves its value against the plan as of its position and plans its substituted body: a column derived from another is written, reversed to the seed and replayed from the journal with nothing performed; an unresolved value refuses before the body plans, named; an errored value halts with the domain's reason verbatim; the demanded document names the value and its targets under values and a literal write names none; the replay classifier reports non-literal-write; an allow-list over the target alone refuses the write and one admitting the source commits it; the resolution is journaled under ReadExtent, subject the value's name, and a replay over a moved source is served the record; a Let's placeholder is refused outside it and a rebinding is a shadow.",
+      "evidence": {
+        "family": "Phase 2186 — the grid witness: the value channel on the state axis",
+        "host": "tests/Fuaran.Program.Tests/GridWitnessTests.fs",
+        "cases": [
+          "a computed write: a column derived from another, run, reversed and replayed, with no expression in the write op",
+          "an unresolved value refuses the effect before the body plans, named, with nothing performed",
+          "an errored value halts with the domain's reason verbatim",
+          "every analysis sees the computed write, and none reads it as a literal",
+          "the resolved value is journaled under its name and a replay is served it, not a re-resolution",
+          "a copy through the channel is Copy without its default, which is why Copy stays",
+          "a Let binds lexically: its placeholder is refused outside it, and rebinding a loop's name is a shadow",
+          "the witness's own obligations: the codec round-trips, substitution reaches the expression, the expression witness answers the three outcomes"
+        ],
+        "runner": "run.ps1 (the Fuaran.Program.Tests project)"
+      }
+    },
+    {
+      "id": "let-of-specification-unchanged",
+      "level": "policy",
+      "phase": "Phase 2186",
+      "claim": "The program wire specification does not move for the value channel: no schema, fixture byte, refusal class or rule.",
+      "evidence": {
+        "document": "DECISIONS.md"
+      },
+      "reason": "D42, 'Why the wire does not move': an op is the domain's, encoded by its own Stream.Encode; the specification references the view's shapes and spells none of them; the ReplayDefect vocabulary already carries non-literal-write; the demanded document — which gains the member `values` and moves to version 9 — is deliberately ungoverned by the specification (its section 11.2), and the resolution is journaled under the existing ReadExtent step. The codec families and the driver scenarios pass byte for byte against the specification clone FUARAN_PROGRAM_SPEC names."
     }
   ]
 }

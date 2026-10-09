@@ -563,3 +563,264 @@ let classBTests =
                       (Some [ "o1"; "o2"; "o3" ])
                       "as does the grown region"
           } ]
+
+/// Phase 2186 — the VALUE CHANNEL on the state axis (DECISIONS.md D42): a
+/// computed write, `Cells(i, 4) = Cells(i, 3) * 2`, spelled as a `LetValue`
+/// whose expression the core resolves against the plan as of its position
+/// and substitutes into a body that reads the placeholder — with no
+/// expression inside the write op and nothing evaluated by `apply`.
+[<Tests>]
+let valueChannelTests =
+    /// `For i = 2 To 4: If Cells(i, 3) <> "" Then Cells(i, 4) = Cells(i, 3) * 2`.
+    let double =
+        handler
+            "double-column"
+            [ ForRange(
+                  2,
+                  4,
+                  "i",
+                  [ WhenFilled("r{i}c3", [ LetValue("v", Times(CellValue "r{i}c3", 2), [ Set("r{i}c4", "{v}") ]) ]) ]
+              ) ]
+
+    /// One computed write, unguarded, over a filled source.
+    let scale =
+        handler "scale" [ LetValue("v", Times(CellValue "r2c3", 2), [ Set("r2c4", "{v}") ]) ]
+
+    let refusedWith (h: GridHandler) (narrow: ServerEffectRegistry) =
+        let book = Workbook seeded
+
+        let outcome =
+            Handler.runWith
+                witness
+                narrow
+                (OpPerformance.performedBy book.Performer)
+                DataFrame.noResolve
+                "grid"
+                h
+                (storeOf seeded)
+
+        Expect.isFalse outcome.Committed "refused"
+        Expect.isEmpty book.Invocations "nothing performed"
+        outcome.Diagnostics |> List.last
+
+    testList
+        "Phase 2186 — the grid witness: the value channel on the state axis"
+        [ test
+              "a computed write: a column derived from another, run, reversed and replayed, with no expression in the write op" {
+              let outcome = classA double
+              let cells = outcome.Store.Tree.Cells
+
+              Expect.equal
+                  ([ 2..4 ] |> List.map (fun i -> Map.tryFind (sprintf "r%dc4" i) cells))
+                  [ Some "20"; Some "old"; Some "80" ]
+                  "rows 2 and 4 doubled from column 3; row 3's empty source left its target as the guard found it"
+
+              Expect.equal
+                  outcome.Flow
+                  [ FlowDecision.Iterated 3
+                    FlowDecision.Chose true
+                    FlowDecision.Chose false
+                    FlowDecision.Chose true ]
+                  "the flow is the loop's and the guard's: a binding takes no decision"
+          }
+
+          test "an unresolved value refuses the effect before the body plans, named, with nothing performed" {
+              Expect.equal
+                  (refusedWith
+                      (handler "unresolved" [ LetValue("v", CellValue "r3c3", [ Set("r3c4", "{v}") ]) ])
+                      registry)
+                  (ServerDiagnostic.Failed("ApplyOps", "the value did not resolve: state:r3c3"))
+                  "never a default"
+          }
+
+          test "an errored value halts with the domain's reason verbatim" {
+              Expect.equal
+                  (refusedWith
+                      (handler "not-a-number" [ LetValue("v", Times(CellValue "r3c4", 2), [ Set("r3c5", "{v}") ]) ])
+                      registry)
+                  (ServerDiagnostic.Failed("ApplyOps", "'old' is not a number"))
+                  "the grid's typed refusal reaches the diagnostic"
+          }
+
+          test "every analysis sees the computed write, and none reads it as a literal" {
+              // The demanded document names the value by what it reads and
+              // the targets its body writes, with the loop's placeholder
+              // standing — a member a literal write never has.
+              let projection = ServerDemanded.ofHandler witness double
+
+              Expect.equal
+                  projection.Values
+                  [ { Value = "state:r{i}c3"
+                      Targets = [ "r{i}c4" ] } ]
+                  "writes THESE from THIS"
+
+              Expect.isEmpty
+                  (ServerDemanded.ofHandler witness (handler "literal" [ Set("r2c4", "20") ])).Values
+                  "a literal write demands no value"
+
+              // The replay classifier: a value resolved at dispatch against a
+              // state that has moved is `non-literal-write`, undecidable, as an
+              // Assign with `from` is — where the literal loop was `Safe`.
+              Expect.contains
+                  (ProgramWire.replayDefectsOfOp witness (List.head (opsOf double)))
+                  ReplayDefect.NonLiteralWrite
+                  "non-literal-write"
+
+              Expect.equal
+                  (ProgramWire.replaySafetyOfOp witness (List.head (opsOf double)))
+                  ReplaySafety.Unknown
+                  "undecidable, not unsafe"
+
+              // The argument policy reads the value's reads: an allow-list
+              // over the target alone refuses the computed write, and one that
+              // admits the source as well commits it.
+              let over cells =
+                  registry
+                  |> ServerEffectRegistry.constrain
+                      "ApplyOps"
+                      [ ServerConstraintClause.AllowList("cell", cells)
+                        ServerConstraintClause.AllowList(ServerArgumentPolicy.DestinationArgument, [ "local" ]) ]
+
+              Expect.equal
+                  (refusedWith scale (over [ "r2c4" ]))
+                  (ServerDiagnostic.Failed("ApplyOps", "argument-not-allowed:cell"))
+                  "the source the expression reads is a reach the policy bounds"
+
+              let book = Workbook seeded
+
+              let admitted =
+                  Handler.runWith
+                      witness
+                      (over [ "r2c3"; "r2c4" ])
+                      (OpPerformance.performedBy book.Performer)
+                      DataFrame.noResolve
+                      "grid"
+                      scale
+                      (storeOf seeded)
+
+              Expect.isTrue admitted.Committed "source and target admitted"
+              Expect.equal (Map.tryFind "r2c4" book.Grid.Cells) (Some "20") "and the computed value written"
+
+              let reach =
+                  match (ServerDemanded.ofHandler witness scale).Server with
+                  | Some tier -> tier.Reach |> List.map (fun r -> r.Argument, r.Name)
+                  | None -> failtest "the walk ran"
+
+              Expect.contains reach ("cell", "r2c3") "the document names the read beside the write"
+              Expect.contains reach ("cell", "r2c4") "and the write"
+          }
+
+          test "the resolved value is journaled under its name and a replay is served it, not a re-resolution" {
+              let book = Workbook seeded
+
+              let services =
+                  DurableServices.withJournal (Journal.declaringDurable (Journal.inMemory ())) DurableServices.create
+
+              let durable (grid: Grid) =
+                  Durable.runWith
+                      witness
+                      services
+                      "inv"
+                      registry
+                      (OpPerformance.performedBy book.Performer)
+                      DataFrame.noResolve
+                      "grid"
+                      scale
+                      (storeOf grid)
+
+              let first = durable seeded
+              Expect.isTrue first.Outcome.Committed "the durable run commits"
+
+              Expect.exists
+                  (services.Journal.Read "inv")
+                  (fun e ->
+                      e.Step = 0
+                      && e.Capability = ExtentReader.Capability
+                      && e.Subject = Some "state:r2c3"
+                      && e.Phase = JournalPhase.Completed(JArr [ JInt 20 ]))
+                  "the resolution is the first journaled step, under ReadExtent, subject the value's name, the value recorded"
+
+              Expect.equal first.Invoked [ 0; 1 ] "the read, then the one performed write"
+
+              // The source moved under the record: the replay is served the
+              // recorded 20, performs nothing, and does not consult the plan.
+              let moved =
+                  { seeded with
+                      Cells = Map.add "r2c3" "11" seeded.Cells }
+
+              let second = durable moved
+              Expect.isTrue second.Outcome.Committed "the replay commits"
+              Expect.equal second.Replayed [ 0; 1 ] "every step served from the journal"
+              Expect.isEmpty second.Invoked "nothing resolved or performed live"
+              Expect.equal (Map.tryFind "r2c4" second.Outcome.Store.Tree.Cells) (Some "20") "the recorded value, not 22"
+          }
+
+          test "a copy through the channel is Copy without its default, which is why Copy stays" {
+              let viaChannel =
+                  handler
+                      "copy-via-channel"
+                      [ ForRange(
+                            2,
+                            4,
+                            "i",
+                            [ WhenFilled("r{i}c3", [ LetValue("v", CellValue "r{i}c3", [ Set("r{i}c4", "{v}") ]) ]) ]
+                        ) ]
+
+              let outcome = classA viaChannel
+
+              Expect.equal
+                  ([ 2..4 ]
+                   |> List.map (fun i -> Map.tryFind (sprintf "r%dc4" i) outcome.Store.Tree.Cells))
+                  [ Some "10"; Some "old"; Some "40" ]
+                  "the filled rows copied; the empty row is NOT cleared: an unresolved value refuses, and a guard is how the loop says so"
+          }
+
+          test "a Let binds lexically: its placeholder is refused outside it, and rebinding a loop's name is a shadow" {
+              Expect.equal
+                  (refusedWith (handler "stray-v" [ LetValue("v", CellValue "r2c3", []); Set("r2c4", "{v}") ]) registry)
+                  (ServerDiagnostic.Failed("ApplyOps", "placeholder 'v' is read outside any Each that binds it"))
+                  "named, before the first op plans"
+
+              Expect.equal
+                  (refusedWith
+                      (handler "shadow-i" [ ForRange(2, 3, "i", [ LetValue("i", CellValue "r2c3", []) ]) ])
+                      registry)
+                  (ServerDiagnostic.Failed("ApplyOps", ScopeDefect.describe (ScopeDefect.ShadowedPlaceholder "i")))
+                  "a shadow is refused"
+          }
+
+          test
+              "the witness's own obligations: the codec round-trips, substitution reaches the expression, the expression witness answers the three outcomes" {
+              let op = LetValue("v", Times(CellValue "r{i}c3", 2), [ Set("r{i}c4", "{v}") ])
+
+              Expect.equal (decodeOp (encodeOp op)) (Ok op) "round trip"
+
+              Expect.equal
+                  (substituteOp "i" (JInt 7) op)
+                  (LetValue("v", Times(CellValue "r7c3", 2), [ Set("r7c4", "{v}") ]))
+                  "the loop's element fills the expression's cell and the body alike"
+
+              Expect.equal
+                  (placeholdersOf op)
+                  [ "i" ]
+                  "the expression's cell reads the loop's placeholder; the bound name is the body's"
+
+              Expect.equal (exprWitness.Uses(Times(CellValue "r2c3", 2))) [ BindingUse.State "r2c3" ] "what it reads"
+
+              Expect.equal
+                  (exprWitness.Resolve seeded (Times(CellValue "r2c3", 3)))
+                  (ExprResolution.Resolved(JInt 30))
+                  "resolved"
+
+              Expect.equal (exprWitness.Resolve seeded (CellValue "r3c3")) ExprResolution.NotResolved "an empty cell"
+
+              Expect.equal
+                  (exprWitness.Resolve seeded (Times(CellValue "r3c4", 2)))
+                  (ExprResolution.Errored "'old' is not a number")
+                  "errored"
+
+              Expect.equal
+                  (Undo.posture witness double)
+                  UndoVerdict.Reversible
+                  "the binding is not an edit; every edit beneath it is exactly inverted"
+          } ]

@@ -526,12 +526,27 @@ module ProgramWire =
         // `Each`'s lowered elements — beside whether the op itself encodes.
         | OpView.Choose _
         | OpView.Repeat _
-        | OpView.Each _ ->
+        | OpView.Each _
+        | OpView.Let _ ->
+            let below = OpView.beneath witness.State.View witness.State.Substitute op
+
+            // A value the state holds (Phase 2186, D42) — this op, or one
+            // beneath it — is resolved at dispatch against a state that has
+            // moved, exactly as an `Assign`'s `from` is: `non-literal-write`,
+            // undecidable rather than unsafe, beside the body's own defects,
+            // read once with the placeholder standing.
+            let bindings =
+                op :: below
+                |> List.collect (fun o ->
+                    match witness.State.View o with
+                    | OpView.Let _ -> [ ReplayDefect.NonLiteralWrite ]
+                    | _ -> [])
+
             (match encodeOp witness op with
              | Error _ -> [ ReplayDefect.UnencodableOp ]
              | Ok _ -> [])
-            @ (OpView.beneath witness.State.View witness.State.Substitute op
-               |> List.collect ofOne)
+            @ bindings
+            @ (below |> List.collect ofOne)
             |> List.distinct
 
     let replaySafetyOfAction
