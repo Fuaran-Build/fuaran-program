@@ -171,5 +171,10 @@
     <FuaranRestorePath>public</FuaranRestorePath>
     <Authors>Fuaran</Authors>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <!-- Phase 2015 - the repository's home since 2026-10-09 (transferred and renamed; the package ids
+         are unchanged). -->
+    <PackageProjectUrl>https://github.com/Fuaran-Core/fuaran-program-dotnet</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/Fuaran-Core/fuaran-program-dotnet</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
   </PropertyGroup>
 </Project>
