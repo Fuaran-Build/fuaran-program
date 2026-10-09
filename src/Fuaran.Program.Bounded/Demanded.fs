@@ -371,6 +371,13 @@ type DemandedProjection =
         /// signed envelope then says. Empty for every program with none,
         /// which is every program before this phase.
         Iterations: IterationDemand list
+        /// The leaves the tree reaches that declare themselves OPAQUE (Phase
+        /// 2130, D40): each an act no walk can see into, named with the reason
+        /// class that makes it so. Distinct from `OpaqueHandlers`, which names
+        /// NODES whose actions the wire could not carry: these are actions the
+        /// wire DID carry, whose behaviour lives in the host. Empty for every
+        /// program whose witness declares no opaque leaf.
+        OpaqueLeaves: OpaqueLeaf list
     }
 
 /// What a host offers, against which a projection is checked.
@@ -426,6 +433,15 @@ type HostCoverage =
         /// to offer capabilities it was never asked to have. A server host builds
         /// from `ServerCoverage.nothing`, which IS default-deny.
         Server: ServerCoverage option
+        /// The OPAQUE-LEAF reason classes this host accepts running (Phase
+        /// 2130, D40). Empty by default, and empty REFUSES: every opaque leaf a
+        /// tree reaches is reported as `UnacceptedOpaqueLeaf` until the host
+        /// names its reason class here. Default-deny on the effects' terms
+        /// rather than unconstrained on the host calls', because an opaque leaf
+        /// is not a call that goes nowhere on the bounded path — it is
+        /// behaviour the host performs and nothing in the tree describes, and
+        /// accepting that is a statement the host makes, not one it is spared.
+        Opaque: Set<string>
     }
 
 /// Why a host cannot cover a program tree. Each names the demanded thing; none
@@ -447,6 +463,12 @@ type CoverageFinding =
     /// The tree touches a state namespace outside the host's DECLARED set.
     /// Only ever produced when the host declared one.
     | UncoveredStateNamespace of ns: string
+    /// The tree reaches a leaf that declares itself opaque, for a reason class
+    /// this host has not accepted (`HostCoverage.Opaque`, Phase 2130). Not a
+    /// policy refusal and not an absent capability: the host is being told
+    /// that something it would run cannot be analysed, and is asked to say
+    /// whether it runs such things at all.
+    | UnacceptedOpaqueLeaf of reason: string * name: string
     /// A reachable handler names a host function this host registered no
     /// performer for. The server-tier counterpart of `UnregisteredEffect`, and a
     /// separate arm from it because `Notify` exists in BOTH vocabularies — a
@@ -523,7 +545,8 @@ module HostCoverage =
           Gate = fun _ -> false
           HostCalls = None
           StateNamespaces = None
-          Server = None }
+          Server = None
+          Opaque = Set.empty }
 
     /// Declare the effect performers the host registered. Registering does not
     /// permit — the gate still decides, exactly as at dispatch time.
@@ -556,6 +579,13 @@ module HostCoverage =
     /// rather than default-deny.
     let withServer (server: ServerCoverage) (coverage: HostCoverage) : HostCoverage =
         { coverage with Server = Some server }
+
+    /// Accept running opaque leaves of these reason classes. Until this is
+    /// called every opaque leaf a tree reaches is a finding — see the field's
+    /// note for why that is default-deny.
+    let acceptingOpaque (reasons: string seq) (coverage: HostCoverage) : HostCoverage =
+        { coverage with
+            Opaque = Set.ofSeq reasons }
 
 /// Why a demanded document was refused, as a CLASS rather than a message.
 ///
@@ -645,19 +675,20 @@ module Demanded =
     ///   - `Call` names its endpoint on the call channel, whether or not it
     ///     declares a target (a declared target is refused at dispatch, and a
     ///     host that cannot serve the endpoint is still worth telling);
-    ///   - `Leaf` demands exactly what it declares.
+    ///   - `Leaf` demands exactly what it declares, and an opaque leaf is
+    ///     named among the opaque leaves (Phase 2130).
     let rec private demandsOfAction
         (fold: DispatchFold<'Action, 'Expr, 'Store, 'Effect>)
         (action: 'Action)
-        : string list * HostCallDemand list * (string * bool) list * IterationDemand list =
+        : string list * HostCallDemand list * (string * bool) list * IterationDemand list * OpaqueLeaf list =
         match fold.Action.View action with
         | ActionView.Sequence actions ->
             actions
             |> List.fold
-                (fun (accE, accH, accN, accI) a ->
-                    let e, h, n, i = demandsOfAction fold a
-                    accE @ e, accH @ h, accN @ n, accI @ i)
-                ([], [], [], [])
+                (fun (accE, accH, accN, accI, accO) a ->
+                    let e, h, n, i, o = demandsOfAction fold a
+                    accE @ e, accH @ h, accN @ n, accI @ i, accO @ o)
+                ([], [], [], [], [])
 
         | ActionView.Assign(key, _, from) ->
             let uses =
@@ -679,12 +710,13 @@ module Demanded =
                     | BindingUse.Query name -> Some { Channel = "Query"; Name = name }
                     | BindingUse.State _ -> None)
 
-            [], calls, (namespaceOf key, true) :: reads, []
+            [], calls, (namespaceOf key, true) :: reads, [], []
 
         | ActionView.Call(endpoint, _) ->
             [],
             [ { Channel = CallChannel
                 Name = endpoint } ],
+            [],
             [],
             []
 
@@ -692,7 +724,7 @@ module Demanded =
         // `from` does, and writes nothing (Phase 1967).
         | ActionView.Require condition ->
             let calls, reads = usesOf fold condition
-            [], calls, reads, []
+            [], calls, reads, [], []
 
         // A branch demands the UNION of its parts (Phase 1976): what its entry
         // condition reads, what BOTH arms demand — an untaken arm's reach is
@@ -701,15 +733,15 @@ module Demanded =
         // reads. In order: entry, true arm, false arm, exit.
         | ActionView.Choose(entry, whenTrue, whenFalse, exit) ->
             let entryCalls, entryReads = usesOf fold entry
-            let tE, tH, tN, tI = demandsOfAction fold whenTrue
-            let fE, fH, fN, fI = demandsOfAction fold whenFalse
+            let tE, tH, tN, tI, tO = demandsOfAction fold whenTrue
+            let fE, fH, fN, fI, fO = demandsOfAction fold whenFalse
 
             let exitCalls, exitReads =
                 match exit with
                 | Some assertion -> usesOf fold assertion
                 | None -> [], []
 
-            tE @ fE, entryCalls @ tH @ fH @ exitCalls, entryReads @ tN @ fN @ exitReads, tI @ fI
+            tE @ fE, entryCalls @ tH @ fH @ exitCalls, entryReads @ tN @ fN @ exitReads, tI @ fI, tO @ fO
 
         // A repeat demands what its bound reads — a parameter bound is an
         // expression resolved at dispatch, a literal reads nothing — and what
@@ -721,8 +753,8 @@ module Demanded =
                 | Bound.Parameter(count, _, _) -> usesOf fold count
                 | Bound.Literal _ -> [], []
 
-            let bE, bH, bN, bI = demandsOfAction fold body
-            bE, boundCalls @ bH, boundReads @ bN, bI
+            let bE, bH, bN, bI, bO = demandsOfAction fold body
+            bE, boundCalls @ bH, boundReads @ bN, bI, bO
 
         // An `Each` demands what its LOWERED form demands (Phase 1990): the
         // union, in collection order, over its body with each element
@@ -732,10 +764,10 @@ module Demanded =
         | ActionView.Each(Collection.Literal elements, placeholder, body) ->
             ActionWitness.lowered fold.Action elements placeholder body
             |> List.fold
-                (fun (accE, accH, accN, accI) a ->
-                    let e, h, n, i = demandsOfAction fold a
-                    accE @ e, accH @ h, accN @ n, accI @ i)
-                ([], [], [], [])
+                (fun (accE, accH, accN, accI, accO) a ->
+                    let e, h, n, i, o = demandsOfAction fold a
+                    accE @ e, accH @ h, accN @ n, accI @ i, accO @ o)
+                ([], [], [], [], [])
 
         // A store-bound `Each` (Phase 1991, D36) demands what its SOURCE reads
         // — an expression resolved at entry, as a parameter bound is — what
@@ -744,16 +776,21 @@ module Demanded =
         // the name the source's binding keys give it, and the ceiling.
         | ActionView.Each(Collection.Stored(source, ceiling), _, body) ->
             let sourceCalls, sourceReads = usesOf fold source
-            let bE, bH, bN, bI = demandsOfAction fold body
+            let bE, bH, bN, bI, bO = demandsOfAction fold body
 
             bE,
             sourceCalls @ bH,
             sourceReads @ bN,
             { Collection = ExprWitness.collectionName fold.Expr source
               Ceiling = ceiling }
-            :: bI
+            :: bI,
+            bO
 
-        | ActionView.Leaf declaration -> declaration.EffectKinds, declaration.HostCalls, [], []
+        // A leaf demands what it declares, and an opaque one is NAMED as such
+        // (Phase 2130, D40): the escape is reported, never folded into a leaf
+        // that reads as demanding nothing.
+        | ActionView.Leaf declaration ->
+            declaration.EffectKinds, declaration.HostCalls, [], [], Option.toList declaration.Opaque
 
     /// What an expression demands, through the witness's `Expr.Uses`: a state
     /// key is a namespace read, a query slot a `Query` host call.
@@ -836,6 +873,10 @@ module Demanded =
             projection.Iterations
             |> List.distinct
             |> List.sortBy (fun i -> i.Collection, i.Ceiling)
+          OpaqueLeaves =
+            projection.OpaqueLeaves
+            |> List.distinct
+            |> List.sortBy (fun o -> o.Reason, o.Name)
           Server =
             projection.Server
             |> Option.map (fun s ->
@@ -892,6 +933,7 @@ module Demanded =
           StateNamespaces = []
           OpaqueHandlers = []
           Iterations = []
+          OpaqueLeaves = []
           Server = None }
 
     /// What ONE action can ever ask for, as a projection — the client tier only,
@@ -910,7 +952,7 @@ module Demanded =
         (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (action: 'Action)
         : DemandedProjection =
-        let effects, hostCalls, namespaces, iterations =
+        let effects, hostCalls, namespaces, iterations, opaqueLeaves =
             demandsOfAction (DispatchPosition.fold witness.Dispatch) action
 
         normalise
@@ -923,7 +965,8 @@ module Demanded =
                         { Namespace = ns
                           Written = written
                           Read = not written })
-                Iterations = iterations }
+                Iterations = iterations
+                OpaqueLeaves = opaqueLeaves }
 
     /// Combine projections into one, re-normalised. Order-independent and
     /// idempotent: `union` of the same documents in any order is the same
@@ -970,6 +1013,7 @@ module Demanded =
               StateNamespaces = projections |> List.collect _.StateNamespaces
               OpaqueHandlers = projections |> List.collect _.OpaqueHandlers
               Iterations = projections |> List.collect _.Iterations
+              OpaqueLeaves = projections |> List.collect _.OpaqueLeaves
               Server = server }
 
     /// Attach (or replace) the server tier, re-normalised.
@@ -1012,12 +1056,12 @@ module Demanded =
                 witness.Dispatch.Handlers node
                 |> List.map snd
                 |> List.fold
-                    (fun (accE, accH, accN, accI) a ->
-                        let e, h, n, i = demandsOfAction fold a
-                        accE @ e, accH @ h, accN @ n, accI @ i)
-                    ([], [], [], [])
+                    (fun (accE, accH, accN, accI, accL) a ->
+                        let e, h, n, i, l = demandsOfAction fold a
+                        accE @ e, accH @ h, accN @ n, accI @ i, accL @ l)
+                    ([], [], [], [], [])
 
-            let ownE, ownH, ownN, ownI = own
+            let ownE, ownH, ownN, ownI, ownL = own
 
             let ownO =
                 if opaqueHandler witness.Dispatch node then
@@ -1027,12 +1071,12 @@ module Demanded =
 
             witness.Walk.Traverse node
             |> List.fold
-                (fun (accE, accH, accN, accO, accI) child ->
-                    let e, h, n, o, i = walk child
-                    accE @ e, accH @ h, accN @ n, accO @ o, accI @ i)
-                (ownE, ownH, ownN, ownO, ownI)
+                (fun (accE, accH, accN, accO, accI, accL) child ->
+                    let e, h, n, o, i, l = walk child
+                    accE @ e, accH @ h, accN @ n, accO @ o, accI @ i, accL @ l)
+                (ownE, ownH, ownN, ownO, ownI, ownL)
 
-        let effects, hostCalls, namespaces, opaque, iterations = walk root
+        let effects, hostCalls, namespaces, opaque, iterations, opaqueLeaves = walk root
 
         normalise
             { Effects = effects
@@ -1045,6 +1089,7 @@ module Demanded =
                       Read = not written })
               OpaqueHandlers = opaque
               Iterations = iterations
+              OpaqueLeaves = opaqueLeaves
               Server = None }
 
     // ─── the projection as a wire document ───────────────────────────────────
@@ -1059,7 +1104,7 @@ module Demanded =
     /// The version this encoder emits, and — see `decodableVersions` — the only
     /// one this reader reads.
     [<Literal>]
-    let Version = 7
+    let Version = 8
 
     // The policy clause's discriminator, written once and read once. A literal
     // spelled at the encoder and again at the reader is the drift this document
@@ -1215,6 +1260,11 @@ module Demanded =
             |> List.map (fun i -> $"""{{"collection":{q i.Collection},"ceiling":{i.Ceiling}}}""")
             |> arr
 
+        let opaqueLeaves =
+            projection.OpaqueLeaves
+            |> List.map (fun o -> $"""{{"reason":{q o.Reason},"name":{q o.Name}}}""")
+            |> arr
+
         let server =
             match projection.Server with
             | None -> "null"
@@ -1288,7 +1338,7 @@ module Demanded =
 
                 $"""{{"effects":{se},"capabilities":{sc},"functions":{fns},"channels":{channels},"reach":{reach},"replay":{replay},"undo":{undo},"constraints":{constraints}}}"""
 
-        $"""{{"kind":{q Kind},"version":{Version},"effects":{effects},"hostCalls":{hostCalls},"stateNamespaces":{namespaces},"opaqueHandlers":{opaque},"iterations":{iterations},"server":{server}}}"""
+        $"""{{"kind":{q Kind},"version":{Version},"effects":{effects},"hostCalls":{hostCalls},"stateNamespaces":{namespaces},"opaqueHandlers":{opaque},"iterations":{iterations},"opaqueLeaves":{opaqueLeaves},"server":{server}}}"""
 
     // ─── the projection as a wire document: reading one back ─────────────────
     //
@@ -1639,6 +1689,16 @@ module Demanded =
                 { Collection = collection
                   Ceiling = ceiling }))
 
+    /// An opaque leaf (Phase 2130): the reason class and the act's name, both
+    /// carried as written — a reason class this reader has never heard of is
+    /// handed back, never dropped, on the discriminators' terms above.
+    let private decodeOpaqueLeaf version path value : Result<OpaqueLeaf, DemandedDecodeFailure> =
+        declaredOnly version path [ "reason"; "name" ] value
+        |> Result.bind (fun () -> requireString version (child path "reason") "reason" value)
+        |> Result.bind (fun reason ->
+            requireString version (child path "name") "name" value
+            |> Result.map (fun name -> { Reason = reason; Name = name }))
+
     let private decodeNamespace version path value : Result<StateNamespaceDemand, DemandedDecodeFailure> =
         declaredOnly version path [ "namespace"; "written"; "read" ] value
         |> Result.bind (fun () -> requireString version (child path "namespace") "namespace" value)
@@ -1818,8 +1878,9 @@ module Demanded =
                                           Undo = undo
                                           Constraints = constraints }))))))))
 
-    /// The four members every version of this document has carried, and the
-    /// fifth version 7 added (`iterations`, Phase 1991).
+    /// The four members every version of this document has carried, the
+    /// fifth version 7 added (`iterations`, Phase 1991) and the sixth version 8
+    /// added (`opaqueLeaves`, Phase 2130).
     let private decodeClientTier version root : Result<DemandedProjection, DemandedDecodeFailure> =
         requireStrings version "effects" "effects" root
         |> Result.bind (fun effects ->
@@ -1830,13 +1891,16 @@ module Demanded =
                     requireStrings version "opaqueHandlers" "opaqueHandlers" root
                     |> Result.bind (fun opaque ->
                         requireObjects version "iterations" "iterations" root decodeIteration
-                        |> Result.map (fun iterations ->
-                            { Effects = effects
-                              HostCalls = hostCalls
-                              StateNamespaces = namespaces
-                              OpaqueHandlers = opaque
-                              Iterations = iterations
-                              Server = None })))))
+                        |> Result.bind (fun iterations ->
+                            requireObjects version "opaqueLeaves" "opaqueLeaves" root decodeOpaqueLeaf
+                            |> Result.map (fun opaqueLeaves ->
+                                { Effects = effects
+                                  HostCalls = hostCalls
+                                  StateNamespaces = namespaces
+                                  OpaqueHandlers = opaque
+                                  Iterations = iterations
+                                  OpaqueLeaves = opaqueLeaves
+                                  Server = None }))))))
 
     /// The first member whose read value is not in the canonical order the
     /// document promises. Compared against `normalise` rather than against a
@@ -1855,6 +1919,8 @@ module Demanded =
             Some "opaqueHandlers"
         elif n.Iterations <> projection.Iterations then
             Some "iterations"
+        elif n.OpaqueLeaves <> projection.OpaqueLeaves then
+            Some "opaqueLeaves"
         elif n.Server <> projection.Server then
             Some "server"
         else
@@ -1913,6 +1979,7 @@ module Demanded =
                       "stateNamespaces"
                       "opaqueHandlers"
                       "iterations"
+                      "opaqueLeaves"
                       "server" ]
                     root
                 |> Result.bind (fun () -> decodeClientTier v root)
@@ -1975,6 +2042,8 @@ module Demanded =
             $"the program names %s{channel} '%s{name}', which is outside this host's declared call surface"
         | CoverageFinding.UncoveredStateNamespace ns ->
             $"the program touches state namespace '%s{ns}', which is outside this host's declared namespaces"
+        | CoverageFinding.UnacceptedOpaqueLeaf(reason, name) ->
+            $"the program reaches '%s{name}', which declares itself opaque (%s{reason}) — no walk can see what it does, and this host has not accepted running %s{reason} leaves"
         | CoverageFinding.UnregisteredServerFunction fn ->
             $"a handler this program can reach calls host function '%s{fn}', for which this host registered no performer"
         | CoverageFinding.ServerCapabilityWithdrawn capability ->
@@ -2024,6 +2093,17 @@ module Demanded =
                         None
                     else
                         Some(CoverageFinding.UncoveredStateNamespace n.Namespace))
+
+        // An opaque leaf is refused unless the host accepted its reason class
+        // (Phase 2130, D40) — default-deny, so a host that never considered
+        // the question is told about every escape rather than spared them.
+        let opaqueFindings =
+            projection.OpaqueLeaves
+            |> List.choose (fun o ->
+                if coverage.Opaque.Contains o.Reason then
+                    None
+                else
+                    Some(CoverageFinding.UnacceptedOpaqueLeaf(o.Reason, o.Name)))
 
         // The server tier is checked only where BOTH sides exist: a document
         // that was never asked about a server placement, or a host that never
@@ -2078,7 +2158,11 @@ module Demanded =
                 functionFindings @ capabilityFindings @ channelFindings
             | _ -> []
 
-        effectFindings @ callFindings @ namespaceFindings @ serverFindings
+        effectFindings
+        @ callFindings
+        @ namespaceFindings
+        @ opaqueFindings
+        @ serverFindings
 
     /// Answer, for one tree and one host, every demand the host cannot cover —
     /// BEFORE any event runs. An empty list means the host can serve everything

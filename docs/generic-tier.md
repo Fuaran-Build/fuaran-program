@@ -263,7 +263,8 @@ type Bound<'Expr> =                                          // D2's bound (Phas
 
 type LeafDeclaration =                                       // static, for the demanded projection
     { EffectKinds: string list                               // client-effect kinds it may emit
-      HostCalls:   HostCallDemand list }                     // program-owned (Demanded.fs)
+      HostCalls:   HostCallDemand list                       // program-owned (Demanded.fs)
+      Opaque:      OpaqueLeaf option }                       // an escape, named with its reason class (Phase 2130, D40)
 
 type LeafOutcome<'Effect> =
     | Emit    of 'Effect                                     // at most ONE effect per leaf (K3)
@@ -348,7 +349,8 @@ declare their host channels in `HostCalls`, so `Demanded` sees them exactly as i
   Phase 1990 an `Each` at its lowered elements' costs summed, no step for a bound.
 - `Demanded` reads `Assign`, `Call`, `Require` and `LeafDeclaration`; since Phase 1976 a `Choose`
   demands the union of its entry, BOTH arms and its exit, and a `Repeat` its bound and its body once;
-  since Phase 1990 an `Each` the union over its lowered elements.
+  since Phase 1990 an `Each` the union over its lowered elements. Since Phase 2130 an opaque leaf is named in the
+  document's `opaqueLeaves`, and coverage refuses it until the host accepts its reason class (D40).
 - The replay classification maps `Call` to no defect, `Sequence` to the distinct union of its
   parts, a literal `Assign` to no defect, `Assign … from` to `NonLiteralWrite`, `Require` to
   `UndecidableAction`, and `Leaf` to `UndecidableAction`; since Phase 1976 a `Choose` to

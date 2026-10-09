@@ -63,6 +63,7 @@
     <Compile Include="WithdrawnCoverageTests.fs" />
     <!-- Phase 1905: the query evaluator seam (DECISIONS.md D34). -->
     <Compile Include="QueryEvaluatorTests.fs" />
+    <Compile Include="OpaqueLeafTests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
   <ItemGroup>

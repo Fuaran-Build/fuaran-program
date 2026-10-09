@@ -161,6 +161,46 @@ that branched on the op performer's withdrawal as `ServerGateRefusesCapability "
 `coverage.Gate "ApplyOps"` to detect it, reads `ServerCapabilityWithdrawn "ApplyOps"` /
 `coverage.Withdrawn` instead.
 
+### Rides the draft: a leaf can declare itself opaque (Phase 2130)
+
+**Class: breaking**, the class the draft already carries, so it rides `0.8.0` rather than advancing it
+(no `v0.8*` tag exists, and nothing public pins `0.8.0`). `DECISIONS.md` D40 records what was decided.
+
+- **`LeafDeclaration` gains `Opaque: OpaqueLeaf option`** (`OpaqueLeaf` is `{ Reason; Name }`): a leaf
+  that is an escape no walk can see into says so, with a reason class such as `in-process`. A full
+  record literal adds `Opaque = None` (FS0764 names it). Added: `LeafDeclaration.none` (declares
+  nothing) and `LeafDeclaration.opaque reason name` — build from these and the next member is not a
+  compile break.
+- **`DemandedProjection` gains `OpaqueLeaves: OpaqueLeaf list`**, which `ofTree`, `ofAction` and
+  `union` fill, distinct and sorted by reason then name. The document gains
+  `"opaqueLeaves":[{"reason":…,"name":…}]` between `iterations` and `server` and moves to
+  **version 8**; `decodableVersions` is `[8]`. A program whose witness declares no opaque leaf emits
+  `"opaqueLeaves":[]` and nothing else in its document moves — but its bytes do, so a version-7
+  document is refused by version and a signed envelope over one is re-signed. This repository's
+  `conformance/demanded-effect-projection.json` moved to version 8 by hand, to exactly the encoder's
+  bytes, with five vectors for the member (carried, an unknown reason class carried, missing, out of
+  order, an undeclared member inside an entry); the UI tier's generator re-emits it at its raise. The
+  signed envelope's drift reports an opaque leaf on either side.
+- **`HostCoverage` gains `Opaque: Set<string>`** — the reason classes the host accepts running, empty
+  in `HostCoverage.nothing`. Added: `HostCoverage.acceptingOpaque`. **`CoverageFinding` gains
+  `UnacceptedOpaqueLeaf of reason * name`**, declared after `UncoveredStateNamespace`: every opaque
+  leaf whose class the host has not accepted is reported, and no effect policy lifts it. A full
+  `HostCoverage` literal adds `Opaque = Set.empty`; an exhaustive match over `CoverageFinding` gains an
+  arm.
+
+**What did not move:** every program whose witness declares no opaque leaf folds, budgets, replays,
+undoes and projects exactly as before, apart from the document's version and its one empty member; no
+fold path reads the declaration; the program wire specification, its corpus and every proof statement
+are unchanged (the demanded document is not governed by the specification).
+
+**What a consumer does about it:** add `Opaque = None` to a full `LeafDeclaration` literal (or build
+from `LeafDeclaration.none`), `Opaque = Set.empty` to a full `HostCoverage` literal and
+`OpaqueLeaves = []` to a full `DemandedProjection` literal; add an arm for `UnacceptedOpaqueLeaf` to an
+exhaustive match over `CoverageFinding`; re-emit stored demanded documents and re-sign envelopes over
+them. **A witness that starts declaring a leaf opaque** changes what its hosts' coverage reports: each
+host reports the escape until it calls `HostCoverage.acceptingOpaque` with the class — the adopting
+change states that migration for its hosts.
+
 ## After 0.7.1 — the UI adapters leave this repository (fuaran#2012, DECISIONS.md D32) — BREAKING for the package set
 
 **The package set loses two packages; the four that remain do not move.** `Fuaran.Program.UI` and

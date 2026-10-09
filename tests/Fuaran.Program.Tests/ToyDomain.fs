@@ -186,12 +186,12 @@ let view (action: ToyAction) : ActionView<ToyAction, ToyExpr> =
         ActionView.Each(Collection.Stored(source, ceiling), placeholder, body)
     | Beep _ ->
         ActionView.Leaf
-            { EffectKinds = [ "Sound" ]
-              HostCalls = [] }
+            { LeafDeclaration.none with
+                EffectKinds = [ "Sound" ] }
     | Hush ->
         ActionView.Leaf
-            { EffectKinds = []
-              HostCalls = [ { Channel = "Hush"; Name = "quiet" } ] }
+            { LeafDeclaration.none with
+                HostCalls = [ { Channel = "Hush"; Name = "quiet" } ] }
 
 let rec private encodeAction (action: ToyAction) : JVal =
     match action with

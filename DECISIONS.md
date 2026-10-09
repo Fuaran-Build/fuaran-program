@@ -2633,3 +2633,76 @@ correction §9.5 already required; the `0.8.0` draft carries no entry for it.
 codec while the fold refuses it: the two read one view. A domain that hides a call inside a leaf hides
 it from both, as it always did. The document check's referenced spelling remains in the generic codec
 until that subject's decoder carries it.
+
+## D40 — A leaf can declare itself OPAQUE, with a reason class; the demanded document names every opaque leaf at version 8, and coverage REFUSES one by default until the host accepts its reason class (2026-10-09)
+
+**2026-10-09. Phase 2130.** A leaf declaration said what the leaf may demand — its effect kinds and its
+host calls — and nothing else. A leaf that declared nothing therefore read, in the demanded document,
+exactly like an act that does nothing. That is true of most such leaves and false of one kind: an act the
+host performs in its own process, which no walk can see into because nothing the tree carries describes
+it. The first instantiation has one (its in-process message arm). A deployer reading a signed envelope
+could not tell "harmless" from "unanalysable", which is the one distinction the envelope exists to make.
+
+**1. `LeafDeclaration` gains `Opaque: OpaqueLeaf option`; `OpaqueLeaf` is `{ Reason; Name }`.** `None`
+is the claim that the two lists are the whole of what the leaf can do; `Some` says they are not, names
+the act and gives the reason CLASS — `in-process` is the one this repository knows of. Both are names the
+witness writes, never payload, so the record is log-safe on `HostCallDemand`'s terms. An opaque leaf may
+still declare effect kinds and host calls; the mark says there is something besides them, not that they
+are void. `LeafDeclaration.none` and `LeafDeclaration.opaque reason name` are the constructors, so a
+witness built from them does not break the next time the declaration gains a member.
+
+**2. The reason class is a string, not a closed union.** The core is domain-generic and has one class in
+view. A closed union with one case would pretend to an enumeration nobody has made, and every domain that
+met a second reason would need this package to move before it could say so. What a host does with a class
+is accept it or not (item 4), and a class it has never heard of is one it has not accepted — the same
+fail-closed reading an unregistered effect name gets. The document carries the class as written, as it
+carries an unknown effect arm.
+
+**3. `Demanded.ofTree` and `ofAction` carry it, as `DemandedProjection.OpaqueLeaves`, through every
+composition shape** — a sequence's members, both arms of a selection, a repeat's body once, a literal
+`Each`'s lowered bodies and a stored `Each`'s body — distinct and sorted by reason then name. It is a
+separate member from `OpaqueHandlers` and must stay one: those are NODES whose action the wire could not
+carry; these are actions the wire did carry, whose behaviour lives in the host. The document gains
+`"opaqueLeaves":[{"reason":…,"name":…}]` between `iterations` and `server` and moves to **version 8**;
+`decodableVersions` is `[8]`. The reader refuses a version-8 document without the member (absent is "the
+producer predates it", empty is "it looked and found no escape", and only the second is a claim about the
+program), refuses an undeclared member inside an entry, and refuses an out-of-order list, on the terms of
+every other client-tier member. The signed envelope's drift names an opaque leaf on either side.
+
+**4. Coverage REFUSES an opaque leaf by default: `HostCoverage.Opaque: Set<string>` is the set of reason
+classes the host accepts running, empty in `HostCoverage.nothing`, and every opaque leaf whose class is
+not in it is the new finding `CoverageFinding.UnacceptedOpaqueLeaf (reason, name)`.** The phase asked
+whether a host's check should refuse an opaque leaf or only report it. Report-only was the precedent
+`OpaqueHandlers` set, and it was set for a reason that does not transfer: on a decoded tree an opaque
+handler is INERT — the wire carried no action, so nothing runs — and flagging it would fire on every tree
+carrying such a node until the check was ignored. An opaque leaf is the opposite case: the wire carried
+the action and the host will perform it, with nothing in the tree saying what that does. The host-call
+surface's "unconstrained by default" (`HostCalls = None`) does not transfer either: it rests on those
+calls being no-ops on the bounded path, which an opaque leaf is not. What remains is the posture every
+other seam here takes — a host that declares nothing covers nothing — so running an escape is a statement
+the host makes (`HostCoverage.acceptingOpaque [ "in-process" ]`), not one it is spared. No effect policy
+lifts the finding: a permissive gate accepts effects, and an opaque leaf is not one. The finding is
+declared after `UncoveredStateNamespace` and before the server-tier findings, and `checkProjection`
+returns it in that position. Its text says the leaf is opaque and names the class.
+
+**5. What this costs a consumer.** A full record literal of `LeafDeclaration`, `DemandedProjection` or
+`HostCoverage` meets FS0764; an exhaustive match over `CoverageFinding` meets a new case; a stored or
+signed version-7 document is refused by version and is re-emitted or re-signed. When a witness first
+declares a leaf opaque, every host checked against its trees reports the escape until it accepts the
+class — which is the point, and is the adopting phase's migration to state, not this one's to hide.
+
+**Version.** Rides the `0.8.0` draft: untagged, publicly unpinned and already breaking (D34, D36, D37),
+and this is breaking of the same class. No wire member, fixture byte, refusal class or rule of the program
+wire specification moves: the demanded document is deliberately ungoverned by the specification (its
+§11.2), as D36 item 6 recorded for `iterations`. This repository's `conformance/demanded-effect-projection.json`
+moved to version 8 by hand, to exactly the encoder's bytes, with five vectors for the member; the
+emitter that writes it lives with the first instantiation's adapter and re-emits it when that tier
+adopts this draft.
+
+**What this forecloses, and what it leaves.** A witness can no longer make an escape read as a no-op in
+the document without saying so falsely: the declaration is the witness author's, and NOTHING checks it —
+a witness that views an in-process act as an ordinary empty leaf still projects nothing, exactly as
+before. This decision gives an honest witness a way to disclose; it does not detect a dishonest one.
+The first instantiation does not declare any leaf opaque yet: its in-process message arm adopts this in
+fuaran#2194, after this draft is released and that tier's pin is raised. Until then no shipped tree's
+document carries an opaque leaf, and the disclosure exists in the core only.

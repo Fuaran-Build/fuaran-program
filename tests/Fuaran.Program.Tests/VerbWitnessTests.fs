@@ -178,9 +178,9 @@ let tests =
               // no state namespace — it has no binding store (Phase 1974).
               Expect.equal
                   (Demanded.encode projection)
-                  ("{\"kind\":\"demanded\",\"version\":7,\"effects\":[],\"hostCalls\":[],"
+                  ("{\"kind\":\"demanded\",\"version\":8,\"effects\":[],\"hostCalls\":[],"
                    + "\"stateNamespaces\":[],"
-                   + "\"opaqueHandlers\":[],\"iterations\":[],\"server\":{\"effects\":[\"ApplyOps\"],\"capabilities\":[\"ApplyOps\"],"
+                   + "\"opaqueHandlers\":[],\"iterations\":[],\"opaqueLeaves\":[],\"server\":{\"effects\":[\"ApplyOps\"],\"capabilities\":[\"ApplyOps\"],"
                    + "\"functions\":[],\"channels\":[],"
                    + "\"reach\":[{\"capability\":\"ApplyOps\",\"argument\":\"destination\",\"name\":\"local\"},"
                    + "{\"capability\":\"ApplyOps\",\"argument\":\"destination\",\"name\":\"origin\"},"
@@ -926,7 +926,7 @@ let undoTests =
 
               // The document's bytes carry it at version 7 (Phase 1991), and read back.
               let json = Demanded.encode projection
-              Expect.stringContains json "\"version\":7" "the undo posture rides version 7"
+              Expect.stringContains json "\"version\":8" "the undo posture rides version 8"
 
               Expect.stringContains
                   json

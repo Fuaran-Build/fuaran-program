@@ -618,6 +618,22 @@ type WalkWitness<'Node> =
 
 // ═══ THE DISPATCH AXIS — optional (§3.3) ════════════════════════════════════
 
+/// A leaf that cannot be analysed, declared as such (Phase 2130, D40): the
+/// reason CLASS that makes it opaque — `in-process` for an act a host performs
+/// in its own process with nothing the tree carries describing what it does —
+/// and the name of the act. Both are DECLARED names, written by the witness,
+/// never payload values, so the record is log-safe on the terms
+/// `HostCallDemand` is.
+type OpaqueLeaf =
+    {
+        /// The reason class. Compared by string: a host accepts the classes it
+        /// is prepared to run (`HostCoverage.Opaque`), and one it has never
+        /// heard of is one it has not accepted.
+        Reason: string
+        /// The act's name within the domain's vocabulary.
+        Name: string
+    }
+
 /// What a leaf may demand, for the static projection. The fold never reads it.
 type LeafDeclaration =
     {
@@ -625,7 +641,30 @@ type LeafDeclaration =
         EffectKinds: string list
         /// The host channels the leaf names.
         HostCalls: HostCallDemand list
+        /// Set when the leaf is an escape no walk can see into (Phase 2130,
+        /// D40). `None` is the claim that the two lists above are the whole of
+        /// what the leaf can do; `Some` says they are not, names the act and
+        /// says why, so the demanded document tells "does nothing" apart from
+        /// "cannot be analysed" — which a leaf declaring nothing could not.
+        Opaque: OpaqueLeaf option
     }
+
+module LeafDeclaration =
+
+    /// The leaf that demands nothing and declares itself analysable. Build
+    /// from this (`{ LeafDeclaration.none with EffectKinds = … }`) rather than
+    /// a full record literal, so a member the declaration gains later is not
+    /// a compile break at every construction.
+    let none: LeafDeclaration =
+        { EffectKinds = []
+          HostCalls = []
+          Opaque = None }
+
+    /// A leaf that is an escape: it demands nothing a walk can name, and says
+    /// so with a reason class and the act's name.
+    let opaque (reason: string) (name: string) : LeafDeclaration =
+        { none with
+            Opaque = Some { Reason = reason; Name = name } }
 
 /// The bound of a repeat (Phase 1976; D2: a literal count, or a parameter
 /// checked against a range). `Literal` is known from the tree alone, which is
