@@ -20,7 +20,7 @@ what a consumer pays to adopt it and why.
 This document starts at `0.6.0`. The slots before it are recorded where they were cut, in the
 comments beside `<Version>` in `Directory.Build.props`, and are not restated here.
 
-## 0.9.0 — DRAFT — the value channel on the state axis (Phase 2186)
+## 0.9.0 — RELEASED (tagged `v0.9.0`, 2026-10-10) — the value channel on the state axis (Phase 2186), and what rode the draft (Phases 2197, 2187, 2195)
 
 **Class: breaking**, by this file's own rule, for every consumer that matches an `OpView<'Node, 'Op>`
 exhaustively, constructs a `DemandedProjection` as a full record literal, reads a demanded document
