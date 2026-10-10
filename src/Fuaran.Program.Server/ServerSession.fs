@@ -506,6 +506,7 @@ module ServerSession =
                               Notifications = tally.Notifications @ outcome.Notifications
                               Flow = tally.Flow @ outcome.Flow
                               Receipts = tally.Receipts @ outcome.Receipts
+                              Findings = tally.Findings @ outcome.Findings
                               Diagnostics = tally.Diagnostics @ outcome.Diagnostics } } }
 
     /// Run one ALREADY-CHOSEN action through this placement's loop, with a
@@ -557,7 +558,8 @@ module ServerSession =
                   ClientEffects = bounded.Effects
                   Diagnostics = (bounded.Diagnostics |> List.map ServerDiagnostic.Bounded) @ tally.Diagnostics
                   Flow = tally.Flow
-                  Receipts = tally.Receipts }
+                  Receipts = tally.Receipts
+                  Findings = tally.Findings }
 
             commit session tally.Tree bounded.Store outcome
 

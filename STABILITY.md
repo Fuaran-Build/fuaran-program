@@ -166,6 +166,54 @@ consumer pays.
   unchanged. This entry only makes the projection say them.
 - **The extracted model and the oracle differential**, which run at `PureRead`.
 
+### Rides the draft: a program reports a finding into its trace (Phase 2195)
+
+**Class: breaking**, and it rides the untagged `0.9.0` draft, which D42 opened at that class. A closed
+DU gains a case, which breaks every exhaustive match over it, and three records gain a field, which
+breaks every full-literal construction of them. A pinned reader of the demanded document refuses
+version 11. `DECISIONS.md` D45 records what was decided; this entry records what a consumer pays.
+
+### What changed shape
+
+- **`ServerEffect` gains `Report of Finding`** (wire `$type` `Report`; capability `Report`). A
+  consumer matching `ServerEffect` exhaustively adds the arm. `ServerEffect.kinds` names six arms.
+- **`HandlerOutcome` gains `Findings: Finding list`** (in program order; kept on an uncommitted
+  outcome, as `Diagnostics` and `Flow` are), and **`HandlerTally` gains `Findings`**. A consumer that
+  builds either as a full record literal adds the field; `[]` is the 0.8.0 meaning.
+- **`ServerEffectRegistry` gains `RecordFinding: FindingRecorder`**, set to `FindingRecorder.live`
+  by `denyAll`. A consumer building the registry from `denyAll` and the `with`/combinator forms pays
+  nothing; one building it as a full literal adds the field.
+- **The demanded document is at version 11.** No member moves. `Report` may appear in
+  `server.effects` and `server.capabilities`, and a finding's `code` and `severity` appear in
+  `server.reach` under the `Report` capability. `Demanded.Version` is `11`, `decodableVersions` is
+  `[11]`, and `conformance/demanded-effect-projection.json` is re-cut at version 11.
+- **The program wire specification widens §5.1 at format version 3**, beside `staged-query`: a
+  sixth server-effect arm, `Report` (`code`, `message`, `severity`; `code` and `severity` non-empty,
+  refused `missing-member` when empty). A version-2 reader refuses a `Report` document as
+  `unknown-effect-arm`. No existing document's bytes move.
+- **Removed: `ServerEffectRegistry.withExtentReader`.** Nothing in this repository or its known
+  consumers called it, and its own comment said a host had no reason to; the durable interpreter sets
+  the member directly. A consumer that called it writes `{ registry with ReadExtent = reader }`.
+
+### What was added
+
+- `Finding` — `{ Code; Severity; Message }`, the host's tokens, carried and never interpreted — with
+  `Finding.encode`, `decode`, `subject` and the member names; `FindingRecorder` and
+  `FindingRecorder.live`.
+- `Durable.findings journal invocation`: an invocation's findings read off its journal alone, in
+  program order. `Durable.FindingCapability` names the capability they are journaled under.
+- A host declares its finding vocabulary as an allow-list on the `Report` capability's `code` and
+  `severity` arguments (`ServerEffectRegistry.constrain "Report" …`); nothing new is needed for it.
+
+### What did not move
+
+- **A handler that reports nothing** runs, journals, derives its postures and publishes its demanded
+  document exactly as before, the version number aside.
+- **The outcome document** (`HandlerReport`) carries no finding: `Findings` is host-side, as `Flow`
+  and `Receipts` are. A reached report appears in `Performed` as `Report`.
+- **The replay and undo vocabularies**: a report contributes no reason to either.
+- **The extracted staging model and the oracle differential**, which have no report arm (D45).
+
 ## 0.8.0 — RELEASED (tagged `v0.8.0`, 2026-10-09) — the query evaluator seam on `RunQuery` (Phase 1905), and what rode the draft (Phases 1991, 1993, 2018, 2019, 2130, 2165, 2175)
 
 **Class: breaking**, by this file's own rule, for a consumer that constructs a

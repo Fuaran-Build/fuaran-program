@@ -79,6 +79,17 @@ open Fuaran.Program.Bounded
 //  read something else at that ordinal is refused under
 //  `durable-entry-read-diverged`, naming the read, before any stage.
 //
+//  ── A reported FINDING is journaled too (Phase 2195, D45) ──────────────────
+//  A `Report` is not an act, so it could be recomputed from the entry state
+//  as a notification is. It is journaled anyway, at its ordinal under
+//  `Report` with the finding's content address as its subject and the
+//  finding as its completed value, because the journal is the trace a host
+//  derives an invocation's outcome from: `Durable.findings` reads an
+//  invocation's findings off the journal ALONE, in program order, without
+//  re-running anything and without a record kept beside the program. A
+//  resume is SERVED the recorded finding, and one that would report a
+//  different finding at that ordinal is the divergence the wrapper refuses.
+//
 //  The consequence a reader should carry away is the one the facets state: this
 //  interpreter's exactly-once claim is about what IT performs — and, since
 //  Phase 2165, about what its plan READ. What a caller does with a returned
@@ -425,6 +436,39 @@ module Durable =
     [<Literal>]
     let EntryReadCapability = EntryReader.Capability
 
+    /// The capability a reported finding is journaled under (Phase 2195,
+    /// D45) — `FindingRecorder.Capability`, the arm's own name.
+    [<Literal>]
+    let FindingCapability = FindingRecorder.Capability
+
+    /// **The findings an invocation reported, read off its journal ALONE**
+    /// (Phase 2195, D45): every completed `Report` step, in ordinal order,
+    /// which is program order — so a host derives the invocation's outcome
+    /// from the trace, with nothing re-run and no record kept beside the
+    /// program. A report step whose record is not a finding is refused with
+    /// `Finding.Malformed`; a report the journal shows attempted with no
+    /// recorded result names nothing and contributes nothing, because a
+    /// finding is recorded in the same step it is attempted and a step that
+    /// never completed reported nothing.
+    let findings (journal: EffectJournal) (invocation: string) : Result<Finding list, string> =
+        let recorded = journal.Read invocation
+
+        recorded
+        |> List.filter (fun entry -> entry.Capability = FindingCapability)
+        |> List.map (fun entry -> entry.Step)
+        |> List.distinct
+        |> List.sort
+        |> List.fold
+            (fun acc step ->
+                acc
+                |> Result.bind (fun found ->
+                    match Journal.stepOf recorded step with
+                    | JournaledStep.Value value ->
+                        Finding.decode value |> Result.map (fun finding -> finding :: found)
+                    | _ -> Ok found))
+            (Ok [])
+        |> Result.map List.rev
+
     /// The EFFECT KINDS an op names (Phase 2165, D39): the argument names its
     /// reach declares, Program's own `destination` argument aside, distinct
     /// and in declaration order — what `PerformerFacets.opFacetOf` is keyed
@@ -670,13 +714,33 @@ module Durable =
                     (fun _ -> read ())
                     (Fuaran.Core.JObj [])
 
+        // A reported FINDING (Phase 2195, D45) through the same wrapper:
+        // journaled at its ordinal under `Report`, the subject the finding's
+        // content address, the recorded value the finding — so the journal
+        // is the trace `findings` reads the outcome from, and a replay is
+        // SERVED the finding the recorded run reported. Recording repeats
+        // freely, so an indeterminate window over it closes by recording
+        // again. A recomputation that reports another finding here is the
+        // divergence the wrapper already refuses.
+        let journalFinding: FindingRecorder =
+            fun finding ->
+                wrapAt
+                    FindingCapability
+                    (Some(Finding.subject finding))
+                    IdempotencyFacet.Idempotent
+                    (fun () -> None)
+                    (fun _ -> Ok(Finding.encode finding))
+                    (Fuaran.Core.JObj [])
+                |> Result.bind Finding.decode
+
         let witness = witnessOf journalEntry
 
         let journalling =
             { registry with
                 HostFunctions = registry.HostFunctions |> Map.map wrap
                 QueryEvaluator = registry.QueryEvaluator |> Option.map (QueryEvaluator.through journalQuery)
-                ReadExtent = journalExtent }
+                ReadExtent = journalExtent
+                RecordFinding = journalFinding }
 
         // The op performer, through the same wrapper. The plan phase stages
         // `fun _ -> perform state op` per edit (`Handler.stagedOp`), so this
@@ -875,6 +939,7 @@ module Durable =
                               Notifications = tally.Notifications @ outcome.Notifications
                               Flow = tally.Flow @ outcome.Flow
                               Receipts = tally.Receipts @ outcome.Receipts
+                              Findings = tally.Findings @ outcome.Findings
                               Diagnostics = tally.Diagnostics @ outcome.Diagnostics } } }
 
     /// This interpreter's answer to a call action the shared fold recognised —

@@ -276,6 +276,21 @@ type HandlerOutcome<'Node, 'Store, 'Op, 'Effect> =
         ///
         /// HOST-SIDE ONLY, as `Flow` is: no outcome document carries it.
         Receipts: OpReceipt list
+        /// The findings the program REPORTED (Phase 2195, D45), in program
+        /// order — each `Report` stage the plan reached and the gate and the
+        /// argument policy admitted, as its recorder answered it (a served
+        /// stage's recorded finding under the durable interpreter). What a
+        /// host derives the invocation's outcome from, with no record kept
+        /// beside the program.
+        ///
+        /// A report is not an act, so it survives the rollback exactly as
+        /// `Diagnostics` and `Flow` do: on an uncommitted outcome it names the
+        /// findings reported BEFORE the stage that halted, which is the record
+        /// of what the program found on its way to the refusal.
+        ///
+        /// HOST-SIDE ONLY, as `Flow` and `Receipts` are: the outcome document
+        /// the specification describes does not carry it (D45).
+        Findings: Finding list
     }
 
 /// What an invocation changed, read off its outcome (Phase 2197, D43).
@@ -358,6 +373,10 @@ type HandlerTally<'Node, 'Op> =
         /// D43), each handler's in its own perform order, the handlers in
         /// invocation order — the event's changed set is their union.
         Receipts: OpReceipt list
+        /// The findings every handler the event invoked reported (Phase 2195,
+        /// D45), each handler's in its own program order, the handlers in
+        /// invocation order.
+        Findings: Finding list
     }
 
 module HandlerTally =
@@ -372,7 +391,8 @@ module HandlerTally =
           Notifications = []
           Diagnostics = []
           Flow = []
-          Receipts = [] }
+          Receipts = []
+          Findings = [] }
 
 module Handler =
 
@@ -434,6 +454,9 @@ module Handler =
             Trail: UndoStep<'Node, 'Op, 'Action> list
             /// The flow decisions (Phase 1982), reversed like every list here.
             Flow: FlowDecision list
+            /// The findings reported (Phase 2195, D45), reversed like every
+            /// list here.
+            Findings: Finding list
         }
 
     let private halt
@@ -749,7 +772,8 @@ module Handler =
                     | ServerEffect.RunQuery _
                     | ServerEffect.HostCall _
                     | ServerEffect.EmitPatch _
-                    | ServerEffect.Notify _ -> []
+                    | ServerEffect.Notify _
+                    | ServerEffect.Report _ -> []
 
                 match scope with
                 | defect :: _ -> Some(ScopeDefect.describe defect)
@@ -906,6 +930,20 @@ module Handler =
                         Notifications = (channel, payload) :: performed.Notifications
                         Trail = UndoStep.Reached capability :: performed.Trail }
 
+                // A finding (Phase 2195, D45): recorded in program order through
+                // the registry's recorder — the finding itself, or under the
+                // durable interpreter its journaled record — and nothing else.
+                // Not staged, because nothing is performed; not on the undo
+                // trail, because a report has no inverse to run; a recorder's
+                // refusal (a resume that diverged here) halts like any plan-time
+                // failure.
+                | ServerEffect.Report finding ->
+                    match registry.RecordFinding finding with
+                    | Error reason -> halt capability reason acc
+                    | Ok recorded ->
+                        { performed with
+                            Findings = recorded :: performed.Findings }
+
     /// Run one stage.
     let private runStage
         (state: StateWitness<'Node, 'Op>)
@@ -1043,7 +1081,8 @@ module Handler =
               ClientEffects = []
               Diagnostics = []
               Trail = []
-              Flow = [] }
+              Flow = []
+              Findings = [] }
 
         let channel =
             (witness.Dispatch :> IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>).Fold
@@ -1107,7 +1146,8 @@ module Handler =
               ClientEffects = []
               Diagnostics = List.rev final.Diagnostics
               Flow = List.rev final.Flow
-              Receipts = List.rev final.Receipts },
+              Receipts = List.rev final.Receipts
+              Findings = List.rev final.Findings },
             plan
         else
             { Store = final.Store
@@ -1121,7 +1161,8 @@ module Handler =
               ClientEffects = List.rev final.ClientEffects
               Diagnostics = List.rev final.Diagnostics
               Flow = List.rev final.Flow
-              Receipts = List.rev final.Receipts },
+              Receipts = List.rev final.Receipts
+              Findings = List.rev final.Findings },
             plan
 
     /// `runPlanned` without the plan: the outcome alone. The signature every

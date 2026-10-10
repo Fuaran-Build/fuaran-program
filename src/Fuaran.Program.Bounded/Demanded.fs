@@ -247,10 +247,14 @@ type ServerConstraintDemand =
 /// reads off the effect and an allow-list binds, so a reach the document
 /// reports and a bound the host declares meet on one vocabulary. Every member
 /// is an op witness's own answer about a host-registered handler's ops — an
-/// author-declared name, never an op's payload (`OpReach`).
+/// author-declared name, never an op's payload (`OpReach`). A finding's two
+/// tokens ride it too (Phase 2195, D45): under `Report`, the `code` and the
+/// `severity` a handler can report — the pairs an allow-list on that
+/// capability binds — and never its message.
 type OpReachDemand =
     {
-        /// The capability the op rides — `ApplyOps` or `EmitPatch` — which is
+        /// The capability the op rides — `ApplyOps` or `EmitPatch`, or `Report`
+        /// for a finding's tokens — which is
         /// the capability the gate was asked about and a clause is declared on.
         Capability: string
         /// The argument the op names the reach under.
@@ -1122,7 +1126,7 @@ module Demanded =
     /// The version this encoder emits, and — see `decodableVersions` — the only
     /// one this reader reads.
     [<Literal>]
-    let Version = 10
+    let Version = 11
 
     // The policy clause's discriminator, written once and read once. A literal
     // spelled at the encoder and again at the reader is the drift this document
@@ -1265,6 +1269,15 @@ module Demanded =
     /// is what tells it which vocabulary it is reading. A document for a host
     /// with no evaluator, or a pure-read one, differs from its version-9 bytes
     /// in the version alone.
+    ///
+    /// **Version 11 widens the server-effect vocabulary the server tier names**
+    /// (Phase 2195, D45): `Report` joins `effects` and `capabilities`, and a
+    /// finding's `code` and `severity` join `reach` under it. No member moves.
+    /// The version moves on version 10's argument: the server tier's effect
+    /// kinds are the closed vocabulary of D3, read here as strings, so a reader
+    /// pinned to version 10 would carry the new arm without being told the
+    /// vocabulary grew. A document for a registration that reports nothing
+    /// differs from its version-10 bytes in the version alone.
     let encode (projection: DemandedProjection) : string =
         let effects = projection.Effects |> List.map q |> arr
 

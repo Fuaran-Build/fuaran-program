@@ -232,6 +232,10 @@ let private modelEffect (effect: ServerEffect<ToyOp>) : Staging.server_effect<JV
     | ServerEffect.HostCall(fn, args, into) -> Staging.HostCall(fn, args, modelOpt into)
     | ServerEffect.EmitPatch ops -> Staging.EmitPatch ops
     | ServerEffect.Notify(channel, payload) -> Staging.Notify(channel, payload)
+    // The staging model has no report arm (DECISIONS.md D45): a finding stages
+    // nothing, trails nothing and moves no state, so the differential draws no
+    // program that reports one, and `ReportTests` pins the arm instead.
+    | ServerEffect.Report _ -> invalidArg (nameof effect) "the staging model has no Report arm (D45)"
 
 let private modelStage (stage: ToyStage) : ModelStage =
     match stage with
@@ -310,7 +314,9 @@ let private productionShaped (outcome: ModelOutcome) : ToyOutcome =
       Flow = []
       // Nor any typed receipts (Phase 2197, D43): its performers return a
       // detail, and the projection below does not compare them.
-      Receipts = [] }
+      Receipts = []
+      // Nor any findings (Phase 2195, D45): the model has no report arm.
+      Findings = [] }
 
 /// The comparable projection: the tree by the toy codec's canonical bytes
 /// (labels included), the store — whose one channel is where the toy lands a

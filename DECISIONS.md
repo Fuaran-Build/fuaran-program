@@ -3299,3 +3299,128 @@ corpus at version 10.
 **Version.** Breaking, by `STABILITY.md`'s rule: two closed DUs gain a case, fifteen functions gain a
 leading parameter, and the demanded document is at version 10. `0.9.0` is an untagged draft already
 of the breaking class (D42, D43), so this rides it.
+
+## D45 — A program reports a FINDING through a sixth arm of the closed server-effect vocabulary: `Report` carries the host's code and severity as tokens the host bounds with its argument policy and types with its own decoder; it is recorded in program order while planning, journaled at its ordinal and read off the journal alone; it is replay-safe and has no inverse; the outcome document does not carry it; the specification widens §5.1 at format version 3 and the demanded document moves to version 11; closes D39's deferred fifth item (2026-10-10)
+
+**2026-10-10. Phase 2195.** D39 deferred a typed way for a program to report a finding: a code, a
+severity and a message, as the host's own vocabulary types them. Without one, a host derived an
+invocation's outcome from a record it kept BESIDE the program. This entry gives Program the effect.
+The program reports, the run's trace carries it, the durable tier journals it, and a host derives the
+outcome from the trace alone.
+
+**Premises checked against the tree first.** (1) *No existing arm can carry a finding honestly.*
+`Notify` is the only arm with a payload, and it is an outbound act: `outbound-notification` makes its
+handler `unsafe` for replay and `one-way` for undo, its facet is non-idempotent, and a halt discards it.
+A finding sent through it would class every reporting verb as unsafe and irreversible for the act of
+reporting, and would lose the finding exactly when a refusal makes it most useful. (2) *A handler's
+effect stages are unconditional.* The stage list has no branch, so a `Report` stage is reached whenever
+the plan reaches it. A finding that depends on what the plan found is reported by the handler that
+reaches it, or after the guard that admits it. Flow on the op axis cannot emit an effect, and widening
+it to do so is a different and larger act, not taken here. (3) *A finding is a value the plan
+recomputes.* Journaling it is not needed for a resume to be correct. It is needed for the journal to BE
+the trace a host reads the outcome from without re-running anything, which is the phase's claim.
+
+**The shape: a new arm, `Report`, not a reserved use of an existing one.** The alternative was a
+reserved `Notify` channel. It moves no vocabulary, but it changes the meaning of every existing
+document that happens to use the channel. It conflates two capabilities a gate must be able to tell
+apart, and it needs a string test in every derivation that today matches the arm. A new arm is what
+D3's closed vocabulary is for: the gate, the policy, the projection and both postures each name it
+once, and the compiler finds every match that must. The specification carries it as a sixth row of
+§5.1 with three string members.
+
+**The host's vocabulary: tokens the host bounds and types, never a vocabulary Program fixes.** A
+`Finding` is `{ Code; Severity; Message }`, all strings. Program carries them and never interprets
+them. The HOST declares which codes and severities it has as an allow-list on the `Report`
+capability's `code` and `severity` arguments. That is the argument policy every capability already
+has, so a finding outside the host's vocabulary is refused while planning, before anything is
+performed. The refusal names the argument, never the token. The host reads the tokens back through its
+own types, and the allow-list is what makes that decoder total over everything a trace can hold.
+`ReportTests` does exactly this with a host DU. Two other routes were considered and rejected. A type
+parameter on `ServerEffect` would thread a finding type through the registry, the handler, the durable
+interpreter and every caller, to buy the totality the allow-list already buys. A codec registered on
+the registry would be a second declaration of the vocabulary beside the constraints, and the demanded
+document already carries the constraints.
+
+**Trace and journal.** A `Report` is gated (default-deny, capability `Report`) and checked against the
+argument policy. It is then recorded, in program order, through the registry's `RecordFinding`, a
+recorder of `ExtentReader`'s and `EntryReader`'s shape. Outside a durable run it answers the finding.
+`Durable.runGuarded` replaces it with one that journals the finding through the wrapper every other
+journaled step uses: capability `Report`, subject the finding's content address, completed value the
+finding, declared idempotent. A resume is SERVED the record. A resume that would report a different
+finding at that ordinal fails the wrapper's divergence check and is refused `durable-replay-divergence`.
+A report is recorded while planning, so its ordinal precedes every staged call's. That is D39's
+one-cursor assumption, inherited and pinned by the tests rather than proved. `Durable.findings` reads
+an invocation's findings off the journal ALONE, in ordinal order, which is program order, with nothing
+re-run. The outcome carries them as `HandlerOutcome.Findings`. **A finding survives the rollback**, as
+`Diagnostics` and `Flow` do: it is the record of what the program found on its way to a refusal, not
+work the halt undoes. A refusal is where a host most needs it.
+
+**The undo posture: no inverse to run, so no defect.** A report moved no state and reached nothing. The
+plan records no step for it, `Undo.defectsOfStage` answers `[]`, and a handler's undo posture is what
+it would be without its reports. Two alternatives were rejected. `one-way` would make every reporting
+verb irreversible for the act of reporting. A `Reached` step would make the undo refuse at it. An undo
+leaves the original run's findings standing in that run's trace and reports nothing of its own.
+
+**The static postures.** The demanded projection names the arm in `effects` and `capabilities`, and a
+finding's `code` and `severity` in `reach` under the `Report` capability. They come from the same
+argument-policy extraction the enforcement reads, so the document and the bound cannot be two
+enumerations. The message is payload and is never demanded. A host's declared vocabulary joins as the
+capability's constraints through `withConstraints`, so "this handler reports these codes, on a host
+that has these" is in the signed subject. Replay classification gives a report no reason, so it is
+replay-safe: a second run records the same finding, and the durable tier serves it. Its facet is
+`Idempotent`, and `ExactlyOnceEffective` under a surviving journal: a pure read's posture.
+
+**The demanded document moves to version 11**, on version 10's argument (D44). No member moves, but the
+server tier's `effects` are D3's closed vocabulary read as strings. A reader pinned to version 10 would
+carry `Report` without being told the vocabulary grew. `conformance/demanded-effect-projection.json` is
+re-cut at version 11 on the terms version 10's re-cut was. The UI tier's emitter re-emits it when that
+tier adopts this release.
+
+**The outcome document does not carry findings.** That follows D25's precedent for `Flow`. The outcome
+document is the projection a CALLER receives, and a finding is in the HOST's vocabulary. The host
+derives the outcome from it and decides what its caller is told. A required member would move every
+outcome document's bytes, and an optional one would give "no findings" two spellings. A reached report
+appears in `Performed` as `Report`, so the audit trail says that the program reported.
+`ServerStepOutput`, which carries neither `Flow` nor `Receipts`, does not carry findings either.
+`HandlerTally` does.
+
+**The specification, one change-set across both repositories.** §5.1 gains the arm, its capability and
+the rule that `code` and `severity` are non-empty (`missing-member` when empty, as Appendix A now
+says), with a paragraph on whose vocabulary the tokens are. §6.1, §6.2 and §6.3 say a report is
+recorded and not staged, and that the outcome document does not carry it. §7.4 lists a report as
+provably re-runnable. The schema gains the arm. The three emitters reproduce four new round-trip
+vectors: the arm at both subjects, and a STATE-ONLY handler document carrying a finding at both
+subjects. The manifest gains them and two reject vectors, and its coverage check holds both subjects
+to the arm. **It rides format version 3** rather than opening 4. Version 3 is the unreleased cut that
+D44's `staged-query` opened, held off the specification's main line until the UI tier adopts this
+release. A reader of the version-3 cut without `Report` refuses a `Report` document as
+`unknown-effect-arm`, which is §11.1's refusal for a widened closed vocabulary. §11.1's version-3
+paragraph names both additions. Program's toy suite is manifest-driven, so its gate holds against the
+specification's main line as well as against this branch: there it simply meets no `Report` vector.
+
+**What this does not reach.**
+
+- *The extracted staging model has no report arm.* Unlike D44's gap, this one is WIDENED by this entry.
+  The oracle differential draws no reporting program, and its effect mapping refuses the arm by name.
+  The arm stages nothing, trails nothing and moves no state, so the model's theorems are not
+  contradicted. But production's `Report` is pinned by `ReportTests`, not by a theorem. Closing that
+  gap is a proof-leg act with its own prover run, and it is recorded here rather than claimed.
+- *A finding cannot carry a value the plan computed.* Its members are literals in the handler, and the
+  value channel (D42) binds op operands, not effect members.
+
+**Assumptions kept, with the evidence that would falsify each.**
+
+- *A host's finding vocabulary is a finite list of codes and severities.* Falsified by a host whose
+  codes are open (a namespace, a pattern). An allow-list cannot bound that, and the host would then type
+  the tokens with a decoder that can refuse, at read time.
+- *Recording a finding is idempotent.* It records a value. Falsified by a recorder that delivers. That
+  is `Notify`, and a host wanting delivery reports and notifies.
+
+**Tidied in the same landing.** `ServerEffectRegistry.withExtentReader` is removed. Nothing in this
+repository or in its known consumers called it, its own comment said a host had no reason to, and the
+durable interpreter sets the member directly. Considered and kept: `ServerEffect.kinds`, which has no
+caller in this repository but is documented host introspection over the closed vocabulary.
+
+**Version.** Breaking, by `STABILITY.md`'s rule: a closed DU gains a case, three records gain a field,
+a public function is removed, and the demanded document is at version 11. `0.9.0` is an untagged
+draft already of the breaking class (D42, D43, D44), so this rides it.

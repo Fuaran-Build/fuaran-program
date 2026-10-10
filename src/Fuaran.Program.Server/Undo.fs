@@ -206,7 +206,7 @@ module Undo =
     /// reversible fragment; a read lands a table and reaches nothing, unless
     /// the host's evaluator is staged (D44); the op arm reads the member; a
     /// host call and a notification reached the world; a patch is the host's
-    /// to apply. The model's `stage_defects` at a pure read: the model has no
+    /// to apply; a report (D45) is not an act and contributes nothing. The model's `stage_defects` at a pure read: the model has no
     /// staged evaluator, so it is the `PureRead` case this function reduces to.
     let defectsOfStage
         (query: QueryPosture)
@@ -229,6 +229,10 @@ module Undo =
             | ServerEffect.HostCall _ -> [ UndoDefect.OpaqueHostCall ]
             | ServerEffect.EmitPatch _ -> [ UndoDefect.EmittedPatch ]
             | ServerEffect.Notify _ -> [ UndoDefect.OutboundNotification ]
+            // A report (Phase 2195, D45) is not an act: it moved no state and
+            // reached nothing, so there is no inverse to run, and the undo
+            // leaves the finding standing in the trace of the run it undoes.
+            | ServerEffect.Report _ -> []
 
     /// Every reason a handler is not provably reversible, in stage order —
     /// distinct within a stage, as the replay reasons are. The model's

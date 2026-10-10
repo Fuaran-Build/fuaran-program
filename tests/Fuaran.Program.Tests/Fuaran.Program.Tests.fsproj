@@ -69,6 +69,7 @@
     <Compile Include="OpaqueLeafTests.fs" />
     <Compile Include="TypedReadTests.fs" />
     <Compile Include="ReceiptTests.fs" />
+    <Compile Include="ReportTests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
   <ItemGroup>

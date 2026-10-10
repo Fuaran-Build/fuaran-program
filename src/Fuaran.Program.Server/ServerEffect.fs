@@ -12,7 +12,7 @@ namespace Fuaran.Program.Server
 //  differs is the vocabulary, because a server session can do things a browser
 //  tab cannot.
 //
-//  ── The five arms ───────────────────────────────────────────────────────────
+//  ── The six arms ────────────────────────────────────────────────────────────
 //    RunQuery    read: evaluate a declarative pipeline over a source and land
 //                the result in the session's query slot. Reads only.
 //    ApplyOps    the ONLY mutation of domain state — a `TreeOp` sequence
@@ -28,6 +28,12 @@ namespace Fuaran.Program.Server
 //    Notify      an out-of-band host-channel message. Not the bounded
 //                interpreter's `Action.Notify`, which stays a documented no-op
 //                at every placement; this one is a handler's own declaration.
+//    Report      a FINDING the program reports into its own trace (Phase 2195,
+//                D45): a code, a severity and a message in the host's own
+//                vocabulary. Not an act — nothing is delivered, nothing is
+//                staged, nothing is undone — so a host derives the
+//                invocation's outcome from the trace rather than from a record
+//                it keeps beside the program.
 //
 //  The case names are the F# spelling of that vocabulary. They are NOT a wire
 //  commitment — this placement has no wire form yet, and inventing one here
@@ -44,6 +50,90 @@ namespace Fuaran.Program.Server
 //  string in this subsystem that DOES come off the wire — the endpoint a tree's
 //  `Action.Call` names — is never echoed anywhere. See `ServerDiagnostic`.
 // ============================================================================
+
+/// A finding a program reports (Phase 2195, D45): the host's own tokens, carried
+/// and never interpreted. `Code` and `Severity` are the HOST's vocabulary — a
+/// host declares which it has as an allow-list on the `Report` capability's
+/// `code` and `severity` arguments (`ServerArgumentPolicy`), so a program cannot
+/// report one the host does not have, and the host types the tokens with its
+/// own decoder when it reads the trace. Program fixes no code and no severity.
+/// `Message` is the finding's text, which is payload: it is what the program
+/// says, and like a notification's payload it never reaches a refusal.
+type Finding =
+    { Code: string
+      Severity: string
+      Message: string }
+
+module Finding =
+
+    /// The argument a finding's code is allow-listed under, and the member that
+    /// carries it on the wire and in the journal.
+    [<Literal>]
+    let CodeMember = "code"
+
+    /// The argument a finding's severity is allow-listed under, and its member.
+    [<Literal>]
+    let SeverityMember = "severity"
+
+    /// The member a finding's message is carried under.
+    [<Literal>]
+    let MessageMember = "message"
+
+    /// The finding's members, in canonical (ordinal) order — the body the wire
+    /// form and the journal record share.
+    let members (finding: Finding) : (string * Fuaran.Core.JVal) list =
+        [ CodeMember, Fuaran.Core.JStr finding.Code
+          MessageMember, Fuaran.Core.JStr finding.Message
+          SeverityMember, Fuaran.Core.JStr finding.Severity ]
+
+    /// The finding as the durable tier journals it: its three members.
+    let encode (finding: Finding) : Fuaran.Core.JVal = Fuaran.Core.JObj(members finding)
+
+    /// The tier's refusal of a served record that is not a finding — the
+    /// journal holds, at a report's ordinal, something a report did not write.
+    [<Literal>]
+    let Malformed = "the journal's recorded finding is not a finding"
+
+    /// The finding a journal record holds, or `Malformed`.
+    let decode (recorded: Fuaran.Core.JVal) : Result<Finding, string> =
+        match recorded with
+        | Fuaran.Core.JObj [ c, Fuaran.Core.JStr code; m, Fuaran.Core.JStr message; s, Fuaran.Core.JStr severity ] when
+            c = CodeMember && m = MessageMember && s = SeverityMember
+            ->
+            Ok
+                { Code = code
+                  Severity = severity
+                  Message = message }
+        | _ -> Error Malformed
+
+    /// The finding's journal SUBJECT: the content address of its canonical
+    /// form, on `Durable.opSubject`'s terms — log-safe (a digest, never the
+    /// message), and moved by any change to the finding, so a resume that
+    /// would report something else at a report's ordinal is the divergence
+    /// the durable tier refuses rather than a record served for another
+    /// finding.
+    let subject (finding: Finding) : string =
+        Fuaran.Program.Bounded.ProgramWire.ContentAddressPrefix
+        + Fuaran.Core.Hash.sha256Hex (Fuaran.Program.Bounded.ProgramWire.render (encode finding))
+
+/// How a plan RECORDS a finding it reached (Phase 2195, D45): handed the
+/// finding, it answers the finding the run's trace should carry. Outside a
+/// durable run that is the finding itself (`FindingRecorder.live`); the durable
+/// interpreter replaces it with one that journals the finding at its ordinal
+/// and serves the record on resume — the shape `ExtentReader` and
+/// `EntryReader` already have, for the same reason: the report is the
+/// program's, the record is Program's.
+type FindingRecorder = Finding -> Result<Finding, string>
+
+module FindingRecorder =
+
+    /// The recorder outside a durable run: the finding, as reported.
+    let live: FindingRecorder = Ok
+
+    /// The capability a finding is gated, constrained and journaled under —
+    /// the arm's own name, as every arm but a host call's is.
+    [<Literal>]
+    let Capability = "Report"
 
 /// The closed vocabulary of effects the server placement's interpreter can emit.
 /// Extensibility is a host act (`HostCall` + a registered performer), never a
@@ -65,6 +155,11 @@ type ServerEffect<'Op> =
     /// Send a host-channel message. The host performs the delivery; this
     /// placement records that the handler asked for it.
     | Notify of channel: string * payload: Fuaran.Core.JVal
+    /// Report a finding into the handler's trace (Phase 2195, D45). A report,
+    /// not an act: recorded in program order while planning, journaled at its
+    /// ordinal by the durable interpreter, never staged, and with no inverse
+    /// for an undo to run.
+    | Report of finding: Finding
 
 module ServerEffect =
 
@@ -77,14 +172,20 @@ module ServerEffect =
         | ServerEffect.HostCall _ -> "HostCall"
         | ServerEffect.EmitPatch _ -> "EmitPatch"
         | ServerEffect.Notify _ -> "Notify"
+        | ServerEffect.Report _ -> FindingRecorder.Capability
 
     /// The whole closed vocabulary, for host introspection — a host wiring a
     /// gate should be able to enumerate what it is deciding about rather than
     /// discovering the arms one refusal at a time.
     let kinds: string list =
-        [ "RunQuery"; "ApplyOps"; "HostCall"; "EmitPatch"; "Notify" ]
+        [ "RunQuery"
+          "ApplyOps"
+          "HostCall"
+          "EmitPatch"
+          "Notify"
+          FindingRecorder.Capability ]
 
-    /// The capability a gate is asked about. For four arms that is the
+    /// The capability a gate is asked about. For five arms that is the
     /// discriminator; a `HostCall` is namespaced by its function name
     /// (`host:<fn>`), because "may this session call host functions at all" and
     /// "may it call THIS one" are different questions and a gate that could only
@@ -521,6 +622,13 @@ type ServerEffectRegistry =
         /// replay. Reached only when a store-bound `Each` is met, so a
         /// handler with none never asks it.
         ReadExtent: Fuaran.Program.Bounded.ExtentReader
+        /// How this placement RECORDS a finding a plan reports (Phase 2195,
+        /// D45): asked once per `Report` the plan reaches, after the gate and
+        /// the argument policy admitted it. `denyAll` records it as reported;
+        /// the durable interpreter replaces it with a recorder that journals
+        /// the finding at its ordinal and serves the record on replay, as it
+        /// replaces `ReadExtent`.
+        RecordFinding: FindingRecorder
     }
 
 module ServerEffectRegistry =
@@ -542,7 +650,10 @@ module ServerEffectRegistry =
           // The in-memory fold: an evaluator is a host act nobody performed.
           QueryEvaluator = None
           // The live read: journaling it is the durable interpreter's act.
-          ReadExtent = Fuaran.Program.Bounded.ExtentReader.live }
+          ReadExtent = Fuaran.Program.Bounded.ExtentReader.live
+          // The finding as reported: journaling it is the durable
+          // interpreter's act.
+          RecordFinding = FindingRecorder.live }
 
     /// Register a `HostCall` performer under a function name. Registering does
     /// NOT permit: the gate still decides, and it is asked about `host:<fn>`.
@@ -596,17 +707,6 @@ module ServerEffectRegistry =
     /// declares the fold, a pure read.
     let queryPosture (registry: ServerEffectRegistry) : QueryPosture =
         QueryEvaluator.postureOf registry.QueryEvaluator
-
-    /// Replace how a store-bound collection's extent is read (Phase 1991).
-    /// What the durable interpreter does to journal the read; a host has no
-    /// reason to, and a reader that answered anything but the live read or
-    /// its own record of one would make the loop iterate a collection the
-    /// store never held.
-    let withExtentReader
-        (reader: Fuaran.Program.Bounded.ExtentReader)
-        (registry: ServerEffectRegistry)
-        : ServerEffectRegistry =
-        { registry with ReadExtent = reader }
 
     /// The registry with the static query-schema check composed onto its
     /// evaluator against `schemas` (`QueryEvaluator.checkedAgainst`) — what the
@@ -816,6 +916,12 @@ module ServerArgumentPolicy =
                     | _ -> None)
             | _ -> []
         | ServerEffect.Notify(channel, _) -> [ ChannelArgument, channel ]
+        // A finding's code and severity (Phase 2195, D45): the two tokens the
+        // host's vocabulary types, so an allow-list on each is how a host
+        // declares which codes and severities it has — and the demanded
+        // projection reads them here, as it reads every arm's reach. The
+        // message is payload, bounded by a ceiling, never by a list.
+        | ServerEffect.Report finding -> [ Finding.CodeMember, finding.Code; Finding.SeverityMember, finding.Severity ]
         | ServerEffect.RunQuery(_, source, pipeline) ->
             (refsOfSource source @ (pipeline |> List.collect refsOfTransform))
             |> List.map (fun name -> SourceArgument, name)
@@ -836,6 +942,8 @@ module ServerArgumentPolicy =
         match effect with
         | ServerEffect.HostCall(_, args, _) -> sizeOf args
         | ServerEffect.Notify(_, payload) -> sizeOf payload
+        // The message, as the string the wire carries it as.
+        | ServerEffect.Report finding -> sizeOf (Fuaran.Core.JStr finding.Message)
         // The ops' canonical bytes, summed — the same encoder that splices
         // them into the handler's wire form (K6), so the ceiling bounds the
         // bytes a handler document carries rather than an in-memory estimate.

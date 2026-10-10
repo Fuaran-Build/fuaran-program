@@ -580,6 +580,9 @@ module Facets =
         | ServerEffect.EmitPatch _
         | ServerEffect.Notify _ -> IdempotencyFacet.NonIdempotent
         | ServerEffect.HostCall(fn, _, _) -> PerformerFacets.facetOf fn performers
+        // A report (Phase 2195, D45) delivers nothing: reporting the same
+        // finding twice records the same finding, so it repeats freely.
+        | ServerEffect.Report _ -> IdempotencyFacet.Idempotent
 
     /// The posture of an arm that COMMITS OUTSIDE under deterministic replay —
     /// a host call, or a performed op — given what repeating its performer does
@@ -654,7 +657,10 @@ module Facets =
             // call (Phase 1905), so it is derived on a host call's terms.
             | ServerEffect.RunQuery _ when PerformerFacets.isQueryEvaluatorDeclared performers ->
                 reachingOutside intrinsic replay
-            | ServerEffect.RunQuery _ ->
+            // A report (Phase 2195, D45) is journaled at its ordinal and served
+            // on replay, and repeats freely: a pure read's posture.
+            | ServerEffect.RunQuery _
+            | ServerEffect.Report _ ->
                 { Delivery = DeliveryFacet.hazards DeliveryFacet.ExactlyOnceEffective
                   Idempotency = IdempotencyFacet.Idempotent
                   Restart = RestartVisibility.SurvivesRestart }

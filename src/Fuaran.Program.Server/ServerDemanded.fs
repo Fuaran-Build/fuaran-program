@@ -169,6 +169,25 @@ module ServerDemanded =
                     Capabilities = [ capability ]
                     Channels = [ { Channel = kind; Name = channel } ] }
 
+        // A finding (Phase 2195, D45) demands the capability and its two
+        // TOKENS, as reach: the code and the severity the handler can report,
+        // read through the argument policy's own extraction — the pairs an
+        // allow-list on `Report` binds — so "this handler reports findings,
+        // with these codes" is in the document, and the host's declared
+        // vocabulary joins it as the capability's constraints
+        // (`withConstraints`). The message is payload and is not demanded.
+        | ServerEffect.Report _ ->
+            tier
+                { noDemand with
+                    Effects = [ kind ]
+                    Capabilities = [ capability ]
+                    Reach =
+                        ServerArgumentPolicy.arguments state effect
+                        |> List.map (fun (argument, name) ->
+                            { Capability = capability
+                              Argument = argument
+                              Name = name }) }
+
         // The two op-carrying arms demand the capability AND what their ops
         // REACH (Phase 1967): every named argument of every op, read through
         // the argument policy's own extraction — the same `(argument, name)`

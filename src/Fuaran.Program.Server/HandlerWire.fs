@@ -120,6 +120,8 @@ module HandlerWire =
         | ServerEffect.Notify(channel, payload) ->
             Ok(Canon.typed "Notify" [ "channel", JStr channel; "payload", payload ])
 
+        | ServerEffect.Report finding -> Ok(Canon.typed FindingRecorder.Capability (Finding.members finding))
+
     let decodeEffect
         (witness: ProgramWitness<'Node, 'Op, 'Walk, #IDispatchPosition<'Action, 'Expr, 'Store, 'Effect>>)
         (value: JVal)
@@ -185,6 +187,32 @@ module HandlerWire =
             |> Result.bind (fun channel ->
                 ProgramWire.requireMember "payload" value
                 |> Result.map (fun payload -> ServerEffect.Notify(channel, payload)))
+
+        // A finding (Phase 2195, D45): the host's two tokens and the message.
+        // The tokens must be non-empty, as a host function's name must — an
+        // empty code names nothing a host's vocabulary could hold.
+        | Some FindingRecorder.Capability ->
+            let token (name: string) =
+                ProgramWire.requireString name value
+                |> Result.bind (fun text ->
+                    if text = "" then
+                        ProgramWire.refuse RefusalClass.MissingMember ("member '" + name + "' is empty")
+                    else
+                        Ok text)
+
+            ProgramWire.declaredOnly
+                [ "$type"; Finding.CodeMember; Finding.MessageMember; Finding.SeverityMember ]
+                value
+            |> Result.bind (fun () -> token Finding.CodeMember)
+            |> Result.bind (fun code ->
+                token Finding.SeverityMember
+                |> Result.bind (fun severity ->
+                    ProgramWire.requireString Finding.MessageMember value
+                    |> Result.map (fun message ->
+                        ServerEffect.Report
+                            { Code = code
+                              Severity = severity
+                              Message = message })))
 
         | Some other ->
             ProgramWire.refuse
@@ -347,6 +375,9 @@ module HandlerWire =
             // the other ships a message a second run would duplicate.
             | ServerEffect.HostCall _ -> [ ReplayDefect.OpaqueHostCall ]
             | ServerEffect.Notify _ -> [ ReplayDefect.OutboundNotification ]
+            // A report records a finding and reaches nothing (D45): re-running
+            // it records the same finding, and the durable tier serves it.
+            | ServerEffect.Report _ -> []
 
         handler.Stages
         |> List.mapi (fun index stage ->
