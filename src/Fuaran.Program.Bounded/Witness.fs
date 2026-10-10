@@ -802,6 +802,13 @@ type ActionView<'Action, 'Expr> =
     | Sequence of 'Action list
     /// The one store write: a literal value, or an expression resolved at
     /// dispatch time.
+    ///
+    /// The literal may be one the domain's LOOP read from the event before the
+    /// fold (D46). The view is computed from the action the loop hands the fold,
+    /// so a write whose key is known only with the tree in view, and whose value
+    /// arrives on the event, is resolved by the domain before the fold and
+    /// viewed as this arm. The core reads nothing new, and the demanded
+    /// projection names its key's namespace as it names any write's.
     | Assign of key: string * value: JVal option * from: 'Expr option
     /// A call to a named endpoint. A call that declares its own result target
     /// is refused (D9).

@@ -3424,3 +3424,70 @@ caller in this repository but is documented host introspection over the closed v
 **Version.** Breaking, by `STABILITY.md`'s rule: a closed DU gains a case, three records gain a field,
 a public function is removed, and the demanded document is at version 11. `0.9.0` is an untagged
 draft already of the breaking class (D42, D43, D44), so this rides it.
+
+## D46 — A write whose key only the TREE holds and whose value only the EVENT carries is resolved by the domain's loop BEFORE the fold and viewed as an `Assign` with a literal; the core gains no arm, member or function, and the demanded projection names the write's namespace as it names any write's (2026-10-10)
+
+**2026-10-10. Phase 2198.** Phase 2130 refused to view the UI tier's `CommitLocal`, the explicit
+"Apply" of a buffered form field, as an `Assign`. The action carries only the id of the field it
+commits. The key it writes is the `commitTo` of that field's buffer, found by a tree lookup the
+per-action view cannot make. The value is the event's flush payload, which an `Assign` cannot read.
+So a commit was a leaf that demanded nothing in the demanded document, although on a server-driven
+channel it writes.
+
+**Premises checked against the tree first.** (1) *The view is per-action.* `ActionWitness.View` takes
+the action and nothing else: no node, no event. (2) *The fold reads an `Assign`'s value from its
+literal, or from `from` resolved against the store.* `BoundedActions`' `Assign` arm reads nothing from
+the event. (3) *The demanded projection reaches actions only through `Dispatch.Handlers`*, a function
+of one node (`Demanded.ofTree`). (4) *A domain may build its witness per tree.* The witness is a record
+of functions, so a domain can close `Handlers` over the root it projects. All four held, and the design
+below rests on the fourth.
+
+**Decided.** The key is resolved at LOWERING, by the domain, where the tree is in view. The value is
+read by the domain's LOOP from the admitted event, after its trust boundary and before the fold. The
+resolved write is an ordinary `Assign(key, Some literal, None)`: the core already folds a literal
+write correctly, and what is new is only where the literal comes from, which is a domain's transport
+rather than the algebra. The UI tier's record of the same decision is its D15.
+
+**Rejected: a new `ActionView` arm for a flush**, carrying a key and an event member. It would add a
+case to a closed union every domain matches, and move the fold, the budget, the scope check, the
+projection and the proof model's view, for a fact no core consumer needs. It would also need a Program
+release before the domain that wanted it could build.
+
+**Rejected: an event channel on `Assign`**, a `from` resolved against the event. It would put
+untrusted payload into the expression arrow, which is defined against the store. D42's value channel
+resolves against planned state, never input. The trust boundary is the domain's, so the read belongs
+after it, in the domain.
+
+**Rejected: a tree argument on `View`.** Every domain would pay for one domain's need, and the view's
+finiteness obligation (`w_view`) would gain an input it does not need.
+
+**A consequence for the gate.** The write is resolved before the fold, so a domain can put it to its
+dispatch gate on its own before anything folds. The UI tier does. Otherwise a host that admits a
+commit but not a write to its key would be bypassed by the key the tree declares.
+
+**What this changes here.** Documentation only. `ActionView.Assign`'s comment says the literal may
+come from the loop. `StateNamespaceDemand.Written` no longer names the UI tier's `SetState` as the only
+write a tree has, which was a domain's arm named in the generic core. No type, member, function or
+document version moves. The demanded document stays at version 11, `STABILITY.md` is untouched, and no
+version advances.
+
+**Assumptions kept, with the evidence that would falsify each.**
+
+- *A domain resolves a tree-keyed write against the same tree at lowering and at dispatch.* Falsified
+  by a domain whose fold reads a tree that moved after its demanded document was computed. The
+  document would then name a key the fold does not write. The UI tier lowers and dispatches against
+  the same fixed base tree.
+- *A value read from an event is one the store can hold.* Falsified by a domain whose flushed values
+  need a conversion the store does not make. The arm carries any `JVal`, so the conversion would be the
+  domain's, before the fold, and nothing here would move.
+
+**Also in this landing: the demanded corpus is re-copied.** `conformance/demanded-effect-projection.json`
+is replaced, byte for byte, by the generator's copy in the UI tier, in the direction its copy
+declaration states. Two vectors had drifted when the version-9 member was inserted by hand.
+`missing-root-member` omitted four members where its description names one, and `missing-opaque-leaves`
+lacked `values`. Each still read to the same refusal, which is why nothing failed. The copy now says
+what the descriptions say.
+
+**Tidied in the same landing.** Reviewed: `Witness.fs`, `Demanded.fs` and this record. Removed: the
+stale claim in `StateNamespaceDemand.Written`, above. Considered and kept: nothing else in either file
+is made dead or duplicate by this entry.

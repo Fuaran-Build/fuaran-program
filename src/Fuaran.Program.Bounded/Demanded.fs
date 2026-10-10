@@ -69,9 +69,11 @@ open Fuaran.Core
 type StateNamespaceDemand =
     {
         Namespace: string
-        /// The tree can write into this namespace (`Action.SetState` — the only
-        /// write the bounded vocabulary offers a tree; a handler's landing slots
-        /// are host-declared and so are not a demand OF the tree).
+        /// The tree can write into this namespace: an action views as an
+        /// `Assign` to a key in it. That includes a write the domain resolved
+        /// against the tree before the fold, whose key the action alone does not
+        /// carry (D46). A handler's landing slots are host-declared and so are
+        /// not a demand OF the tree.
         Written: bool
         /// The tree reads this namespace at DISPATCH time (a `SetState.valueFrom`
         /// binding). Display-time reads are deliberately absent — see
